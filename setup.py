@@ -20,5 +20,6 @@ if __name__ == '__main__':
         packages=[
             'nle_tools',
             'nle_tools.utils',
+            'nle_tools.wrappers',
         ],
     )

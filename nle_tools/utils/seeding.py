@@ -28,14 +28,15 @@ def pyroot(env):
         env = env._pynethack
 
     except AttributeError:
-        raise RuntimeError(
-            f'`{root}` does not appear to be a proper Nethack env.'
-        ) from None
+        pass
 
-    if isinstance(env, cNethack):
-        return env
+    else:
+        if isinstance(env, cNethack):
+            return env
 
-    raise RuntimeError(f'{root}')
+    raise RuntimeError(
+        f'`{root}` does not appear to be a proper Nethack env.'
+    ) from None
 
 
 def generate(seed=None, *, maxint=numpy.iinfo(numpy.uint).max):

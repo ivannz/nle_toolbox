@@ -35,7 +35,7 @@ def pyroot(env):
             return env
 
     raise RuntimeError(
-        f'`{root}` does not appear to be a proper Nethack env.'
+        f"`{root}` does not appear to be a proper Nethack env."
     ) from None
 
 

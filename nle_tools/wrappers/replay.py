@@ -6,7 +6,6 @@ from ..utils import seeding
 class Replay(Wrapper):
     """Wrapper for NLE Challenge env that enables deterministic replay.
 
-
     Motivation
     ----------
     We force-seed the main challenge task, since we are training an agent,
@@ -59,14 +58,15 @@ class Replay(Wrapper):
         return self._pynethack
 
     def seed(self, seed=None):
-        if seed is not None:
-            core, disp = seeding.generate(seed)
-        else:
-            # current seeds (not initial, but must coincide)
-            core, disp, ignore = self.root.get_seeds()
+        if not isinstance(seed, tuple):
+            seed = seeding.generate(seed)
 
         # cache the seeds to deterministic reset and replay
-        self._seed = core, disp
+        self._seed = core, disp = seed
+
+        # XXX `get_seeds` returns the seeds used to fire up the prng
+        # core, disp, ignore = self.root.get_seeds()
+
         return core, disp
 
     def reset(self, **kwargs):

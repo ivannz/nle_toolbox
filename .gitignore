@@ -1,3 +1,4 @@
+proto/*
 nle_tools/__version__.py
 
 # Created by https://www.toptal.com/developers/gitignore/api/python,jupyternotebooks

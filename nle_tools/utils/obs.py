@@ -1,3 +1,44 @@
+from collections import namedtuple
+
+# Bottom Line statistics namedtuple, see `./nle/include/nleobs.h#L16-42`
+BLStats = namedtuple('BLStats', [
+    'x',
+    'y',
+    'strength_percentage',
+    'str',  # 'strength',
+    'dex',  # 'dexterity',
+    'con',  # 'constitution',
+    'int',  # 'intelligence',
+    'wis',  # 'wisdom',
+    'cha',  # 'charisma',
+    'score',
+    'hitpoints',
+    'max_hitpoints',
+    'depth',
+    'gold',
+    'energy',
+    'max_energy',
+    'armor_class',
+    'monster_level',
+    'experience_level',
+    'experience_points',
+    'time',
+    'hunger_state',
+    'carrying_capacity',
+    'dungeon_number',
+    'level_number',
+    'condition',
+])
+BLStats.__doc__ += "\n" + r"""
+    Current bottom line statistics vector.
+
+    Details
+    -------
+    The descriptions and meanings have been taken from
+        [nleobs.h](/include/nleobs.h#L16-42)
+"""
+
+
 def uint8_to_str(
     tostr=True, /, *, tty_chars, chars, message, inv_letters, inv_strs, **remaining
 ):

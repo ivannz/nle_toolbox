@@ -4,7 +4,7 @@ from setuptools import setup
 
 if __name__ == '__main__':
     # update the version number
-    version = open('version', 'r').read().strip()
+    version = open('VERSION', 'r').read().strip()
 
     cwd = os.path.dirname(os.path.abspath(__file__))
     with open(os.path.join(cwd, 'nle_tools', '__version__.py'), 'w') as f:

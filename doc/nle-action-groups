@@ -1,0 +1,67 @@
+# navigation
+   0  CompassDirection.N            153   6B   k  k       move north (screen up).
+   1  CompassDirection.E            154   6C   l  l       move east (screen right).
+   2  CompassDirection.S            152   6A   j  j       move south (screen down).
+   3  CompassDirection.W            150   68   h  h       move west (screen left).
+   4  CompassDirection.NE           165   75   u  u       move northeast (screen upper right).
+   5  CompassDirection.SE           156   6E   n  n       move southeast (screen lower right).
+   6  CompassDirection.SW           142   62   b  b       move southwest (screen lower left).
+   7  CompassDirection.NW           171   79   y  y       move northwest (screen upper left).
+  16  MiscDirection.UP              074   3C   <  <       go up a staircase.
+  17  MiscDirection.DOWN            076   3E   >  >       go down a staircase.
+
+  18  MiscDirection.WAIT            056   2E   .  .       rest one move while doing nothing.
+  78  Command.SIT                   363   F3   ó  M-s     sit down.
+  75  Command.SEARCH                163   73   s  s       search for traps and secret doors.
+  77  Command.SEETRAP               136   5E   ^  ^       show the type of adjacent trap.
+  82  Command.TELEPORT              024   14   .  ^T      teleport around the level.
+  88  Command.UNTRAP                365   F5   õ  M-u     untrap something.
+
+# gui control
+  20  Command.EXTCMD                043   23   #  #       perform an extended command.
+  19  MiscAction.MORE               015   0D   .  <<enter>>
+  36  Command.ESC                   033   1B   .  <<escape>>
+
+# character
+  35  Command.EAT                   145   65   e  e       eat something.
+  64  Command.QUAFF                 161   71   q  q       quaff (drink) something.
+  62  Command.PRAY                  360   F0   ð  M-p     pray to the gods for help.
+  56  Command.OFFER                 357   EF   ï  M-o     offer a sacrifice to the gods.
+  95  Command.WIPE                  367   F7   ÷  M-w     wipe off your face.
+  38  Command.ENHANCE               345   E5   å  M-e     advance or check weapon and spell skills.
+
+# interact
+  24  Command.APPLY                 141   61   a  a       apply (use) a tool (pick-axe, key, lamp...).
+  29  Command.CHAT                  343   E3   ã  M-c     talk to someone.
+  32  Command.DIP                   344   E4   ä  M-d     dip an object into something.
+  57  Command.OPEN                  157   6F   o  o       open a door.
+  30  Command.CLOSE                 143   63   c  c       close a door.
+  41  Command.FORCE                 346   E6   æ  M-f     force a lock.
+  52  Command.LOOT                  354   EC   ì  M-l     loot a box on the floor.
+  84  Command.TIP                   324   D4   Ô  M-T     empty a container.
+  60  Command.PAY                   160   70   p  p       pay your shopping bill.
+
+# combat
+  40  Command.FIGHT                 106   46   F  Followed by direction, fight a monster (even if you don't sense it)
+  28  Command.CAST                  132   5A   Z  Z       zap (cast) a spell.
+  96  Command.ZAP                   172   7A   z  z       zap a wand.
+  39  Command.FIRE                  146   66   f  f       fire ammunition from quiver.
+  46  Command.INVOKE                351   E9   é  M-i     invoke an object's special powers.
+  48  Command.KICK                  004   04   .  ^D      kick something.
+  79  Command.SWAP                  170   78   x  x       swap wielded and secondary weapons.
+  87  Command.TWOWEAPON             130   58   X  X       toggle two-weapon combat.
+  83  Command.THROW                 164   74   t  t       throw something.
+  86  Command.TURN                  364   F4   ô  M-t     turn undead away.
+
+# inventory
+  66  Command.QUIVER                121   51   Q  Q       select ammunition for quiver.
+  67  Command.READ                  162   72   r  r       read a scroll or spellbook.
+  63  Command.PUTON                 120   50   P  P       put on an accessory (ring, amulet, etc).
+  69  Command.REMOVE                122   52   R  R       remove an accessory (ring, amulet, etc).
+  33  Command.DROP                  144   64   d  d       drop an item.
+  61  Command.PICKUP                054   2C   ,  ,       pick up things at the current location.
+  91  Command.WEAR                  127   57   W  W       wear a piece of armor.
+  80  Command.TAKEOFF               124   54   T  T       take off one piece of armor.
+  94  Command.WIELD                 167   77   w  w       wield (put in use) a weapon.
+  97  TextCharacters.PLUS           053   2B   +  +       list and reorder known spells.
+ 101  TextCharacters.QUOTE          042   22   "  "       show the amulet currently worn.

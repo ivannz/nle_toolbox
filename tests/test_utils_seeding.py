@@ -6,7 +6,7 @@ import nle
 
 from random import Random, randint
 
-from nle_tools.utils.seeding import set_seed
+from nle_toolbox.utils.seeding import set_seed
 
 
 def replay(env, actions, *, seed):

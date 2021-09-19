@@ -6,7 +6,7 @@ import nle
 
 from random import choices
 
-from nle_tools.wrappers.replay import Replay
+from nle_toolbox.wrappers.replay import Replay
 
 
 @pytest.mark.parametrize(

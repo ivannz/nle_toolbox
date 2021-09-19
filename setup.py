@@ -7,19 +7,19 @@ if __name__ == '__main__':
     version = open('VERSION', 'r').read().strip()
 
     cwd = os.path.dirname(os.path.abspath(__file__))
-    with open(os.path.join(cwd, 'nle_tools', '__version__.py'), 'w') as f:
+    with open(os.path.join(cwd, 'nle_toolbox', '__version__.py'), 'w') as f:
         f.write(f'__version__ = \'{version}\'\n')
 
     setup(
-        name='nle_tools',
+        name='nle_toolbox',
         version=version,
         description="""Toolbox for NLE Challenge""",
         long_description=open('README.md').read(),
         long_description_content_type='text/markdown',
         license='MIT',
         packages=[
-            'nle_tools',
-            'nle_tools.utils',
-            'nle_tools.wrappers',
+            'nle_toolbox',
+            'nle_toolbox.utils',
+            'nle_toolbox.wrappers',
         ],
     )

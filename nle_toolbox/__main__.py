@@ -9,6 +9,7 @@ from nle.nethack.actions import Command, MiscAction
 
 from collections import deque
 
+from nle_toolbox.bot.skeleton import Skeleton
 from nle_toolbox.wrappers.replay import Replay
 from nle_toolbox.utils.obs import BLStats, uint8_to_str
 
@@ -34,7 +35,7 @@ def render(env, obs):
     return True
 
 
-class HumanActor:
+class HumanBrain:
     """A simple human actor that supports escaped input."""
     def override(self, obs):
         return False
@@ -46,49 +47,6 @@ class HumanActor:
     def step(self, obs):
         input = bytes(__builtins__.input('> '), 'utf8')
         yield from map(ord, input.decode('unicode-escape'))
-
-
-class Skeleton:
-    """The skeleton and the backbone of the bot.
-
-    Suppors automatic message skipping.
-    """
-    re_ynq = re.compile(br".*\?\s+\[[ynaq\d]{2,}\]", re.I)  # detect YN questions
-
-    def __init__(self, brain, *, auto_more=True, auto_yesman=False):
-        self.brain, self.queue = brain, deque()
-        self.auto_more, self.auto_yesman = auto_more, auto_yesman
-
-    def reset(self, obs):
-        self.brain.reset(obs)
-        self.queue.clear()
-
-    def step(self, obs):
-        # 1. automatic gui-related actions
-        # skip partial info messages in the tty (`--More--`)
-        # XXX `ESC` skips all messages, `ENTER` goes through them one-by-one
-        if self.auto_more and b'--More--' in bytes(obs['tty_chars']):
-            return Command.ESC  # MiscAction.MORE
-
-        # 1.5 eternal internal `yes-man`: agree to every action we take
-        if self.auto_yesman and self.re_ynq.match(bytes(obs['message'])):
-            return ord('y')
-
-        # 2. open/closed loop control. Prompt only if we are out of
-        #  scheduled actions.
-        if self.brain.override(obs):
-            self.queue.clear()
-
-        if not self.queue:
-            # closed loop control: the brain tells us what to do next
-            self.queue.extend(self.brain.step(obs))
-
-        # open loop policy: execute pre-scheduled actions
-        if self.queue:
-            return self.queue.popleft()
-
-        # just wait
-        return ord('.')
 
 
 if __name__ == '__main__':
@@ -122,7 +80,7 @@ if __name__ == '__main__':
     # Agent-Val-Hum-Fem-Law, can dual-wield!
     env.seed(seed=(14278027783296323177, 11038440290352864458))
 
-    bot = Skeleton(brain=HumanActor())
+    bot = Skeleton(brain=HumanBrain())
 
     while True:
         obs, rew, fin, info = env.reset(), 0., False, None

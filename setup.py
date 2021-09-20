@@ -21,5 +21,6 @@ if __name__ == '__main__':
             'nle_toolbox',
             'nle_toolbox.utils',
             'nle_toolbox.wrappers',
+            'nle_toolbox.bot',
         ],
     )

@@ -40,7 +40,7 @@ BLStats.__doc__ += "\n" + r"""
 
 
 def uint8_to_str(
-    tostr=True, /, *, tty_chars, chars, message, inv_letters, inv_strs, **remaining
+    as_bytes=False, /, *, tty_chars, chars, message, inv_letters, inv_strs, **remaining
 ):
     """Preprocess all `uint8` arrays to proper `str`, preserving the leading dims."""
     # `tty_chars` is `... x 24 x 80` fixed width string
@@ -61,9 +61,9 @@ def uint8_to_str(
 
     # rebuild the kwargs, casting `bytes` to `str` (UCS4 encoding
     #  gives x4 mem blowup!).
-    if not tostr:
+    if as_bytes:
         # XXX a tidier `**locals()` also adds unwanted keys, such
-        #  as `remaining` and `tostr` :(
+        #  as `remaining` and `as_bytes` :(
         return dict(
             tty_chars=tty_chars,
             message=message,
@@ -79,5 +79,18 @@ def uint8_to_str(
         chars=chars.astype(str),
         inv_letters=inv_letters.astype(str),
         inv_strs=inv_strs.astype(str),
+        **remaining,
+    )
+
+
+def get_bytes(
+    *, tty_chars, chars, message, inv_letters, inv_strs, **remaining
+):
+    return dict(
+        tty_chars=bytes(tty_chars),
+        message=bytes(message),
+        chars=bytes(chars),
+        inv_letters=bytes(inv_letters),
+        inv_strs=bytes(inv_strs),
         **remaining,
     )

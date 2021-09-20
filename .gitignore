@@ -1,5 +1,5 @@
 proto/*
-nle_tools/__version__.py
+nle_toolbox/__version__.py
 
 # Created by https://www.toptal.com/developers/gitignore/api/python,jupyternotebooks
 # Edit at https://www.toptal.com/developers/gitignore?templates=python,jupyternotebooks

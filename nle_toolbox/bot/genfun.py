@@ -36,9 +36,11 @@ def run(gfn, init):
         try:
             # purge the stack as we are shutting down
             if emergency is GeneratorExit:
+                # XXX nothing prevents a running generator from raising
+                #  even during the shutdown sequence.
                 gen.close()
                 if not stack:
-                    raise
+                    break
 
                 gen = stack.pop()
                 continue

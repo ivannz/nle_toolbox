@@ -1,6 +1,10 @@
+import os
+import pickle
+
 from gym import Wrapper
 
 from ..utils import seeding
+from ..utils.io import mkstemp
 
 
 class Replay(Wrapper):
@@ -34,7 +38,7 @@ class Replay(Wrapper):
             '__version__': self.__version__,
             '__dttm__': strftime('%Y%m%d-%H%M%S'),
             'seed': getattr(self, '_seed', None),
-            'actions': self._actions,
+            'actions': getattr(self, '_actions', []),
         }
 
     def load_state_dict(self, state_dict, *, strict=True):
@@ -103,3 +107,47 @@ class Replay(Wrapper):
             j += 1
 
         return history, actions[j:]
+
+
+class ReplayToFile(Replay):
+    """The Replay wrapper, which saves on `.reset` and terminal `.step`.
+
+    Attributes
+    ----------
+    filename : str
+        The filename into which the interactive replay is to be saved.
+    """
+
+    def __init__(self, env, *, folder, prefix=''):
+        super().__init__(env)
+
+        # make sure the dump folder exists
+        self.folder, self.prefix = os.path.abspath(folder), prefix
+        os.makedirs(self.folder, exist_ok=True)
+
+    def save(self):
+        # generate a new random opaque filename
+        self.filename = mkstemp(dir=self.folder, suffix='.pkl',
+                                prefix=self.prefix)
+
+        # save into the current `.filename`
+        pickle.dump(self.state_dict(), open(self.filename, 'wb'))
+
+        return self.filename
+
+    def step(self, act):
+        obs, rew, fin, info = super().step(act)
+
+        # save on episode end
+        if fin:
+            self.save()
+
+        return obs, rew, fin, info
+
+    def reset(self, **kwargs):
+        # if `_actions` are absent then we have not been reset yet and
+        #  there is nothing to save.
+        if hasattr(self, '_actions'):
+            self.save()
+
+        return super().reset(**kwargs)

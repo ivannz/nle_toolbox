@@ -10,7 +10,7 @@ from nle.nethack.actions import Command, MiscAction
 from collections import deque
 
 from nle_toolbox.bot.skeleton import Skeleton
-from nle_toolbox.wrappers.replay import Replay
+from nle_toolbox.wrappers.replay import ReplayToFile, Replay
 from nle_toolbox.utils.obs import BLStats, uint8_to_str
 
 
@@ -52,7 +52,7 @@ class HumanBrain:
 if __name__ == '__main__':
     debug = False
 
-    env = Replay(
+    env = ReplayToFile(
         gym.make(
             'NetHackChallenge-v0',
             # XXX options affect even seeded generations, so we should prolly
@@ -70,7 +70,7 @@ if __name__ == '__main__':
             #     # 'showscore',
             #     # 'pettype:none',
             # ),
-        ))
+        ), folder='./replays')
 
     # XXX in case we want to try out different scenaria see how a map is made
     #  in `minihack.envs.fightcorridor.MiniHackFightCorridor`.

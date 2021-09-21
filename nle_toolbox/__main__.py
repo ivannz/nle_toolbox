@@ -50,6 +50,8 @@ class HumanBrain:
 
 
 if __name__ == '__main__':
+    debug = False
+
     env = Replay(
         gym.make(
             'NetHackChallenge-v0',
@@ -78,7 +80,10 @@ if __name__ == '__main__':
     # MiniHack._patch_nhdat(env.unwrapped, lvl_gen.get_des())
 
     # Agent-Val-Hum-Fem-Law, can dual-wield!
-    env.seed(seed=(14278027783296323177, 11038440290352864458))
+    # env.seed(seed=(14278027783296323177, 11038440290352864458))
+
+    # Agent-Pri-Elf-Fem-Cha can find lots of spells
+    env.seed(seed=(5009195464289726085, 12625175316870653325))
 
     bot = Skeleton(brain=HumanBrain())
 
@@ -95,6 +100,9 @@ if __name__ == '__main__':
             except KeyError:
                 if input('Invalid action. abort? [yn] (y)') != 'n':
                     break
+
+                if debug:
+                    breakpoint()
 
         # an extra prompt to break out from the loop
         if input('restart? [yn] (n)') != 'y':

@@ -33,7 +33,7 @@ class Replay(Wrapper):
         return {
             '__version__': self.__version__,
             '__dttm__': strftime('%Y%m%d-%H%M%S'),
-            'seed': self._seed,
+            'seed': getattr(self, '_seed', None),
             'actions': self._actions,
         }
 

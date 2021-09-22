@@ -9,7 +9,7 @@ from time import sleep
 from signal import signal, getsignal, SIGINT
 
 from .wrappers.replay import Replay
-from .bot import genfun as gfn
+from .bot.genfun import yield_from_nested
 
 
 class AutoNLEControls:
@@ -70,7 +70,7 @@ class AutoNLEControls:
             # input is None only in the case when the prompt was interrupted
             ui = self.prompt()
             if ui is None:
-                obs = yield self.play
+                obs = yield self.play(obs)
                 continue
 
             for c in ui.decode('unicode-escape'):
@@ -94,8 +94,7 @@ class AutoNLEControls:
                         # yield the action from the user input and them gobble
                         #  the potetnial more messages
                         obs = yield self.ctoa[ord(c)]
-                        while b'--More--' in bytes(obs['tty_chars']):
-                            obs = yield 0o15  # hit ENTER (can use ESC 0o33)
+                        obs = yield self.skip_mores(obs)
 
                     except KeyError:
                         if input("Invalid action. abort? [yn] (y)") != 'n':
@@ -110,6 +109,10 @@ class AutoNLEControls:
         while self.is_auto and self.pos < len(self.trace):
             yield self.trace[self.pos]
             self.pos += 1
+
+    def skip_mores(self, obs):
+        while b'--More--' in bytes(obs['tty_chars']):
+            obs = yield self.ctoa[0o15]  # hit ENTER (can use ESC 0o33)
 
 
 def replay(filename, debug=False):
@@ -131,16 +134,19 @@ def replay(filename, debug=False):
 
     # start the interactive playthrough
     while True:
+        # obs mirrors obs_, unless it is the very first iteration!
         obs_, fin = env.reset(), False
-        flow, obs = gfn.run(ctrl.run, obs_), None
+        flow, obs = yield_from_nested(ctrl.run(obs_)), None
         try:
             while not fin:
                 env.render('human')
-                sleep(0.06)
                 act = flow.send(obs)
                 if act is not None:
                     obs_, rew, fin, info = env.step(act)
                     obs = obs_
+                    sleep(0.06)
+                else:
+                    breakpoint()
 
         except StopIteration:
             pass

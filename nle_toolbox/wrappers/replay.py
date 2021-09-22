@@ -65,8 +65,23 @@ class Replay(Wrapper):
         }
 
     def load_state_dict(self, state_dict, *, strict=True):
-        """Load the sate, reseed and replay."""
+        """Load the state into NetHack.
 
+        Parameters
+        ----------
+        state_dict: dict
+            The Replay state dictionary, which contains the exact seeds
+            for NetHack, and the sequence actions to trace in a seeded env.
+
+        strict: bool, default=True
+            Determines strictness of version compatibility check.
+
+        Returns
+        -------
+        obs: object
+            The last observation from NetHack resulting from replaying
+            the recorded actions in it.
+        """
         from packaging.version import Version
 
         ver = Version(state_dict['__version__'])
@@ -75,8 +90,18 @@ class Replay(Wrapper):
         if ver > Version(self.__version__):
             raise RuntimeError(f"Unsupported version `{ver}`.")
 
-        # replay the recorded actions
-        return self.replay(state_dict['actions'], seed=state_dict['seed'])
+        # reseed and reset
+        self.seed(seed=state_dict['seed'])
+        obs, fin, j = self.reset(), False, 0
+
+        # blindly replay the actions
+        actions = state_dict['actions']
+        while not fin and j < len(actions):
+            obs, rew, fin, info = self.step(actions[j])
+            j += 1
+
+        # the final observation
+        return obs
 
     @property
     def root(self):
@@ -125,19 +150,58 @@ class Replay(Wrapper):
         return super().step(act)
 
     def replay(self, actions, *, seed):
-        """Deterministically replay the specified actions in the env."""
+        """Deterministically replay the specified actions in the env.
 
+        Parameters
+        ----------
+        actions: iterable
+            A finite iterable of actions that implement the deterministic
+            replay. Essentially an open loop policy, since it disregards
+            the feedback.
+
+        seed: object
+            The entropy used to seed NetHack with. If None then entropy is
+            drawn from the system pool.
+
+        Yields
+        ------
+        obs: object
+            The current observation x_t.
+
+        act: object
+            The action a_t taken in response to x_t.
+
+        rew: float
+            The reward received for the (x_t, a_t) -->> x_{t+1} transition.
+
+        obs_: object
+            The next observation x_{t+1} due to takin a_t at x_t.
+
+        info: dict
+            The info dict associated with the t -->> t+1 transition.
+
+        Details
+        -------
+        Upon raising StopIteration this generator return the list of remaining
+        actions in the .value attribute of the exception obejct as per PEP-342
+        and python docs (see pytorch PR#49017 for a detailed description).
+        """
         self.seed(seed)
 
+        # XXX by design `.replay` yields at least one sars transition for
+        #  a non-empty list of actions.
         obs, fin, j = self.reset(), False, 0
-
-        history = [obs]
         while not fin and j < len(actions):
-            obs, rew, fin, info = self.step(actions[j])
-            history.append(obs)
-            j += 1
+            # blindly follow the prescribed sequence
+            act = actions[j]
+            obs_, rew, fin, info = self.step(act)
 
-        return history, actions[j:]
+            # yield SARS transitions
+            yield obs, act, rew, obs_, info
+            obs, j = obs_, j + 1
+
+        # StopIteration's `.value` always contains the returned value
+        return actions[j:]
 
 
 class ReplayToFile(Replay):

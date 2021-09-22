@@ -34,7 +34,12 @@ class AutoNLEControls:
                 delta = +1 if act == '.' else +10
 
             self.pos = min(max(self.pos + delta, 0), len(self.trace))
-            self.env.replay(self.trace[:self.pos], seed=self.env._seed)
+            for _ in self.env.replay(
+                self.trace[:self.pos],
+                seed=self.env._seed,
+            ):
+                pass
+
             return True
 
         # display a basic help

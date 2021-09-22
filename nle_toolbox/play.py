@@ -145,8 +145,6 @@ def replay(filename, debug=False):
                     obs_, rew, fin, info = env.step(act)
                     obs = obs_
                     sleep(0.06)
-                else:
-                    breakpoint()
 
         except StopIteration:
             pass

@@ -70,7 +70,7 @@ if __name__ == '__main__':
             #     # 'showscore',
             #     # 'pettype:none',
             # ),
-        ), folder='./replays')
+        ), folder='./replays', sticky=True)
 
     # XXX in case we want to try out different scenaria see how a map is made
     #  in `minihack.envs.fightcorridor.MiniHackFightCorridor`.

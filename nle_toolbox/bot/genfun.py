@@ -1,5 +1,5 @@
 from sys import exc_info
-from inspect import isgeneratorfunction
+from inspect import isgenerator
 
 # XXX the following stream of consciousness is a bit stale.
 # What do we want?
@@ -21,17 +21,16 @@ from inspect import isgeneratorfunction
 #  overtake control, abort itself, or continue delegating to the subloop.
 
 
-def run(gfn, init):
-    """a version of `yield from` for the coroutines that can yield other coros.
+def yield_from_nested(gen):
+    """a version of `yield from` for the coroutines that can yield generators.
     """
 
     # we use an explicit stack here, because we need to globally maintain
-    #  the current `obs`, yet be able to switch the generator on-the-fly.
+    #  the current `response`, yet be able to switch the generator on-the-fly.
     #  If we were to use recursion, we then would have to somehow propagate
-    #  the locally updated `obs` back through all parent frames.
+    #  the locally updated `response` back through all parent frames.
 
-    stack, emergency = [], None
-    gen, obs = gfn(init), None
+    stack, emergency, response = [], None, None
     while True:
         try:
             # purge the stack as we are shutting down
@@ -49,10 +48,13 @@ def run(gfn, init):
             # through the stack of running generators (gens)
             elif emergency is not None:
                 try:
-                    gfn = gen.throw(*emergency)
+                    request = gen.throw(*emergency)
 
-                # the current gen was unable to handle the emergency
+                # the current gen was unable to handle the emergency. In this
+                # case it can be reraised since it bubbles up form inside the
+                # gen at its `yield` (which was resumed with exception).
                 except BaseException:
+                    gen.close()
                     if not stack:
                         raise
 
@@ -62,12 +64,13 @@ def run(gfn, init):
             else:
                 # the current generator either yields an object, or a generator
                 # function. In the latter case we should instantiate call it
-                # with the most recent `obs`, then suspend ourselves into stack
+                # with the most recent `response`, then suspend ourselves into stack
                 # and, finally, delegate control to the new generator..
-                gfn = gen.send(obs)
+                request = gen.send(response)
 
         except StopIteration:
             # the current gen has been exhausted
+            gen.close()
             if not stack:
                 break
 
@@ -82,12 +85,12 @@ def run(gfn, init):
         # PEP-342 support (see pytorch PR#49017)
         try:
             # depth-first descend into the sub-generators
-            if isgeneratorfunction(gfn):
+            if isgenerator(request):
                 stack.append(gen)
-                gen, obs = gfn(obs), None
+                gen, response = request, None
 
             else:
-                obs = yield gfn
+                response = yield request
 
         except GeneratorExit:
             emergency = GeneratorExit
@@ -101,5 +104,5 @@ def run(gfn, init):
         raise emergency
 
     # upon termination the raised `StopIteration` communicates
-    #  the last `obs` in its `.value`.
-    return obs
+    #  the last `response` in its `.value`.
+    return response

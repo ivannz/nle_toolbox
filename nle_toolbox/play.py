@@ -194,14 +194,14 @@ if __name__ == '__main__':
         help='The stored replay data.')
 
     parser.add_argument(
-        '--debug', required=False, dest='debug', action='store_true',
-        help='Enter trace mode.')
-
-    parser.add_argument(
         '--delay', type=float, default=0.06, required=False, dest='delay',
         help='Delay between steps during replay.')
 
-    parser.set_defaults(delay=0.6, debug=False)
+    parser.add_argument(
+        '--debug', required=False, dest='debug', action='store_true',
+        help='Enter trace mode.')
+
+    parser.set_defaults(delay=0.06, debug=False)
 
     args, _ = parser.parse_known_args()
     replay(**vars(args))

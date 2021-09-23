@@ -205,22 +205,33 @@ class Replay(Wrapper):
         return actions[j:]
 
     def render(self, mode='human', **kwargs):
-        obs = self.env.last_observation
-        tty_chars_index = self.env._observation_keys.index("tty_chars")
-        tty_colors_index = self.env._observation_keys.index("tty_colors")
-        tty_chars = obs[tty_chars_index]
-        tty_colors = obs[tty_colors_index]
+        """Custom NLE renderer."""
 
-        tty_bright = 8
-        color_offset = 30
+        # get the necessary data, and fail gracefully if it is unavailable.
+        obs, keys = self.env.last_observation, self.env._observation_keys
+        try:
+            tty_chars = obs[keys.index("tty_chars")]
+            tty_colors = obs[keys.index("tty_colors")]
+
+        except ValueError:
+            return False
+
+        # render NetHack output line by line with ANSI escapes
+        ansi = ''
         height, width = tty_chars.shape
+        for L in range(height):
+            # position the cursor at (L, 4) with \033[<L>;<C>H
+            ansi += f'\033[{L+4};4H'
+            for C in range(width):
+                # set fg color with \033[<bold?>;3<3-bit color>m
+                cl, ch = tty_colors[L, C], tty_chars[L, C]
+                ansi += f'\033[{bool(cl & 8):1d};3{cl & 7:1d}m{ch:c}'
 
-        for i in range(height):
-            for j in range(width):
-                ch = tty_chars[i, j]
-                color = color_offset + int(tty_colors[i, j] & ~tty_bright)
-                sys.stdout.write(f'\x1b[{color}m\x1b[{i + 4};{j + 4}H{chr(ch)}')
+        # save/restore the original cursor, and reset the color back to normal
+        sys.stdout.write(f'\033[s{ansi}\033[u\033[m')
         sys.stdout.flush()
+
+        return True
 
 
 class ReplayToFile(Replay):

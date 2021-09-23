@@ -13,10 +13,11 @@ from .wrappers.replay import Replay
 from .bot.genfun import yield_from_nested
 
 
-_CLR_SCR = '\u001b[2J\u001b[0;0H'
-_WHITE_COLOR = '\x1b[39m'
-_QUERY_PROMPT = f'{_WHITE_COLOR}\x1b[29;0H\x1b[2K'
-_DOC_LINE = f'{_WHITE_COLOR}\x1b[31;0H'
+def input(prompt=None, *, _input=__builtins__.input):
+    """Promt the user with the specified text and default color."""
+    if prompt is None:
+        return _input()
+    return _input('\033[39m\033[29;0H\033[2K\033[m' + str(prompt))
 
 
 class AutoNLEControls:
@@ -32,13 +33,16 @@ class AutoNLEControls:
         self.ctoa = {a: j for j, a in enumerate(env.unwrapped._actions)}
 
     def step(self, act):
-        # control the positioon in the replayed actions
-        if act in ',.<>':
+        # control the position in the replayed actions
+        if act in ' ,.<>':
             if act in ',<':
                 delta = -1 if act == ',' else -10
 
             elif act in '.>':
                 delta = +1 if act == '.' else +10
+
+            else:
+                delta = 0
 
             self.pos = min(max(self.pos + delta, 0), len(self.trace))
             for _ in self.env.replay(
@@ -49,9 +53,9 @@ class AutoNLEControls:
 
             return True
 
-        # display a basic help
+        # display a basic help at the 37th line
         if act == '?':
-            sys.stdout.write(f'{_DOC_LINE}{self.__doc__}')
+            sys.stdout.write('\x1b[37m\x1b[31;0H' + self.__doc__)
             return True
 
         # unrecognized actions abort the playback altogether
@@ -60,7 +64,7 @@ class AutoNLEControls:
     def prompt(self):
         # prompt for user input or a ctrl+c
         try:
-            return bytes(input(f'{_QUERY_PROMPT}(? for help) > '), 'utf8')
+            return bytes(input('(? for help) > '), 'utf8')
 
         except KeyboardInterrupt:
             # hook an interrupt handler so that we could stop playback on
@@ -76,12 +80,18 @@ class AutoNLEControls:
         self.handler = None
 
     def run(self, obs):
-        self.pos = 0
+        self.pos, self._dirty = 0, False
         self.restore(None, None)
         while True:
             # input is None only in the case when the prompt was interrupted
             ui = self.prompt()
             if ui is None:
+                # if the user has spoiled the env state by interacting with it
+                #  force reset it to the current playback position.
+                if self._dirty:
+                    self._dirty = False
+                    self.step(' ')
+
                 obs = yield self.play(obs)
                 continue
 
@@ -102,6 +112,8 @@ class AutoNLEControls:
 
                 # external control of the nle (in tha caller)
                 else:
+                    # the user might have potentially spolied the state
+                    self._dirty = True
                     try:
                         # yield the action from the user input and them gobble
                         #  the potetnial more messages
@@ -109,7 +121,7 @@ class AutoNLEControls:
                         obs = yield self.skip_mores(obs)
 
                     except KeyError:
-                        if input(f'{_QUERY_PROMPT}Invalid action. abort? [yn] (y)') != 'n':
+                        if input('Invalid action. abort? [yn] (y)') != 'n':
                             return
                         break
 
@@ -127,14 +139,17 @@ class AutoNLEControls:
             obs = yield self.ctoa[0o15]  # hit ENTER (can use ESC 0o33)
 
 
-def replay(filename, debug=False):
+def replay(filename, delay=0.06, debug=False):
     breakpoint() if debug else None
 
     state_dict = pickle.load(open(filename, 'rb'))
 
-    sys.stdout.write(_CLR_SCR)
-    sys.stdout.write(f"replaying recoding `{os.path.basename(filename)}` "
-          f"form `{state_dict['__dttm__']}`\nwith seeds {state_dict['seed']}.")
+    sys.stdout.write(
+        '\033[2J\033[0;0H'
+        f"replaying recoding `{os.path.basename(filename)}` "
+        f"from `{state_dict['__dttm__']}`\n"
+        f"with seeds {state_dict['seed']}."
+    )
 
     # create the env
     env = Replay(gym.make('NetHackChallenge-v0'))
@@ -157,13 +172,13 @@ def replay(filename, debug=False):
                 if act is not None:
                     obs_, rew, fin, info = env.step(act)
                     obs = obs_
-                    sleep(0.06)
+                    sleep(delay)
 
         except StopIteration:
             pass
 
         # an extra prompt to break out from the loop
-        if input(f'{_QUERY_PROMPT}restart? [yn] (n)') != 'y':
+        if input('restart? [yn] (n)') != 'y':
             break
 
 
@@ -182,7 +197,11 @@ if __name__ == '__main__':
         '--debug', required=False, dest='debug', action='store_true',
         help='Enter trace mode.')
 
-    parser.set_defaults(debug=False)
+    parser.add_argument(
+        '--delay', type=float, default=0.06, required=False, dest='delay',
+        help='Delay between steps during replay.')
+
+    parser.set_defaults(delay=0.6, debug=False)
 
     args, _ = parser.parse_known_args()
     replay(**vars(args))

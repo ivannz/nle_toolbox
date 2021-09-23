@@ -9,8 +9,8 @@ from time import sleep
 
 from signal import signal, getsignal, SIGINT
 
-from .wrappers.replay import Replay
-from .bot.genfun import yield_from_nested
+from ...wrappers.replay import Replay
+from ...bot.genfun import yield_from_nested
 
 
 def input(prompt=None, *, _input=__builtins__.input):

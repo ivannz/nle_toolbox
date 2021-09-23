@@ -9,9 +9,9 @@ from nle.nethack.actions import Command, MiscAction
 
 from collections import deque
 
-from nle_toolbox.bot.skeleton import Skeleton
-from nle_toolbox.wrappers.replay import ReplayToFile, Replay
-from nle_toolbox.utils.obs import BLStats, uint8_to_str
+from ...bot.skeleton import Skeleton
+from ...wrappers.replay import ReplayToFile, Replay
+from ..obs import BLStats, uint8_to_str
 
 
 def render(env, obs):

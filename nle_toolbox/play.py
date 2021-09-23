@@ -1,5 +1,6 @@
 import os
 import pickle
+import sys
 
 import gym
 import nle
@@ -10,6 +11,12 @@ from signal import signal, getsignal, SIGINT
 
 from .wrappers.replay import Replay
 from .bot.genfun import yield_from_nested
+
+
+_CLR_SCR = '\u001b[2J\u001b[0;0H'
+_WHITE_COLOR = '\x1b[39m'
+_QUERY_PROMPT = f'{_WHITE_COLOR}\x1b[29;0H\x1b[2K'
+_DOC_LINE = f'{_WHITE_COLOR}\x1b[31;0H'
 
 
 class AutoNLEControls:
@@ -44,7 +51,7 @@ class AutoNLEControls:
 
         # display a basic help
         if act == '?':
-            print(self.__doc__)
+            sys.stdout.write(f'{_DOC_LINE}{self.__doc__}')
             return True
 
         # unrecognized actions abort the playback altogether
@@ -53,7 +60,7 @@ class AutoNLEControls:
     def prompt(self):
         # prompt for user input or a ctrl+c
         try:
-            return bytes(input("(? for help) > "), 'utf8')
+            return bytes(input(f'{_QUERY_PROMPT}(? for help) > '), 'utf8')
 
         except KeyboardInterrupt:
             # hook an interrupt handler so that we could stop playback on
@@ -102,7 +109,7 @@ class AutoNLEControls:
                         obs = yield self.skip_mores(obs)
 
                     except KeyError:
-                        if input("Invalid action. abort? [yn] (y)") != 'n':
+                        if input(f'{_QUERY_PROMPT}Invalid action. abort? [yn] (y)') != 'n':
                             return
                         break
 
@@ -125,7 +132,8 @@ def replay(filename, debug=False):
 
     state_dict = pickle.load(open(filename, 'rb'))
 
-    print(f"replaying recoding `{os.path.basename(filename)}` "
+    sys.stdout.write(_CLR_SCR)
+    sys.stdout.write(f"replaying recoding `{os.path.basename(filename)}` "
           f"form `{state_dict['__dttm__']}`\nwith seeds {state_dict['seed']}.")
 
     # create the env
@@ -155,7 +163,7 @@ def replay(filename, debug=False):
             pass
 
         # an extra prompt to break out from the loop
-        if input('restart? [yn] (n)') != 'y':
+        if input(f'{_QUERY_PROMPT}restart? [yn] (n)') != 'y':
             break
 
 

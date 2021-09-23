@@ -1,5 +1,6 @@
 import os
 import pickle
+import sys
 
 from gym import Wrapper
 
@@ -202,6 +203,24 @@ class Replay(Wrapper):
 
         # StopIteration's `.value` always contains the returned value
         return actions[j:]
+
+    def render(self, mode='human', **kwargs):
+        obs = self.env.last_observation
+        tty_chars_index = self.env._observation_keys.index("tty_chars")
+        tty_colors_index = self.env._observation_keys.index("tty_colors")
+        tty_chars = obs[tty_chars_index]
+        tty_colors = obs[tty_colors_index]
+
+        tty_bright = 8
+        color_offset = 30
+        height, width = tty_chars.shape
+
+        for i in range(height):
+            for j in range(width):
+                ch = tty_chars[i, j]
+                color = color_offset + int(tty_colors[i, j] & ~tty_bright)
+                sys.stdout.write(f'\x1b[{color}m\x1b[{i + 4};{j + 4}H{chr(ch)}')
+        sys.stdout.flush()
 
 
 class ReplayToFile(Replay):

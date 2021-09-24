@@ -254,18 +254,42 @@ class ReplayToFile(Replay):
         on each `.reset`. This flag has any effect only when the seed have not
         been set but the user.
 
+    save_on : str, list of str
+        The list of events that trigger a playthrough save. Saves on episode
+        termination (`done`), a reset (`reset`) and when the env is being
+        closed (`close`).
+
     Attributes
     ----------
     filename : str
         The filename into which the replay has been saved the last time.
     """
 
-    def __init__(self, env, *, folder, prefix='', sticky=False):
+    def __init__(
+        self,
+        env,
+        *,
+        folder,
+        prefix='',
+        sticky=False,
+        save_on='done,reset,close'
+    ):
+        # parse save triggers
+        if isinstance(save_on, str):
+            save_on = save_on.split(',')
+
+        events = {ev: ev in save_on for ev in (
+            'done', 'reset', 'close',
+        )}
+        assert any(events.values())
+
         super().__init__(env, sticky=sticky)
 
         # make sure the dump folder exists
         self.folder, self.prefix = os.path.abspath(folder), prefix
         os.makedirs(self.folder, exist_ok=True)
+
+        self.save_on = events
 
     def save(self):
         """Save the current replay under a random name."""
@@ -283,7 +307,7 @@ class ReplayToFile(Replay):
         obs, rew, fin, info = super().step(act)
 
         # save on episode end
-        if fin:
+        if fin and self.save_on['done']:
             self.save()
 
         return obs, rew, fin, info
@@ -291,7 +315,13 @@ class ReplayToFile(Replay):
     def reset(self, **kwargs):
         # if `_actions` are absent then we have not been reset yet and
         #  there is nothing to save.
-        if hasattr(self, '_actions'):
+        if hasattr(self, '_actions') and self.save_on['reset']:
             self.save()
 
         return super().reset(**kwargs)
+
+    def close(self):
+        if self.save_on['close']:
+            self.save()
+
+        super().close()

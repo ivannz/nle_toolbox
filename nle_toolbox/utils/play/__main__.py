@@ -146,7 +146,7 @@ def replay(filename, delay=0.06, debug=False):
 
     sys.stdout.write(
         '\033[2J\033[0;0H'
-        f"replaying recoding `{os.path.basename(filename)}` "
+        f"replaying recording `{os.path.basename(filename)}` "
         f"from `{state_dict['__dttm__']}`\n"
         f"with seeds {state_dict['seed']}."
     )

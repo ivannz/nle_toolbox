@@ -38,7 +38,7 @@ def get_hash(seed, actions, **ignored):
     return sh.hexdigest()
 
 
-def read_one(trace, *, _chunk_size=262144):
+def read_one(trace):
     """Read a replay file and get its hash."""
 
     state_dict = pickle.load(open(trace, 'rb'))
@@ -72,7 +72,11 @@ def simulate_one(state_dict):
 def evaluate_one(sh, trace, state_dict):
     """Compute the stats of the replayed episode."""
 
-    info, (rewards, blstats, *ignored) = simulate_one(state_dict)
+    try:
+        info, (rewards, blstats, *ignored) = simulate_one(state_dict)
+
+    except ValueError:
+        return sh, (trace, {})
 
     # compute the statistics
     numeric = {
@@ -84,6 +88,8 @@ def evaluate_one(sh, trace, state_dict):
         'blstats__energy__std': blstats.energy.std(),
         'blstats__gold__total': blstats.gold.sum(),
         'blstats__score__max': blstats.score.max(),
+
+        'blstats__score__per_time': blstats.score.max() / blstats.time.max(),
     }
 
     # frequency of various hunder states
@@ -129,7 +135,10 @@ def series(cache, name='blstats__score__max'):
     """Extract the specified data from the cache."""
 
     data = []
-    for sh, (trace, stats) in cache.items():
+    for trace, stats in cache.values():
+        if name not in stats:
+            continue
+
         data.append((
             trace, stats[name]
         ))
@@ -150,7 +159,13 @@ def main(
 
     # get the specified series
     cache = evaluate(folder)
-    traces, scores = series(cache, name)
+
+    try:
+        traces, scores = series(cache, name)
+
+    except ValueError:
+        print(f"\n\nNo data for `{name}` in `{folder}`. Aborting...\n\n")
+        return []
 
     # get the threshold and display a histogram
     lo = numpy.quantile(scores, q=q)

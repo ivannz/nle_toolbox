@@ -21,7 +21,7 @@ from inspect import isgenerator
 #  overtake control, abort itself, or continue delegating to the subloop.
 
 
-def yield_from_nested(gen):
+def yield_from_nested(gen, *, response=None):
     """a version of `yield from` for the coroutines that can yield generators.
     """
 
@@ -30,7 +30,7 @@ def yield_from_nested(gen):
     #  If we were to use recursion, we then would have to somehow propagate
     #  the locally updated `response` back through all parent frames.
 
-    stack, emergency, response = [], None, None
+    stack, emergency = [], None
     while True:
         try:
             # purge the stack as we are shutting down
@@ -64,8 +64,8 @@ def yield_from_nested(gen):
             else:
                 # the current generator either yields an object, or a generator
                 # function. In the latter case we should instantiate call it
-                # with the most recent `response`, then suspend ourselves into stack
-                # and, finally, delegate control to the new generator..
+                # with the most recent `response`, then suspend ourselves into
+                # stack and, finally, delegate control to the new generator.
                 request = gen.send(response)
 
         except StopIteration:
@@ -78,16 +78,18 @@ def yield_from_nested(gen):
             continue
 
         else:
-            # we finished the try block and neither encountered any exception
-            #  not `continued` prematurely
+            # we finished the try block and neither encountered
+            #  and exception not `continued` prematurely
             emergency = None
 
         # PEP-342 support (see pytorch PR#49017)
         try:
-            # depth-first descend into the sub-generators
+            # descend depth-first into the sub-generators
             if isgenerator(request):
                 stack.append(gen)
                 gen, response = request, None
+                # XXX we assume that this gen has been initted with
+                #  the latest response, but hasn't been started yet.
 
             else:
                 response = yield request

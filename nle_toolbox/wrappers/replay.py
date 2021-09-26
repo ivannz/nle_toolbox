@@ -24,7 +24,7 @@ class Replay(Wrapper):
     Attributes
     ----------
     _seed_type : str
-        The source of the seed. 'auto' menas that the seeds were obtained in
+        The source of the seed. 'auto' means that the seeds were obtained in
         a deterministic way from the system's entropy. 'manual' implies that
         the entropy was supplied by the user via an explicit `.seed` call with
         non None `seed` argument.
@@ -176,21 +176,21 @@ class Replay(Wrapper):
             The reward received for the (x_t, a_t) -->> x_{t+1} transition.
 
         obs_: object
-            The next observation x_{t+1} due to takin a_t at x_t.
+            The next observation x_{t+1} due to taken a_t at x_t.
 
         info: dict
             The info dict associated with the t -->> t+1 transition.
 
         Details
         -------
-        Upon raising StopIteration this generator return the list of remaining
-        actions in the .value attribute of the exception obejct as per PEP-342
+        Upon raising StopIteration this generator returns the list of remaining
+        actions in attribute `.value` of the exception object as per PEP-342
         and python docs (see pytorch PR#49017 for a detailed description).
         """
         self.seed(seed)
 
-        # XXX by design `.replay` yields at least one sars transition for
-        #  a non-empty list of actions.
+        # XXX by design `.replay` yields at least one sars transition
+        #  for a non-empty list of actions.
         obs, fin, j = self.reset(), False, 0
         while not fin and j < len(actions):
             # blindly follow the prescribed sequence
@@ -205,7 +205,11 @@ class Replay(Wrapper):
         return actions[j:]
 
     def render(self, mode='human', **kwargs):
-        """Custom NLE renderer."""
+        """Custom human mode renderer for NLE."""
+
+        # override 'human' rendering only
+        if mode != 'human':
+            return super().render(mode=mode)
 
         # get the necessary data, and fail gracefully if it is unavailable.
         obs, keys = self.env.last_observation, self.env._observation_keys

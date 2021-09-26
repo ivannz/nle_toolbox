@@ -25,6 +25,7 @@ class AutoNLEControls:
     ctrl-c -- stop/resume playback
     `\\000` -- toggle between the human full control and autp playback.
     `q` -- quit
+    enter on an empty prompt -- repeat the last input
     """
     playback, handler, pos = True, None, 0
 
@@ -61,10 +62,10 @@ class AutoNLEControls:
         # unrecognized actions abort the playback altogether
         return False
 
-    def prompt(self):
+    def prompt(self, extra=''):
         # prompt for user input or a ctrl+c
         try:
-            return bytes(input('(? for help) > '), 'utf8')
+            return input(f"(? for help{extra}) > ")
 
         except KeyboardInterrupt:
             # hook an interrupt handler so that we could stop playback on
@@ -80,11 +81,12 @@ class AutoNLEControls:
         self.handler = None
 
     def run(self, obs):
-        self.pos, self._dirty = 0, False
+        self.pos, self._dirty, ui = 0, False, None
         self.restore(None, None)
         while True:
             # input is None only in the case when the prompt was interrupted
-            ui = self.prompt()
+            uip = ui or ''  # previous user input
+            ui = self.prompt(f" {{{uip}}}" if uip else "")  # prev ui in braces
             if ui is None:
                 # if the user has spoiled the env state by interacting with it
                 #  force reset it to the current playback position.
@@ -95,7 +97,10 @@ class AutoNLEControls:
                 obs = yield self.play(obs)
                 continue
 
-            for c in ui.decode('unicode-escape'):
+            # stick to the previous input if the current is empty
+            ui = ui or uip
+
+            for c in bytes(ui, 'utf8').decode('unicode-escape'):
                 # toggle game/playback control on zero
                 if ord(c) == 0:
                     self.playback = not self.playback
@@ -166,8 +171,7 @@ def replay(filename, delay=0.06, debug=False):
         obs_, fin = env.reset(), False
         flow, obs = yield_from_nested(ctrl.run(obs_)), None
         try:
-            while not fin:
-                env.render('human')
+            while env.render('human') and not fin:
                 act = flow.send(obs)
                 if act is not None:
                     obs_, rew, fin, info = env.step(act)

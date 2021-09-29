@@ -178,6 +178,9 @@ def replay(filename, delay=0.06, debug=False):
                     obs = obs_
                     sleep(delay)
 
+        except EOFError:
+            break
+
         except StopIteration:
             pass
 

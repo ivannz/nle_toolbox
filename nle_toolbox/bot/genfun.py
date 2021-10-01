@@ -21,15 +21,28 @@ from inspect import isgenerator
 #  overtake control, abort itself, or continue delegating to the subloop.
 
 
+def is_suspended(gen):
+    if gen.gi_frame is None:
+        return False
+
+    # check the index of the last instruction in the generator's frame.
+    #  see `inspect.getgeneratorstate`
+    return gen.gi_frame.f_lasti != -1
+
+
 def yield_from_nested(gen, *, response=None):
     """a version of `yield from` for the coroutines that can yield generators.
     """
+    # make sure we deal with the original generator properly
+    is_starting, response_ = not is_suspended(gen), response
+    if is_starting:
+        response, response_ = None, response
 
-    # we use an explicit stack here, because we need to globally maintain
-    #  the current `response`, yet be able to switch the generator on-the-fly.
-    #  If we were to use recursion, we then would have to somehow propagate
-    #  the locally updated `response` back through all parent frames.
-
+    # we use an explicit stack of _suspended_ generators here, because we need
+    #  to globally maintain the current `response`, yet be able to switch
+    #  the generator on-the-fly. If we were to use recursion, we then would
+    #  have to somehow propagate the locally updated `response` back through
+    #  all parent frames.
     stack, emergency = [], None
     while True:
         try:
@@ -74,25 +87,33 @@ def yield_from_nested(gen, *, response=None):
             if not stack:
                 break
 
-            gen = stack.pop()
+            # if we got an emergency when we were launching a new generator
+            #  then restore the old response
+            if is_starting:
+                response = response_
+
+            gen, is_starting = stack.pop(), False
             continue
 
         else:
             # we finished the try block and neither encountered
             #  and exception not `continued` prematurely
-            emergency = None
+            emergency, is_starting = None, False
 
         # PEP-342 support (see pytorch PR#49017)
         try:
             # descend depth-first into the sub-generators
             if isgenerator(request):
                 stack.append(gen)
-                gen, response = request, None
-                # XXX we assume that this gen has been initted with
-                #  the latest response, but hasn't been started yet.
+
+                # we assume that this gen has been initted with the latest
+                #  response, but hasn't been started yet.
+                gen, is_starting = request, not is_suspended(request)
+                if is_starting:
+                    response, response_ = None, response
 
             else:
-                response = yield request
+                response = response_ = yield request
 
         except GeneratorExit:
             emergency = GeneratorExit

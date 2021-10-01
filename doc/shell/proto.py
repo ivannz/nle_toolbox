@@ -2,14 +2,7 @@ from abc import ABCMeta, abstractmethod
 from inspect import isgeneratorfunction
 from random import choice
 
-
-def is_suspended(gen):
-    if gen.gi_frame is None:
-        return False
-
-    # check the index of the last instruction in the generator's frame.
-    #  see `inspect.getgeneratorstate`
-    return gen.gi_frame.f_lasti != -1
+from nle_toolbox.bot.genfun import is_suspended
 
 
 class Loop(metaclass=ABCMeta):

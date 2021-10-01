@@ -1,8 +1,10 @@
 import os
 import pickle
 import sys
+from copy import deepcopy
 
 import pprint as pp
+from functools import wraps
 
 import gym
 import nle
@@ -23,16 +25,17 @@ def input(prompt=None, *, _input=__builtins__.input):
     return _input('\033[29;0H\033[2K\r\033[39m\033[m' + str(prompt))
 
 
-def flush(l=31):
+def flush(l=30):
     sys.stdout.write(f'\033[{l};0H\033[2K\r\033[J\033[37m')
 
 
 class AutoNLEControls:
-    """backward/forward: `, .` by one action, `< >` by ten actions.
-    ctrl-c -- stop/resume playback
-    `\\000` -- toggle between the human full control and autp playback.
-    `q` -- quit
-    enter on an empty prompt -- repeat the last input
+    """Controls
+    `#play` or `\\000` switch playback [A] and human [U] modes
+    `enter` repeat last input, `ctrl-c` resume/stops automatic replay
+    `ctrl-d` quit, `debug` toggle debug mode, `help` print this help.
+
+    Replay actions backward/forward by one `, .` by ten `< >` in playback mode
     """
     playback, debug, handler, pos = True, False, None, 0
 
@@ -42,38 +45,35 @@ class AutoNLEControls:
 
     def step(self, act):
         # control the position in the replayed actions
-        if act in ' ,.<>':
-            if act in ',<':
-                delta = -1 if act == ',' else -10
+        if act not in ' ,.<>':
+            # unrecognized actions abort the playback altogether
+            return None
 
-            elif act in '.>':
-                delta = +1 if act == '.' else +10
+        if act in ',<':
+            delta = -1 if act == ',' else -10
 
-            else:
-                delta = 0
+        elif act in '.>':
+            delta = +1 if act == '.' else +10
 
-            self.pos = min(max(self.pos + delta, 0), len(self.trace))
-            for _ in self.env.replay(
-                self.trace[:self.pos],
-                seed=self.env._seed,
-            ):
-                pass
+        else:
+            delta = 0
 
-            return True
+        self.pos = min(max(self.pos + delta, 0), len(self.trace))
+        for _, _, _, obs, _ in self.env.replay(
+            self.trace[:self.pos],
+            seed=self.env._seed,
+        ):
+            pass
 
-        # display a basic help at the 37th line
-        if act == '?':
-            flush(30)
-            print(self.__doc__)
-            return True
-
-        # unrecognized actions abort the playback altogether
-        return False
+        return obs
 
     def prompt(self, extra=''):
         # prompt for user input or a ctrl+c
         try:
-            return input(f"(? for help{extra}) > ")
+            status = "A" if self.playback else "U"
+            status += "D" if self.debug else " "
+
+            return input(f"([{status:2s}] {extra}) > ")
 
         except KeyboardInterrupt:
             # hook an interrupt handler so that we could stop playback on
@@ -107,31 +107,61 @@ class AutoNLEControls:
 
             # stick to the previous input if the current is empty
             ui = ui or uip
-            
-            buffer = ''
-            for c in bytes(ui, 'utf8').decode('unicode-escape'):
-                # toggle game/playback control on zero
-                if ord(c) == 0:
-                    self.playback = not self.playback
-                    self.debug = False
+
+            # toggle game/playback control on zero byte
+            if ui.startswith('#play') or ui == '\000':
+                self.playback = not self.playback
+                continue  # ignore the rest of the input on mode switch
+
+            if self.playback:
+                # special mode toggles
+                if 'debug'.startswith(ui):
+                    self.debug = not self.debug
+                    obs_ = deepcopy(obs)  # make a deep copy, just in case
                     continue
 
-                if ord(c) == 255 and not self.playback:
-                    self.debug = not self.debug
-                    buffer = ''
+                # display a helpful message
+                elif 'help'.startswith(ui):
+                    flush(30)
+                    print(self.__doc__)
                     continue
+
+                # clear screen
+                elif 'clear'.startswith(ui):
+                    flush(1)
+                    yield None  # just update the tty
+                    continue
+
+            # player control mode
+            if self.playback:
+                # debug mode with `eval`
+                if self.debug:
+                    flush(30)
+                    try:
+                        pp.pprint(eval(ui, {}, obs_))  # XXX very dangerous!!!
+
+                    except SyntaxError:
+                        # disable debug mode on any syntax error, e.g. escape
+                        self.debug = False
+
+                    except Exception as e:
+                        print(str(e), type(e))
+                        pp.pprint(obs_.keys())
 
                 # internal playback control
-                if self.playback:
-                    # abort on invalid command
-                    if not self.step(c):
-                        return
+                else:
+                    for c in bytes(ui, 'utf8').decode('unicode-escape'):
+                        # abort on invalid command
+                        obs = self.step(c)
+                        if obs is None:
+                            return
 
-                    # yield a `None` action to the caller to update the tty
-                    obs = yield None
+                        # yield a `None` action to the caller to update the tty
+                        yield None
 
-                # external control of the nle (in the caller)
-                elif not self.debug:
+            # external control of the nle (in the caller)
+            else:
+                for c in bytes(ui, 'utf8').decode('unicode-escape'):
                     # the user might have potentially spoiled the state
                     self._dirty = True
                     try:
@@ -144,25 +174,6 @@ class AutoNLEControls:
                         if input('Invalid action. abort? [yn] (y)') != 'n':
                             return
                         break
-
-                else:
-                    buffer += c
-                    # do not interact with the env, since we are accumulating user input.
-                    pass  # obs = yield None
-
-            # end for
-
-            if self.debug and buffer:
-                flush(30)
-                try:
-                    pp.pprint(eval(buffer, {}, obs))  # XXX very dangerous!!!
-
-                except SyntaxError:
-                    self.debug = False
-
-                except Exception as e:
-                    print(str(e), type(e))
-                    pp.pprint(obs.keys())
 
     @property
     def is_auto(self):

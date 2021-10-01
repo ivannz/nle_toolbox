@@ -192,6 +192,11 @@ class Replay(Wrapper):
         # XXX by design `.replay` yields at least one sars transition
         #  for a non-empty list of actions.
         obs, fin, j = self.reset(), False, 0
+        if not actions:
+            # yield a semi-invalid sars if there are no actions to replay
+            yield None, None, float('nan'), obs, {}
+            return []
+
         while not fin and j < len(actions):
             # blindly follow the prescribed sequence
             act = actions[j]

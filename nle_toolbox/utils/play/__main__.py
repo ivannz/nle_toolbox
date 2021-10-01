@@ -2,6 +2,8 @@ import os
 import pickle
 import sys
 
+import pprint as pp
+
 import gym
 import nle
 
@@ -14,10 +16,15 @@ from ...bot.genfun import yield_from_nested
 
 
 def input(prompt=None, *, _input=__builtins__.input):
-    """Promt the user with the specified text and default color."""
+    """Prompt the user with the specified text and default color."""
     if prompt is None:
         return _input()
-    return _input('\033[39m\033[29;0H\033[2K\033[m' + str(prompt))
+
+    return _input('\033[29;0H\033[2K\r\033[39m\033[m' + str(prompt))
+
+
+def flush(l=31):
+    sys.stdout.write(f'\033[{l};0H\033[2K\r\033[J\033[37m')
 
 
 class AutoNLEControls:
@@ -27,7 +34,7 @@ class AutoNLEControls:
     `q` -- quit
     enter on an empty prompt -- repeat the last input
     """
-    playback, handler, pos = True, None, 0
+    playback, debug, handler, pos = True, False, None, 0
 
     def __init__(self, env, trace=()):
         self.trace, self.env = trace, env
@@ -56,7 +63,8 @@ class AutoNLEControls:
 
         # display a basic help at the 37th line
         if act == '?':
-            sys.stdout.write('\x1b[37m\x1b[31;0H' + self.__doc__)
+            flush(30)
+            print(self.__doc__)
             return True
 
         # unrecognized actions abort the playback altogether
@@ -99,11 +107,18 @@ class AutoNLEControls:
 
             # stick to the previous input if the current is empty
             ui = ui or uip
-
+            
+            buffer = ''
             for c in bytes(ui, 'utf8').decode('unicode-escape'):
                 # toggle game/playback control on zero
                 if ord(c) == 0:
                     self.playback = not self.playback
+                    self.debug = False
+                    continue
+
+                if ord(c) == 255 and not self.playback:
+                    self.debug = not self.debug
+                    buffer = ''
                     continue
 
                 # internal playback control
@@ -112,16 +127,16 @@ class AutoNLEControls:
                     if not self.step(c):
                         return
 
-                    # yield a `None` action to the caler to update the tty
+                    # yield a `None` action to the caller to update the tty
                     obs = yield None
 
-                # external control of the nle (in tha caller)
-                else:
-                    # the user might have potentially spolied the state
+                # external control of the nle (in the caller)
+                elif not self.debug:
+                    # the user might have potentially spoiled the state
                     self._dirty = True
                     try:
                         # yield the action from the user input and them gobble
-                        #  the potetnial more messages
+                        #  the potential more messages
                         obs = yield self.ctoa[ord(c)]
                         obs = yield self.skip_mores(obs)
 
@@ -129,6 +144,25 @@ class AutoNLEControls:
                         if input('Invalid action. abort? [yn] (y)') != 'n':
                             return
                         break
+
+                else:
+                    buffer += c
+                    # do not interact with the env, since we are accumulating user input.
+                    pass  # obs = yield None
+
+            # end for
+
+            if self.debug and buffer:
+                flush(30)
+                try:
+                    pp.pprint(eval(buffer, {}, obs))  # XXX very dangerous!!!
+
+                except SyntaxError:
+                    self.debug = False
+
+                except Exception as e:
+                    print(str(e), type(e))
+                    pp.pprint(obs.keys())
 
     @property
     def is_auto(self):
@@ -175,8 +209,8 @@ def replay(filename, delay=0.06, debug=False):
                 act = flow.send(obs)
                 if act is not None:
                     obs_, rew, fin, info = env.step(act)
-                    obs = obs_
                     sleep(delay)
+                obs = obs_
 
         except EOFError:
             break

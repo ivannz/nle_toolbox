@@ -36,6 +36,7 @@ class AutoNLEControls:
     `ctrl-d` quit, `debug` toggle debug mode, `help` print this help.
 
     Replay actions backward/forward by one `, .` by ten `< >` in playback mode
+    `signed integer` move to position from begining/end
     """
     playback, debug, handler, pos = True, False, None, 0
 
@@ -45,20 +46,27 @@ class AutoNLEControls:
 
     def step(self, act):
         # control the position in the replayed actions
-        if act not in ' ,.<>':
+        if isinstance(act, int):
+            # integers are used for wraparound indexing
+            pos = len(self.trace) + act if act < 0 else act
+
+        elif act in ' ,.<>':
+            if act in ',<':
+                delta = -1 if act == ',' else -10
+
+            elif act in '.>':
+                delta = +1 if act == '.' else +10
+
+            else:
+                delta = 0
+
+            pos = self.pos + delta
+
+        else:
             # unrecognized actions abort the playback altogether
             return None
 
-        if act in ',<':
-            delta = -1 if act == ',' else -10
-
-        elif act in '.>':
-            delta = +1 if act == '.' else +10
-
-        else:
-            delta = 0
-
-        self.pos = min(max(self.pos + delta, 0), len(self.trace))
+        self.pos = min(max(pos, 0), len(self.trace))
         for _, _, _, obs, _ in self.env.replay(
             self.trace[:self.pos],
             seed=self.env._seed,
@@ -73,7 +81,7 @@ class AutoNLEControls:
             status = "A" if self.playback else "U"
             status += "D" if self.debug else " "
 
-            return input(f"([{status:2s}] {extra}) > ")
+            return input(f"([{self.pos:5d} {status:2s}] {extra}) > ")
 
         except KeyboardInterrupt:
             # hook an interrupt handler so that we could stop playback on
@@ -150,6 +158,17 @@ class AutoNLEControls:
 
                 # internal playback control
                 else:
+                    try:
+                        obs = self.step(int(ui))
+                        if obs is None:
+                            return
+
+                        yield None
+                        continue
+
+                    except ValueError:
+                        pass
+
                     for c in bytes(ui, 'utf8').decode('unicode-escape'):
                         # abort on invalid command
                         obs = self.step(c)

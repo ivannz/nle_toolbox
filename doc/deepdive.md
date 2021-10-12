@@ -14,12 +14,45 @@ and graceful [end](./nle/sys/unix/nledl.c#46). These symbols correspond to the f
 [nle.c](./nle/src/nle.c).
 
 
-The developers of the NLE provide also extensive docs about the internal architecture of
-the project, which, essentially, is a wrapper around the original nethack itself.
-[See arch](./nle/doc/nle/ARCHITECTURE.md).
+## Hooking into Nethack proper
 
+The developers of the NLE also provide extensive documentation about the internal
+architecture of the project, which, essentially, is a window client (port) for the NetHack
+that implements gym api in python. [ARCHITECTURE.md](./nle/doc/nle/ARCHITECTURE.md)
 
-### Observation filler
+Following the reference tree for `nle_yiled` came up with the following chain:
+1. [getch_method](/win/rl/winrl.cc#L423) calls `fill_obs(nle_get_obs());` and
+does the context switch, which returns the input character.
+2. [rl_nhgetch](/win/rl/winrl.cc#L973) is a plain wrapper around `getch_method`
+3. [rl_nh_poskey](/win/rl/winrl.cc#L982) is also a wrapper arounf `rl_nhgetch`, but
+it seems that it used to expect a character at certain cursor position.
+4. [rl_procs](/win/rl/winrl.cc#L1133) the `window_procs` struct that seems to be a call
+table for terminal hooks
+5. [window_procs](/include/winprocs.h#L10-83) refers to `rl_nhgetch` and `rl_nh_poskey`
+by [`win_nhgetch` and `win_nh_poskey`](/include/winprocs.h#L51-52), respectively.
+6. Finally `rl_procs` is added to the list of [win_choices](/src/windows.c#L92-98)
+on [lines 135-137](/src/windows.c#L135-137)
+7. This is controlled by macro def [RL_GRAPHICS](include/config.h#L53)
+
+Note that no functions that refer to `win_choices` have been modified by the NLE team.
+```
+(getch_method|rl_nhgetch|rl_nh_poskey|rl_procs)
+(winchoices|win_choices_find|choose_windows|addto_windowchain|commit_windowchain)
+```
+This has been checked by searching through the diff of what has been added to NetHack 3.6
+by the NLE:
+```bash
+# add the original nethack repo
+git remote add nethack https://github.com/NetHack/NetHack.git
+git fetch nethack
+
+# get the diff with the best common ancestor
+git diff -u $(\
+    git merge-base remotes/nethack/NetHack-3.6 main\
+)..main > nle-2020.diff
+```
+
+## the Observation filler
 
 See [NetHackRL::fill_obs](./nle/win/rl/winrl.cc#L259-420)
 

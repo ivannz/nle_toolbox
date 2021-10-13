@@ -35,7 +35,18 @@ BLStats.__doc__ += "\n" + r"""
     Details
     -------
     The descriptions and meanings have been taken from
-        [nleobs.h](/include/nleobs.h#L16-42)
+        [nleobs.h](include/nleobs.h#L16-42)
+"""
+
+
+# miscellaneous flags
+Misc = namedtuple('Misc', 'in_yn_function,in_getlin,xwaitingforspace')
+Misc.__doc__ += "\n" + r"""
+    Miscellaneous flags
+
+    Details
+    -------
+    The meanings have been taken from [nleobs.h](win/rl/winrl.cc#L290-292).
 """
 
 

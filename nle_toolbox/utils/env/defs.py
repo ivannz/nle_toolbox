@@ -7,6 +7,8 @@
 #   E114 - indentation is not a multiple of four (comment)
 #   E116 - unexpected indentation (comment)
 
+import sys
+import numpy as np
 
 # offsets
 from nle.nethack import (
@@ -168,8 +170,8 @@ class symbol:
 
     #  /* end dungeon characters, begin traps */
 
-    # see also `trap_types` in include/trap.h, and glyph_to_trap include/rm.h#L629
-    # we can `nle.nethack.glyph_to_cmap` into this
+    # see also `trap_types` in include/trap.h, and `glyph_to_trap`
+    #  include/rm.h#L629 . we can also `nle.nethack.glyph_to_cmap` into these.
     S_arrow_trap           = 42
     S_dart_trap            = 43
     S_falling_rock_trap    = 44
@@ -192,7 +194,7 @@ class symbol:
     S_magic_trap           = 61
     S_anti_magic_trap      = 62
     S_polymorph_trap       = 63
-    S_vibrating_square     = 64  #  /* for display rather than any trap effect */
+    S_vibrating_square     = 64  # /* for display rather than any trap effect */
 
     #  /* end traps, begin special effects */
 
@@ -239,6 +241,27 @@ class symbol:
     assert MAXPCHARS == 96  # simple version sanity check
 
     MAXPCHARS   = 96  #  /* maximum number of mapped characters */
+
+
+# remap swallow geometry to cmap symbols
+symbol_sw_to_cmap = {
+    # insides' geometry is encoded as lower 3bits
+    #  1 2 3      0 1 2       +-+
+    #  4 5 6 -->> 3 . 4 -->>  | |
+    #  7 8 9      5 6 7       +-+
+    # see `symbol`
+
+    symbol.S_sw_tl: symbol.S_tlcorn,
+    symbol.S_sw_tc: symbol.S_hwall,
+    symbol.S_sw_tr: symbol.S_trcorn,
+
+    symbol.S_sw_ml: symbol.S_vwall,
+    symbol.S_sw_mr: symbol.S_vwall,
+
+    symbol.S_sw_bl: symbol.S_blcorn,
+    symbol.S_sw_bc: symbol.S_hwall,
+    symbol.S_sw_br: symbol.S_brcorn,
+}
 
 
 # copied form ./include/hack.h#L370-380
@@ -294,7 +317,8 @@ class zap:
     )))
 
 
-# FIXME not sure what this is
+# warning levels
+# FIXME what is the purpose of these?
 class warning:
     # taken from src/drawing.c#L124-137
     WORRY = 0
@@ -314,6 +338,49 @@ class warning:
         "alarm",
         "dread",
     )))
+
+
+# taken from mapglyph.c order matters
+class glyph_group:
+    # See display.h in NetHack.
+    MON     = 0
+    PET     = 1
+    INVIS   = 2
+    DETECT  = 3
+    BODY    = 4  # undead are MON
+    RIDDEN  = 5
+    OBJ     = 6
+    CMAP    = 7
+    EXPLODE = 8
+    ZAP     = 9
+    SWALLOW = 10
+    WARNING = 11
+    STATUE  = 12
+
+    MAX     = 13
+
+    # we do not consider a statue a monster
+    ACTORS = frozenset([
+        MON, PET, INVIS, DETECT, RIDDEN,
+    ])
+
+    OBJECTS = frozenset([
+        BODY, OBJ, STATUE,
+    ])
+
+    EFFECTS = frozenset([
+        EXPLODE, ZAP, WARNING,
+    ])
+
+    LEVEL = frozenset([
+        CMAP, SWALLOW
+    ])
+
+    # monsters, special effects and warnings are potentially mobile
+    MOBILE = frozenset([
+        *ACTORS,
+        *EFFECTS,
+    ])
 
 
 # exported macros
@@ -349,3 +416,202 @@ class glyph_to:
 
 def get_group(cls, offset, *symbols):
     return frozenset([offset + getattr(cls, s) for s in symbols])
+
+
+# index and group
+# XXX (group, entity) is enough to disambiguate glyphs
+dt_glyph_id = np.dtype([
+    ('value', int),   # (backref) the original value of the glyph
+    ('group', int),   # the technical group it belongs to
+    ('index', int),   # the index within the group
+    ('entity', int),  # the semantically unique id
+])
+
+
+# build the glyph group-index-entity lookup
+def glyph_lookup():
+    """Returns a lookup table for glyphs."""
+
+    # our unique enitiy index
+    n_entity_index = 0
+
+    # reweorked table form `nethack_baseline.torchbeast.utils`
+    table = np.zeros(MAX_GLYPH + 1, dtype=dt_glyph_id).view(np.recarray)
+
+    # Monsters -- the base category!
+    for glyph in range(GLYPH_MON_OFF, GLYPH_PET_OFF):
+        table[glyph] = (
+            glyph,
+            glyph_group.MON,
+            glyph - GLYPH_MON_OFF,
+            n_entity_index
+        )
+        n_entity_index += 1
+
+    # Pets
+    for glyph in range(GLYPH_PET_OFF, GLYPH_INVIS_OFF):
+        monster = glyph - GLYPH_PET_OFF
+        table[glyph] = (
+            glyph,
+            glyph_group.PET,
+            monster,
+            # appropriate normal monster's entity id
+            table[monster + GLYPH_MON_OFF].entity,
+        )
+
+    # Invisible monsters (only one monster placeholder)
+    for glyph in range(GLYPH_INVIS_OFF, GLYPH_DETECT_OFF):
+        table[glyph] = (
+            glyph,
+            glyph_group.INVIS,
+            glyph - GLYPH_INVIS_OFF,
+            n_entity_index,
+        )
+        n_entity_index += 1
+
+    # Detected monsters (what are these?)
+    for glyph in range(GLYPH_DETECT_OFF, GLYPH_BODY_OFF):
+        monster = glyph - GLYPH_DETECT_OFF
+        table[glyph] = (
+            glyph,
+            glyph_group.DETECT,
+            monster,
+            # appropriate normal monster's entity id
+            table[monster + GLYPH_MON_OFF].entity,
+        )
+
+    # Bodies of monsters
+    for glyph in range(GLYPH_BODY_OFF, GLYPH_RIDDEN_OFF):
+        monster = glyph - GLYPH_BODY_OFF
+        table[glyph] = (
+            glyph,
+            glyph_group.BODY,
+            monster,
+            # appropriate normal monster's entity id (because entities
+            #  correspond to information embeddings, whatever form they take)
+            table[monster + GLYPH_MON_OFF].entity,
+        )
+
+    # Mounts
+    for glyph in range(GLYPH_RIDDEN_OFF, GLYPH_OBJ_OFF):
+        monster = glyph - GLYPH_RIDDEN_OFF
+        table[glyph] = (
+            glyph,
+            glyph_group.RIDDEN,
+            monster,
+            # appropriate normal monster's entity id
+            table[monster + GLYPH_MON_OFF].entity,
+        )
+
+    # Items
+    for glyph in range(GLYPH_OBJ_OFF, GLYPH_CMAP_OFF):
+        table[glyph] = (
+            glyph,
+            glyph_group.OBJ,
+            glyph - GLYPH_OBJ_OFF,
+            n_entity_index,
+        )
+        n_entity_index += 1
+
+    # Dungeon layout
+    for glyph in range(GLYPH_CMAP_OFF, GLYPH_EXPLODE_OFF):
+        table[glyph] = (
+            glyph,
+            glyph_group.CMAP,
+            glyph - GLYPH_CMAP_OFF,  # maps into `symbol`
+            n_entity_index,
+        )
+        n_entity_index += 1
+
+    # Explosion special fx.: nature x geometry
+    for glyph in range(GLYPH_EXPLODE_OFF, GLYPH_ZAP_OFF):
+        # get the pure explosion type from the glyph:
+        #   nature: see [explosion._name](include/hack.h#L370-380)
+        #   geometry [`S_explode[1-9]`](include/rm.h#L216-224)
+        nature, geometry = divmod(glyph - GLYPH_EXPLODE_OFF, MAXEXPCHARS)
+        # XXX ignore explosions' geometry
+
+        table[glyph] = (
+            glyph,
+            glyph_group.EXPLODE,
+            nature,  # maps into `explosion`
+            n_entity_index + nature,  # we need to embed explsion's `nature`
+        )
+
+    assert nature + 1 == explosion.MAX
+    n_entity_index += explosion.MAX
+
+    # Zap beam special effects: energy x beam
+    for glyph in range(GLYPH_ZAP_OFF, GLYPH_SWALLOW_OFF):
+        # as in the case of explosions, we infer the `energy` type from zaps
+        #   energy: see [ZAP._name](./src/zap.c#L38-46)
+        #   beam: (S_[vh]beam|S_[rl]slant) 4 directions
+        energy, beam = divmod(glyph - GLYPH_ZAP_OFF, 4)
+        # XXX we ignore beam direction
+
+        table[glyph] = (
+            glyph,
+            glyph_group.ZAP,
+            energy,  # maps into `zap`
+            n_entity_index + energy,  # energy type is important, eg dath ray
+        )
+
+    assert energy + 1 == zap.MAX
+    n_entity_index += zap.MAX
+
+    # Swallow map layout: monster x 8 walls for insides' geometry
+    for glyph in range(GLYPH_SWALLOW_OFF, GLYPH_WARNING_OFF):
+        # get the monster type from the surrounding insides
+        #   monster: see all monsters [pm.h](./utils/makedefs.c)
+        #   layout: S_sw_[tmb][lcr] (excl. S_sw_cc)
+        monster, geometry = divmod(glyph - GLYPH_SWALLOW_OFF, 8)
+
+        # just add the offset ./src/mapglyph.c#L101
+        cmap = symbol_sw_to_cmap[symbol.S_sw_tl + geometry]
+
+        # XXX do we care about the monster info?
+        table[glyph] = (
+            glyph,
+            glyph_group.SWALLOW,
+            cmap,  # maps into `symbol`
+            # assume monster's entity id
+            table[monster + GLYPH_MON_OFF].entity,
+        )
+
+    # Warnings (six different warning levels)
+    for glyph in range(GLYPH_WARNING_OFF, GLYPH_STATUE_OFF):
+        table[glyph] = (
+            glyph,
+            glyph_group.WARNING,
+            glyph - GLYPH_WARNING_OFF,  # maps into `warning`
+            n_entity_index,
+        )
+        n_entity_index += 1
+
+    # Monster statues
+    for glyph in range(GLYPH_STATUE_OFF, MAX_GLYPH):
+        monster = glyph - GLYPH_STATUE_OFF
+        table[glyph] = (
+            glyph,
+            glyph_group.STATUE,
+            monster,
+            # appropriate normal monster's entity id (since monsters may become
+            #  statues when hallucinating)
+            table[monster + GLYPH_MON_OFF].entity,
+        )
+
+    # sanity check
+    assert n_entity_index == MAX_ENTITY
+
+    # MAX_GLYPH is the general padding glyph
+    table[MAX_GLYPH] = (
+        MAX_GLYPH,
+        glyph_group.MAX,
+        symbol.S_stone,  # map to stone symbol
+        MAX_ENTITY,
+    )
+
+    return table
+
+
+glyphlut = glyph_lookup()

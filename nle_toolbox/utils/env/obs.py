@@ -1,3 +1,5 @@
+import numpy as np
+
 from collections import namedtuple
 
 # Bottom Line statistics namedtuple, see `./nle/include/nleobs.h#L16-42`
@@ -104,4 +106,35 @@ def get_bytes(
         inv_letters=bytes(inv_letters),
         inv_strs=bytes(inv_strs),
         **remaining,
+    )
+
+
+def fold2d(
+    array,
+    /,
+    k=1,
+    *,
+    leading=1,
+    writeable=True,
+):
+    """Zero-copy sliding window view."""
+    leading = (leading + array.ndim) if leading < 0 else leading
+
+    if array.ndim < leading + 2:
+        raise ValueError(f"No enough dimensions for 2d folding `{array.shape}`.")
+
+    d0, d1, *shape = array.shape[leading:]
+    s0, s1, *strides = array.strides[leading:]
+    return np.lib.stride_tricks.as_strided(
+        array, (
+            *array.shape[:leading],
+            d0 - 2 * k, d1 - 2 * k,  # n' = n - w + 1, w = k + 1 + k
+            k + 1 + k, k + 1 + k,
+            *shape,
+        ), (
+            *array.strides[:leading],
+            s0, s1,
+            s0, s1,
+            *strides,
+        ), writeable=writeable,
     )

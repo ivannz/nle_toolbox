@@ -291,3 +291,6 @@ dmypy.json
 cython_debug/
 
 # End of https://www.toptal.com/developers/gitignore/api/python,jupyternotebooks,pycharm,macos
+
+# unignore ./env submodules
+!nle_toolbox/utils/env

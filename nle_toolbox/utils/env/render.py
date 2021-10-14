@@ -2,7 +2,7 @@ import numpy as np
 
 from textwrap import wrap
 
-from ..obs import Misc
+from .obs import Misc
 
 
 def fixup_tty(

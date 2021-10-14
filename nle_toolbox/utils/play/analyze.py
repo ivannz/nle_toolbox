@@ -12,7 +12,7 @@ from joblib import delayed, Parallel
 from hashlib import sha256
 
 from ...wrappers.replay import Replay
-from ..obs import BLStats
+from ..env.obs import BLStats
 
 
 """The series we compute for each trace."""

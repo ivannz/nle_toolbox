@@ -20,6 +20,7 @@ if __name__ == '__main__':
         packages=[
             'nle_toolbox',
             'nle_toolbox.utils',
+            'nle_toolbox.utils.env',
             'nle_toolbox.utils.play',
             'nle_toolbox.wrappers',
             'nle_toolbox.bot',

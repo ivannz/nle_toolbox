@@ -6,8 +6,8 @@ from collections import namedtuple
 BLStats = namedtuple('BLStats', [
     'x',
     'y',
-    'strength_percentage',
     'str',  # 'strength',
+    'strength_percentage',
     'dex',  # 'dexterity',
     'con',  # 'constitution',
     'int',  # 'intelligence',

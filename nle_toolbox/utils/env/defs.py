@@ -139,6 +139,28 @@ class condition:
     }
 
 
+# /* symbolic names for capacity levels */
+# taken from include/hack/h#L23-30
+class encumberance:
+    UNENCUMBERED = 0 
+    SLT_ENCUMBER = 1  # /* Burdened */
+
+    MOD_ENCUMBER = 2  # /* Stressed */
+    HVY_ENCUMBER = 3  # /* Strained */
+    EXT_ENCUMBER = 4  # /* Overtaxed */
+
+    OVERLOADED   = 5  # /* Overloaded */
+
+    _name = tuple(map(sys.intern, (
+        'unencumbered',
+        'burdened',
+        'stressed',
+        'strained',
+        'overtaxed',
+        'overloaded',
+    )))
+
+
 # /* Special returns from mapglyph() */
 # from include/hack.h#L76-84
 class special:

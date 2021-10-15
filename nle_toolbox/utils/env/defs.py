@@ -66,6 +66,79 @@ MAX_ENTITY = (
 )
 
 
+# /* hunger states - see hu_stat in src/eat.c#L74-76 */
+class hunger:
+    SATIATED   = 0
+    NOT_HUNGRY = 1
+    HUNGRY     = 2
+    WEAK       = 3
+    FAINTING   = 4
+    FAINTED    = 5
+    STARVED    = 6
+
+    MAX        = 7
+
+    # /* see hunger states in hack.h#L44-53 - texts used on bottom line */
+    _name = tuple(map(sys.intern, (
+        "satiated",
+        # we use a meaningful descr, instead of whitespace
+        "not hungry",
+        "hungry",
+        "weak",
+        "fainting",
+        "fainted",
+        "starved",
+    )))
+
+
+# /* Boolean condition bits for the condition mask */
+# bitfields are copied from include/botl.h#L56-70
+#  and groups from src/botl.c#L2321-2333
+class condition:
+    # major
+    STONE     = 0x00000001
+    SLIME     = 0x00000002
+    STRNGL    = 0x00000004
+    FOODPOIS  = 0x00000008
+    TERMILL   = 0x00000010
+    MAJOR = STONE | SLIME | STRNGL | FOODPOIS | TERMILL
+
+    # minor
+    BLIND     = 0x00000020
+    DEAF      = 0x00000040
+    STUN      = 0x00000080
+    CONF      = 0x00000100
+    HALLU     = 0x00000200
+    MINOR = BLIND | DEAF | STUN | CONF | HALLU
+
+    # movement
+    LEV       = 0x00000400
+    FLY       = 0x00000800
+    RIDE      = 0x00001000
+    MOVEMENT = LEV | FLY | RIDE
+
+    N_BITS    = 13
+
+    ALL = MAJOR | MINOR | MOVEMENT
+
+    # /* see hunger states in hack.h#L44-53 - texts used on bottom line */
+    _name = {
+        STONE:     "pterified",
+        SLIME:     "turned to slime",
+        STRNGL:    "strnagled",
+        FOODPOIS:  "food poisoning",
+        TERMILL:   "terminally ill",
+        BLIND:     "blind",
+        DEAF:      "deaf",
+        STUN:      "stunned",
+        CONF:      "confused",
+        HALLU:     "hallucianting",
+        LEV:       "levitating",
+        FLY:       "flying",
+        RIDE:      "riding",
+    }
+
+
 # /* Special returns from mapglyph() */
 # from include/hack.h#L76-84
 class special:

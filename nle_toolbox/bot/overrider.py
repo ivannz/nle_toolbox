@@ -14,16 +14,18 @@ def interact(env, *, handle):
     obs, rew, done, info = env.reset(), 0., False, {}
     while not done:
         # if we cannot override then yield to the user
+        # XXX `done` is always False inside the loop, so we can hardcode it
         try:
-            act = handle(obs, rew, done, info)
+            act = handle(obs, rew, False, info)
 
         except UnhandledObservation:
-            act = yield obs, rew, done, info
+            act = yield obs, rew, False, info
 
         # interact with the environment
         obs, rew, done, info = env.step(act)
 
-    return obs, rew, done, info
+    # XXX `done` is always True here
+    return obs, rew, True, info
 
 
 class BaseOverrider(Wrapper):
@@ -36,11 +38,19 @@ class BaseOverrider(Wrapper):
 
         # reset the generator and start it
         self._loop = interact(self.env, handle=self.handle)
-        obs, rew, done, info = self._loop.send(None)
-        return obs
+        try:
+            obs, rew, done, info = self._loop.send(None)
+            return obs
+
+        except StopIteration:
+            raise RuntimeError("Terminated environment on reset!") from None
 
     def step(self, act):
-        return self._loop.send(act)
+        try:
+            return self._loop.send(act)
+
+        except StopIteration as e:
+            return e.value
 
     def handle(self, obs, rew=0., done=False, info=None):
         """Throwing an exception allows partial handling: we can update

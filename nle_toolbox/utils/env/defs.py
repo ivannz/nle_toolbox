@@ -305,20 +305,20 @@ class symbol:
     #  /* end traps, begin special effects */
 
     # XXX maybe we should avoid fx like poison gas, booms, or in-flight zaps
-    S_vbeam     = 65  #  /* The 4 zap beam symbols.  Do NOT separate. */
-    S_hbeam     = 66  #  /* To change order or add, see function      */
-    S_lslant    = 67  #  /* zapdir_to_glyph() in display.c.           */
-    S_rslant    = 68
-    S_digbeam   = 69  #  /* dig beam symbol */
-    S_flashbeam = 70  #  /* camera flash symbol */
-    S_boomleft  = 71  #  /* thrown boomerang, open left, e.g ')'    */
-    S_boomright = 72  #  /* thrown boomerang, open right, e.g. '('  */
-    S_ss1       = 73  #  /* 4 magic shield ("resistance sparkle") glyphs */
-    S_ss2       = 74
-    S_ss3       = 75
-    S_ss4       = 76
-    S_poisoncloud = 77
-    S_goodpos   = 78  #  /* valid position for targeting via getpos() */
+    S_vbeam        = 65  #  /* The 4 zap beam symbols.  Do NOT separate. */
+    S_hbeam        = 66  #  /* To change order or add, see function      */
+    S_lslant       = 67  #  /* zapdir_to_glyph() in display.c.           */
+    S_rslant       = 68
+    S_digbeam      = 69  #  /* dig beam symbol */
+    S_flashbeam    = 70  #  /* camera flash symbol */
+    S_boomleft     = 71  #  /* thrown boomerang, open left, e.g ')'    */
+    S_boomright    = 72  #  /* thrown boomerang, open right, e.g. '('  */
+    S_ss1          = 73  #  /* 4 magic shield ("resistance sparkle") glyphs */
+    S_ss2          = 74
+    S_ss3          = 75
+    S_ss4          = 76
+    S_poisoncloud  = 77
+    S_goodpos      = 78  #  /* valid position for targeting via getpos() */
 
     #  /* The 8 swallow symbols.  Do NOT separate.  To change order or add, */
     #  /* see the function swallow_to_glyph() in display.c.                 */
@@ -347,6 +347,77 @@ class symbol:
     assert MAXPCHARS == 96  # simple version sanity check
 
     MAXPCHARS   = 96  #  /* maximum number of mapped characters */
+
+    condensed_index = {
+        el: j
+        for j, group in enumerate([
+            # dungeon features
+            [S_stone],
+            [S_tree],
+            [S_vwall, S_hwall, S_crwall, S_tuwall, S_tdwall, S_tlwall,
+             S_trwall, S_tlcorn, S_trcorn, S_blcorn, S_brcorn],
+            [S_bars],
+            [S_vcdoor, S_hcdoor, S_vcdbridge, S_hcdbridge],
+            [S_pool, S_water],
+            [S_lava],
+            [S_ndoor, S_vodoor, S_hodoor, S_vodbridge, S_hodbridge],
+            [S_corr, S_litcorr],
+            [S_room, S_darkroom],
+            [S_upstair, S_dnstair, S_upladder, S_dnladder],
+            [S_fountain],
+            [S_throne],
+            [S_sink],
+            [S_grave],
+            [S_altar],
+            [S_ice],
+            [S_air],
+            [S_cloud],
+
+            # traps
+            [S_arrow_trap],
+            [S_dart_trap],
+            [S_falling_rock_trap],
+            [S_squeaky_board],
+            [S_bear_trap],
+            [S_land_mine],
+            [S_rolling_boulder_trap],
+            [S_sleeping_gas_trap],
+            [S_rust_trap],
+            [S_fire_trap],
+            [S_pit],
+            [S_spiked_pit],
+            [S_hole],
+            [S_trap_door],
+            [S_teleportation_trap],
+            [S_level_teleporter],
+            [S_magic_portal],
+            [S_web],
+            [S_statue_trap],
+            [S_magic_trap],
+            [S_anti_magic_trap],
+            [S_polymorph_trap],
+            [S_vibrating_square],
+
+            # special fx
+            [S_vbeam],
+            [S_hbeam],
+            [S_lslant],
+            [S_rslant],
+            [S_digbeam],
+            [S_flashbeam],
+            [S_boomleft],
+            [S_boomright],
+            [S_ss1],
+            [S_ss2],
+            [S_ss3],
+            [S_ss4],
+            [S_poisoncloud],
+            [S_goodpos],
+
+            # swallow
+            # skipped, since we remap it to dingeon features
+        ]) for el in group
+    }
 
 
 # remap swallow geometry to cmap symbols
@@ -535,8 +606,9 @@ dt_glyph_id = np.dtype([
 
 
 # build the glyph group-index-entity lookup
-def glyph_lookup():
+def glyph_lookup(condensed=False):
     """Returns a lookup table for glyphs."""
+    assert not condensed
 
     # our unique enitiy index
     n_entity_index = 0
@@ -620,14 +692,31 @@ def glyph_lookup():
         n_entity_index += 1
 
     # Dungeon layout
-    for glyph in range(GLYPH_CMAP_OFF, GLYPH_EXPLODE_OFF):
-        table[glyph] = (
-            glyph,
-            glyph_group.CMAP,
-            glyph - GLYPH_CMAP_OFF,  # maps into `symbol`
-            n_entity_index,
-        )
-        n_entity_index += 1
+    if not condensed:
+        for glyph in range(GLYPH_CMAP_OFF, GLYPH_EXPLODE_OFF):
+            table[glyph] = (
+                glyph,
+                glyph_group.CMAP,
+                glyph - GLYPH_CMAP_OFF,  # maps into `symbol`
+                n_entity_index,
+            )
+            n_entity_index += 1
+
+    else:
+        # XXX there is no actionalbe information in  distinguishing
+        #  `([hv]|cr|t[udlr])wall` or `[tb][lr]corn`, i.e. different wall geometry,
+        #  or orientation of doors/drawbridges ought not to have impact on the
+        #  AI gameplay.
+        for glyph in range(GLYPH_CMAP_OFF, GLYPH_EXPLODE_OFF):
+            cmap = glyph - GLYPH_CMAP_OFF
+            table[glyph] = (
+                glyph,
+                glyph_group.CMAP,
+                cmap,
+                symbol.condensed_index[cmap],
+            )
+
+        n_entity_index += len(set(symbol.condensed_index.values()))
 
     # Explosion special fx.: nature x geometry
     for glyph in range(GLYPH_EXPLODE_OFF, GLYPH_ZAP_OFF):
@@ -666,6 +755,9 @@ def glyph_lookup():
     n_entity_index += zap.MAX
 
     # Swallow map layout: monster x 8 walls for insides' geometry
+    # XXX after all being swallowed by a monster is an expectional situation,
+    #  which does not benefit from knowing what monster is currently devouring
+    #  the player. A panic glyph maybe?
     for glyph in range(GLYPH_SWALLOW_OFF, GLYPH_WARNING_OFF):
         # get the monster type from the surrounding insides
         #   monster: see all monsters [pm.h](./utils/makedefs.c)

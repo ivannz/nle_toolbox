@@ -2,35 +2,68 @@ import numpy as np
 
 from collections import namedtuple
 
+from nle.nethack import (
+    NLE_BL_X,
+    NLE_BL_Y,
+    NLE_BL_STR25,
+    NLE_BL_STR125,
+    NLE_BL_DEX,
+    NLE_BL_CON,
+    NLE_BL_INT,
+    NLE_BL_WIS,
+    NLE_BL_CHA,
+    NLE_BL_SCORE,
+    NLE_BL_HP,
+    NLE_BL_HPMAX,
+    NLE_BL_DEPTH,
+    NLE_BL_GOLD,
+    NLE_BL_ENE,
+    NLE_BL_ENEMAX,
+    NLE_BL_AC,
+    NLE_BL_HD,
+    NLE_BL_XP,
+    NLE_BL_EXP,
+    NLE_BL_TIME,
+    NLE_BL_HUNGER,
+    NLE_BL_CAP,
+    NLE_BL_DNUM,
+    NLE_BL_DLEVEL,
+    NLE_BL_CONDITION,
+)
+
+
 # Bottom Line statistics namedtuple, see `./nle/include/nleobs.h#L16-42`
-BLStats = namedtuple('BLStats', [
-    'x',
-    'y',
-    'str',  # 'strength',
-    'strength_percentage',
-    'dex',  # 'dexterity',
-    'con',  # 'constitution',
-    'int',  # 'intelligence',
-    'wis',  # 'wisdom',
-    'cha',  # 'charisma',
-    'score',
-    'hitpoints',
-    'max_hitpoints',
-    'depth',
-    'gold',
-    'energy',
-    'max_energy',
-    'armor_class',
-    'monster_level',
-    'experience_level',
-    'experience_points',
-    'time',
-    'hunger_state',
-    'carrying_capacity',
-    'dungeon_number',
-    'level_number',
-    'condition',
-])
+_, blstats_fields = zip(*sorted([
+    (NLE_BL_X,         'x'),
+    (NLE_BL_Y,         'y'),
+    (NLE_BL_STR25,     'str'),     # 'strength'
+    (NLE_BL_STR125,    'strength_percentage'),
+    (NLE_BL_DEX,       'dex'),     # 'dexterity'
+    (NLE_BL_CON,       'con'),     # 'constitution'
+    (NLE_BL_INT,       'int'),     # 'intelligence'
+    (NLE_BL_WIS,       'wis'),     # 'wisdom'
+    (NLE_BL_CHA,       'cha'),     # 'charisma'
+    (NLE_BL_SCORE,     'score'),
+    (NLE_BL_HP,        'hitpoints'),
+    (NLE_BL_HPMAX,     'max_hitpoints'),
+    (NLE_BL_DEPTH,     'depth'),
+    (NLE_BL_GOLD,      'gold'),
+    (NLE_BL_ENE,       'energy'),
+    (NLE_BL_ENEMAX,    'max_energy'),
+    (NLE_BL_AC,        'armor_class'),
+    (NLE_BL_HD,        'monster_level'),
+    (NLE_BL_XP,        'experience_level'),
+    (NLE_BL_EXP,       'experience_points'),
+    (NLE_BL_TIME,      'time'),
+    (NLE_BL_HUNGER,    'hunger_state'),
+    (NLE_BL_CAP,       'carrying_capacity'),
+    (NLE_BL_DNUM,      'dungeon_number'),
+    (NLE_BL_DLEVEL,    'level_number'),
+    (NLE_BL_CONDITION, 'condition'),
+]))
+
+
+BLStats = namedtuple('BLStats', blstats_fields)
 BLStats.__doc__ += "\n" + r"""
     Current bottom line statistics vector.
 

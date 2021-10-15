@@ -41,6 +41,13 @@ from nle.nethack import (
 )
 
 
+# various constants
+from nle.nethack import (
+    MAXOCLASSES,
+    MAXMCLASSES,
+)
+
+
 # the number of distinct entities that glyphs actually correspond to
 MAX_ENTITY = (
     NUMMONS                      # normal monsters
@@ -73,21 +80,23 @@ class special:
     """
 
     # determined by the glyph
-    CORPSE   = 0x01
-    INVIS    = 0x02
-    DETECT   = 0x04
-    PET      = 0x08
-    RIDDEN   = 0x10
-    STATUE   = 0x20
+    from nle.nethack import MG_CORPSE  as CORPSE   # 0x01
+    from nle.nethack import MG_INVIS   as INVIS    # 0x02
+    from nle.nethack import MG_DETECT  as DETECT   # 0x04
+    from nle.nethack import MG_PET     as PET      # 0x08
+    from nle.nethack import MG_RIDDEN  as RIDDEN   # 0x10
+    from nle.nethack import MG_STATUE  as STATUE   # 0x20
 
     # boulders hide objpiles, corpses and statues count towards objpiles
     # NB affected by hallucination src/maglyph.c#L57-58
-    OBJPILE  = 0x40  # /* more than one stack of objects */
+    # /* more than one stack of objects */
+    from nle.nethack import MG_OBJPILE as OBJPILE  # 0x40
 
     # determined by the glyph and and whether the color is being used and
     #  the water/lava symbols coincide.
-    BW_LAVA  = 0x80  # /* 'black & white lava': highlight lava if it
-                     #    can't be distringuished from water by color */
+    from nle.nethack import MG_BW_LAVA as BW_LAVA  # 0x80
+    # /* 'black & white lava': highlight lava if it
+    #    can't be distringuished from water by color */
 
 
 # cmap symbol-glyph semantics
@@ -145,11 +154,11 @@ class symbol:
     S_vodoor    = 13  # cannot "move diagonally out of an intact doorway."
     S_hodoor    = 14
 
-    S_corr, S_litcorr = 21, 22
+    S_corr, S_litcorr      = 21, 22
 
     # begin IS_ROOM: furniture and room floors
-    S_room, S_darkroom = 19, 20
-    S_upstair, S_dnstair = 23, 24
+    S_room, S_darkroom     = 19, 20
+    S_upstair, S_dnstair   = 23, 24
     S_upladder, S_dnladder = 25, 26
 
     S_fountain  = 31
@@ -321,12 +330,12 @@ class zap:
 # FIXME what is the purpose of these?
 class warning:
     # taken from src/drawing.c#L124-137
-    WORRY = 0
-    CONCERN = 1
-    ANXIETY = 2
+    WORRY    = 0
+    CONCERN  = 1
+    ANXIETY  = 2
     DISQUIET = 3
-    ALARM = 4
-    DREAD = 5
+    ALARM    = 4
+    DREAD    = 5
 
     from nle.nethack import WARNCOUNT as MAX
 
@@ -386,30 +395,30 @@ class glyph_group:
 # exported macros
 class glyph_is:
     # from nle.nethack import glyph_is_monster as monster  # subsumed
-    from nle.nethack import glyph_is_normal_monster as normal_monster
-    from nle.nethack import glyph_is_pet as pet
-    from nle.nethack import glyph_is_body as body
-    from nle.nethack import glyph_is_statue as statue
-    from nle.nethack import glyph_is_ridden_monster as ridden_monster
+    from nle.nethack import glyph_is_normal_monster   as normal_monster
+    from nle.nethack import glyph_is_pet              as pet
+    from nle.nethack import glyph_is_body             as body
+    from nle.nethack import glyph_is_statue           as statue
+    from nle.nethack import glyph_is_ridden_monster   as ridden_monster
     from nle.nethack import glyph_is_detected_monster as detected_monster
-    from nle.nethack import glyph_is_invisible as invisible
-    from nle.nethack import glyph_is_normal_object as normal_object
+    from nle.nethack import glyph_is_invisible        as invisible
+    from nle.nethack import glyph_is_normal_object    as normal_object
     # from nle.nethack import glyph_is_object as obj  # normalize, subsumed
 
     # ATTN is_trap is off-by-one since it uses NUMTRAPS, which includes NO_TRAP
-    from nle.nethack import glyph_is_trap as trap
+    from nle.nethack import glyph_is_trap             as trap
 
-    from nle.nethack import glyph_is_cmap as cmap
-    from nle.nethack import glyph_is_swallow as swallow
-    from nle.nethack import glyph_is_warning as warning
+    from nle.nethack import glyph_is_cmap             as cmap
+    from nle.nethack import glyph_is_swallow          as swallow
+    from nle.nethack import glyph_is_warning          as warning
 
 
 # exported macros
 class glyph_to:
-    from nle.nethack import glyph_to_mon as monster
-    from nle.nethack import glyph_to_obj as obj
-    from nle.nethack import glyph_to_trap as trap
-    from nle.nethack import glyph_to_cmap as cmap
+    from nle.nethack import glyph_to_mon     as monster
+    from nle.nethack import glyph_to_obj     as obj
+    from nle.nethack import glyph_to_trap    as trap
+    from nle.nethack import glyph_to_cmap    as cmap
     from nle.nethack import glyph_to_swallow as swallow
     from nle.nethack import glyph_to_warning as warning
 

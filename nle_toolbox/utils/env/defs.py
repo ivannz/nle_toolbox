@@ -151,6 +151,8 @@ class encumberance:
 
     OVERLOADED   = 5  # /* Overloaded */
 
+    MAX          = 6
+
     _name = tuple(map(sys.intern, (
         'unencumbered',
         'burdened',

@@ -173,3 +173,109 @@ class BaseOverrider(Wrapper):
         """Throwing an exception allows partial handling: we can update
         internal state and data, yet still yield to the user."""
         raise UnhandledObservation
+
+
+class BaseTemporalAbstractionWrapper(Wrapper):
+    """Temporal Abstraction Wrapper
+
+    Parameters
+    ----------
+    env : gym.Env
+        The environment which to apply temporal abstraction to.
+
+    Details
+    -------
+    Derived classes must implement an `.action` method, which returns
+    a policy for the specified action. A policy is implemented as a generator
+    that communicates low-level actions to the wrapped environment via `yield`
+    statements like this:
+
+    ```python
+        def policy(obs, hx=None):
+            action, done, hx = core(obs, hx=hx)
+            while not done:  # note that the core decides when to cease
+                obs, rew, _, info = yield action
+                action, done, hx = core(obs, hx=hx)
+    ```
+    """
+    _generator = None
+
+    def action(self, action):
+        raise NotImplementedError
+
+    def reset(self):
+        """Reset the environment's state and return an initial observation."""
+        if isgenerator(self._generator):
+            self._generator.close()
+
+        self._generator = self.loop(self.env)
+
+        # no need to catch StopIteration, since by design our generator is
+        # non-empty, because gym.Env's episodes cannot terminate during reset.
+        obs, rew, done, info = self._generator.send(None)
+
+        return obs
+
+    def step(self, action):
+        """Run one abstract timestep of the environment's dynamics."""
+        try:
+            return self._generator.send(self.action(action))
+
+        except RuntimeError:
+            raise RuntimeError(f"Bad action `{action}`") from None
+
+        except StopIteration as e:
+            return e.value
+
+    def close(self):
+        """Perform the necessary cleanup."""
+        if isgenerator(self._generator):
+            self._generator.close()
+
+        return super().close()
+
+    @staticmethod
+    def loop(env, *, reduce=sum):
+        """The core temporal abstraction loop.
+
+        Parameters
+        ----------
+        env : gym.Env
+            The environment which to apply temporal abstraction to.
+
+        reduce : callable, default=sum
+            The callable which takes a list of rewards (floats or arrays, if
+            the env has vector rewards) and computes and aggregate reward.
+            By default we sum whatever rewards were tracked.
+
+        Details
+        -------
+        It resets the environment, and then yields 4-tuples returned by the
+        .step of the env, except that the rewards are aggregated since the last
+        yield.
+        """
+        obs, rewards, done, info = env.reset(), [0.], False, {}
+        while not done:
+            # request the next policy from the downstream
+            gen = yield obs, reduce(rewards), False, info
+            # XXX we do not have a dedicated `.startup` sequence, which could
+            # perform necessary in-env preparations, inits and configs, since
+            # the first `.step` can set things up.
+            try:
+                act, rewards = gen.send(None), []
+                while not done:
+                    # step and accumulate the rewards for the downstream consumer
+                    obs, rew, done, info = env.step(act)
+                    rewards.append(rew)
+
+                    # get the next action
+                    act = gen.send((obs, rew, done, info))
+
+            except StopIteration:
+                # forbid empty generators
+                if not rewards:
+                    raise RuntimeError
+
+        # communicate through `StopIteration` whatever the last response from
+        # the env was.
+        return obs, rew, done, info

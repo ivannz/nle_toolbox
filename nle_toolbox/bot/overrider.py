@@ -9,24 +9,25 @@ class UnhandledObservation(Exception):
     pass
 
 
-def interact(env, *, peer):
-    """A simple semi-automatic interaction loop in peer mode. See `doc/shell`.
+def follow(env, *, handle):
+    """A simple semi-automatic interaction loop in follower mode.
+    See `doc/shell`.
     """
     # construct the initial result
     obs, rew, done, info = env.reset(), 0., False, {}
-    rew_peer = rew_user = rew
+    rew_lead = rew_follow = rew
     while not done:
         # if we cannot override then yield to the user
         # XXX `done` is always False inside the loop, so we can hardcode it
         try:
-            act = peer(obs, rew_peer, False, info)
-            from_peer = True  # set the flag after, since peer may raise
+            act = handle(obs, rew_lead, False, info)
+            from_lead = True  # set the flag after, since peer may raise
 
         except UnhandledObservation:
             # we implicitly assume that the may user throw an unhandled at us,
             # but the roles of the user and the peer may be reversed!
-            act = yield obs, rew_user, False, info
-            from_peer = False
+            act = yield obs, rew_follow, False, info
+            from_lead = False
             # XXX whoever's here is not the peer. more like an advisor. So
             #  what credit does the advisor get?
 
@@ -35,27 +36,64 @@ def interact(env, *, peer):
 
         # The reward is due to the transition induced by most recent action.
         #  Therefore we must assign credit to the correct decision maker.
-        if from_peer:
-            rew_peer = rew
+        if from_lead:
+            rew_lead = rew
 
         else:
-            rew_user = rew
+            rew_follow = rew
 
     # the peer does not get to experience the end-of-episode signal,
     # so always send the final result with the user's reward.
     # XXX `done` is always True here
-    return obs, rew_user, True, info
+    return obs, rew_follow, True, info
 
 
-def operate(env, *, follower, reduce=sum):
-    """A simple semi-automatic interaction loop in follower mode.
+def lead(env, *, handle):
+    """A simple semi-automatic interaction loop in leader mode.
     See `doc/shell`.
+
+    Details
+    -------
+    The same logic as in `follow`, but with yield and `handle` swapped places.
     """
+    obs, rew, done, info = env.reset(), 0., False, {}
+    rew_lead = rew_follow = rew
+    while not done:
+        try:
+            act = yield obs, rew_follow, False, info
+            from_lead = True
+
+        except UnhandledObservation:
+            act = handle(obs, rew_lead, False, info)
+            from_lead = False
+
+        obs, rew, done, info = env.step(act)
+
+        if from_lead:
+            rew_lead = rew
+
+        else:
+            rew_follow = rew
+
+    return obs, rew_lead, True, info
+
+
+def drive(env, *, device, reduce=sum):
+    """A simple semi-automatic interaction loop in driver mode.
+    See `doc/shell`.
+
+    Existential
+    -----------
+    We assume too much about the env here, MB it would be better just to make
+    an env class with the special, high-level action built in it `.step`,
+    with the init in its `.reset`.
+    """
+
     # construct the initial result
     tx = obs, rew, done, info = env.reset(), 0., False, {}
 
     # `None` command indicates startup
-    gen, n_yields, n_steps, rewards = follower(*tx, cmd=None), 0, 0, []
+    gen, n_yields, n_steps, rewards = device(*tx, cmd=None), 0, 0, []
     # XXX tracking rewards in a list may consume a lot of mem!
     while not done:
         try:
@@ -70,7 +108,7 @@ def operate(env, *, follower, reduce=sum):
                 raise RuntimeError
 
             rew = reduce(rewards, start=0.)
-            gen = follower(*tx, cmd=(yield obs, rew, False, info))
+            gen = device(*tx, cmd=(yield obs, rew, False, info))
 
             n_yields, n_steps, rewards = n_yields + 1, 0, []
             continue
@@ -87,21 +125,25 @@ class BaseOverrider(Wrapper):
     """Gym interface for overrider."""
     _loop = None
 
-    def __init__(self, env, *, mode='peer'):
-        assert mode in ('peer', 'follow')
+    def __init__(self, env, *, mode='driver'):
+        assert mode in ('leader', 'follower', 'driver')
         super().__init__(env)
 
-        self.is_follow = mode == 'follow'
+        self.mode = mode
 
     def reset(self, **kwargs):
         if isgenerator(self._loop):
             self._loop.close()
 
         # reset the generator and start it
-        if self.is_follow:
-            self._loop = operate(self.env, follower=self.handle)
+        if self.mode == 'driver':
+            self._loop = drive(self.env, device=self.handle)
+
+        elif self.mode == 'leader':
+            self._loop = lead(self.env, handle=self.handle)
+
         else:
-            self._loop = interact(self.env, peer=self.handle)
+            self._loop = follow(self.env, handle=self.handle)
 
         try:
             obs, rew, done, info = self._loop.send(None)
@@ -109,6 +151,16 @@ class BaseOverrider(Wrapper):
 
         except StopIteration:
             raise RuntimeError("Terminated environment on reset!") from None
+
+    def abstain(self):
+        if not self.mode == 'lead':
+            raise RuntimeError('Abstention is allowed only in leader mode.')
+
+        try:
+            return self._loop.throw(UnhandledObservation)
+
+        except StopIteration as e:
+            return e.value
 
     def step(self, act):
         try:

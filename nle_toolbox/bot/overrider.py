@@ -30,7 +30,7 @@ def interact(env, *, peer):
     return obs, rew, True, info
 
 
-def operate(env, *, follower):
+def operate(env, *, follower, reduce=sum):
     """A simple semi-automatic interaction loop in follower mode.
     See `doc/shell`.
     """
@@ -38,7 +38,8 @@ def operate(env, *, follower):
     tx = obs, rew, done, info = env.reset(), 0., False, {}
 
     # `None` command indicates startup
-    gen, n_yields, n_steps = follower(*tx, cmd=None), 0, 0
+    gen, n_yields, n_steps, rewards = follower(*tx, cmd=None), 0, 0, []
+    # XXX tracking rewards in a list may consume a lot of mem!
     while not done:
         try:
             act = gen.send(tx if is_suspended(gen) else None)
@@ -51,11 +52,14 @@ def operate(env, *, follower):
                 # XXX maybe raise a warning instead?
                 raise RuntimeError
 
+            rew = reduce(rewards, start=0.)
             gen = follower(*tx, cmd=(yield obs, rew, False, info))
-            n_yields += 1
+
+            n_yields, n_steps, rewards = n_yields + 1, 0, []
             continue
 
         tx = obs, rew, done, info = env.step(act)
+        rewards.append(rew)
         n_steps += 1
 
     # `done=True` is important enough to bubble upstream

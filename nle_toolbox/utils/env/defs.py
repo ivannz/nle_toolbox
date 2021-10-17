@@ -610,10 +610,10 @@ def glyph_lookup(condensed=False):
     """Returns a lookup table for glyphs."""
     assert not condensed
 
-    # our unique enitiy index
+    # our unique entity index
     n_entity_index = 0
 
-    # reweorked table form `nethack_baseline.torchbeast.utils`
+    # reworked table form `nethack_baseline.torchbeast.utils`
     table = np.zeros(MAX_GLYPH + 1, dtype=dt_glyph_id).view(np.recarray)
 
     # Monsters -- the base category!
@@ -813,3 +813,115 @@ def glyph_lookup(condensed=False):
 
 
 glyphlut = glyph_lookup()
+
+
+# extended lookup table for glyph properties
+dt_glyph_ext = np.dtype([
+    ('id', dt_glyph_id),
+    ('is_background', bool),
+    ('is_floodable', bool),
+    ('is_accessible', bool),
+    ('is_actor', bool),
+    ('screen', 'c'),  # the representation of the symbol on the screen
+])
+
+
+symbol_is_accessible = get_group(
+    symbol,
+    0,
+    # floor, corridor and z-level passages
+    'S_ndoor', 'S_vodoor', 'S_hodoor',
+    'S_vodbridge', 'S_hodbridge',
+    'S_corr', 'S_litcorr',
+    'S_room', 'S_darkroom',
+    'S_upstair', 'S_dnstair',
+    'S_upladder', 'S_dnladder',
+
+    # furniture
+    'S_fountain', 'S_throne', 'S_sink', 'S_grave', 'S_altar',
+
+    # terrain
+    'S_ice', 'S_air', 'S_cloud',
+)
+
+
+symbol_is_floodable = get_group(
+    symbol,
+    0,
+    'S_room', 'S_darkroom',
+    # 'S_ndoor',  # an empty doorway is like a floor
+
+    # {S_upstair, "up stairs", "staircase up"},  # from tilemap.c
+    # {S_dnstair, "down stairs", "staircase down"},  ditto
+    'S_upstair', 'S_dnstair',
+
+    # {S_upladder, "up ladder", "ladder up"},
+    # {S_dnladder, "down ladder", "ladder down"},
+    'S_upladder', 'S_dnladder',
+
+    'S_altar', 'S_grave', 'S_throne', 'S_sink', 'S_fountain',
+)
+
+
+symbol_is_background = get_group(
+    symbol,
+    0,
+    # walls and obstacles
+    'S_stone', 'S_tree',
+    'S_vwall', 'S_hwall',
+    'S_tlcorn', 'S_trcorn', 'S_blcorn', 'S_brcorn',
+    'S_crwall',
+    'S_tuwall', 'S_tdwall', 'S_tlwall', 'S_trwall',
+
+    'S_bars',
+    'S_vodoor', 'S_hodoor', 'S_vodbridge', 'S_hodbridge',
+
+    # corridors and open doors
+    'S_ndoor',
+    'S_vcdoor', 'S_hcdoor', 'S_vcdbridge', 'S_hcdbridge',
+    'S_corr', 'S_litcorr', 'S_room', 'S_darkroom',
+    'S_upstair', 'S_dnstair', 'S_upladder', 'S_dnladder',
+
+    # elemental
+    'S_pool', 'S_lava', 'S_water', 'S_ice', 'S_air', 'S_cloud',
+
+    # furniture
+    'S_fountain', 'S_throne', 'S_sink', 'S_grave', 'S_altar',
+)
+
+
+# copied from ./src/drawing.c#L139-243
+symbol_to_screen = (
+    """ |--------||.-|++##..##<><>_|\\#{}.}..## #}"""
+    """^^^^^^^^^^^^^^^^^"^^^^~"""
+    """|-\\/*!)(0#@*#?"""
+    """/-\\||\\-/"""
+    """/-\\| |\\-/"""
+)
+
+
+def extended_lut(basic):
+    table = np.zeros(len(basic), dtype=dt_glyph_ext).view(np.recarray)
+    for j in range(len(table)):
+        id = basic[j]
+
+        screen = b'?'
+        if id.group in glyph_group.LEVEL:
+            screen = symbol_to_screen[id.index]
+
+        table[j] = (
+            id,
+            (id.group in glyph_group.LEVEL
+                and id.index in symbol_is_background),
+            (id.group in glyph_group.LEVEL
+                and id.index in symbol_is_floodable),
+            (id.group in glyph_group.LEVEL
+                and id.index in symbol_is_accessible),
+            id.group in glyph_group.ACTORS,
+            screen,
+        )
+
+    return table
+
+
+ext_glyphlut = extended_lut(glyphlut)

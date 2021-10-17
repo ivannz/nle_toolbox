@@ -14,20 +14,37 @@ def interact(env, *, peer):
     """
     # construct the initial result
     obs, rew, done, info = env.reset(), 0., False, {}
+    rew_peer = rew_user = rew
     while not done:
         # if we cannot override then yield to the user
         # XXX `done` is always False inside the loop, so we can hardcode it
         try:
-            act = peer(obs, rew, False, info)
+            act = peer(obs, rew_peer, False, info)
+            from_peer = True  # set the flag after, since peer may raise
 
         except UnhandledObservation:
-            act = yield obs, rew, False, info
+            # we implicitly assume that the may user throw an unhandled at us,
+            # but the roles of the user and the peer may be reversed!
+            act = yield obs, rew_user, False, info
+            from_peer = False
+            # XXX whoever's here is not the peer. more like an advisor. So
+            #  what credit does the advisor get?
 
         # interact with the environment
         obs, rew, done, info = env.step(act)
 
+        # The reward is due to the transition induced by most recent action.
+        #  Therefore we must assign credit to the correct decision maker.
+        if from_peer:
+            rew_peer = rew
+
+        else:
+            rew_user = rew
+
+    # the peer does not get to experience the end-of-episode signal,
+    # so always send the final result with the user's reward.
     # XXX `done` is always True here
-    return obs, rew, True, info
+    return obs, rew_user, True, info
 
 
 def operate(env, *, follower, reduce=sum):

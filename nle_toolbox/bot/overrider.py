@@ -1,4 +1,4 @@
-from inspect import isgenerator
+from inspect import isgenerator, getgeneratorlocals
 from nle_toolbox.bot.genfun import is_suspended
 
 from gym import Wrapper
@@ -200,7 +200,7 @@ class BaseTemporalAbstractionWrapper(Wrapper):
     """
     _generator = None
 
-    def action(self, action):
+    def action(self, action, observation):
         raise NotImplementedError
 
     def reset(self):
@@ -219,7 +219,12 @@ class BaseTemporalAbstractionWrapper(Wrapper):
     def step(self, action):
         """Run one abstract timestep of the environment's dynamics."""
         try:
-            return self._generator.send(self.action(action))
+            # peek into generator's context and get the observation it is
+            # currently suspended at.
+            obs = getgeneratorlocals(self._generator).get('obs')
+            # XXX This feels like an abstraction leak even though we access
+            # it in the read-only manner.
+            return self._generator.send(self.action(action, obs))
 
         except RuntimeError:
             raise RuntimeError(f"Bad action `{action}`") from None
@@ -263,10 +268,12 @@ class BaseTemporalAbstractionWrapper(Wrapper):
             # the first `.step` can set things up.
             try:
                 act, rewards = gen.send(None), []
-                while not done:
+                while True:
                     # step and accumulate the rewards for the downstream consumer
                     obs, rew, done, info = env.step(act)
                     rewards.append(rew)
+                    if done:
+                        break
 
                     # get the next action
                     act = gen.send((obs, rew, done, info))
@@ -278,4 +285,7 @@ class BaseTemporalAbstractionWrapper(Wrapper):
 
         # communicate through `StopIteration` whatever the last response from
         # the env was.
-        return obs, rew, done, info
+        # XXX Recall that a generator cannot raise StopIteration explicitly
+        # (or bubble it from sub-generators). The exception can be throwns
+        # only implicitly via `return`.
+        return obs, reduce(rewards), done, info

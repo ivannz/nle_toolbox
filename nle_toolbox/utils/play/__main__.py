@@ -13,6 +13,7 @@ from time import sleep
 
 from signal import signal, getsignal, SIGINT
 
+from ..env.render import fixup_tty, render as render_obs
 from ...wrappers.replay import Replay
 from ...bot.genfun import yield_from_nested
 
@@ -40,8 +41,8 @@ class AutoNLEControls:
     """
     playback, debug, handler, pos = True, False, None, 0
 
-    def __init__(self, env, trace=()):
-        self.trace, self.env = trace, env
+    def __init__(self, env, trace=(), skip=False):
+        self.trace, self.env, self.skip = trace, env, skip
         self.ctoa = {a: j for j, a in enumerate(env.unwrapped._actions)}
 
     def step(self, act):
@@ -97,7 +98,7 @@ class AutoNLEControls:
         self.handler = None
 
     def run(self, obs):
-        self.pos, self._dirty, ui = 0, False, None
+        self.pos, self._dirty, ui, history, hix = 0, False, None, [], 0
         self.restore(None, None)
         while True:
             # input is None only in the case when the prompt was interrupted
@@ -113,12 +114,27 @@ class AutoNLEControls:
                 obs = yield self.play(obs)
                 continue
 
+            # replace the user input with the one logged in the history
+            #  on up/down keys.
+            if ui.startswith(('\x1b[A', '\x1b[B')):
+                hix = hix + (-1 if ui == '\x1b[A' else +1)
+                hix = max(0, min(len(history) - 1, hix))
+                ui = history[hix] if history else ''
+                continue
+
+            if ui and (not history or history[-1] != ui):
+                history.append(ui)
+            hix = len(history) - 1
+
             # stick to the previous input if the current is empty
             ui = ui or uip
+            if not ui:
+                continue
 
             # toggle game/playback control on zero byte
             if ui.startswith('#play') or ui == '\000':
                 self.playback = not self.playback
+                self.debug = self.debug and self.playback
                 continue  # ignore the rest of the input on mode switch
 
             if self.playback:
@@ -138,6 +154,15 @@ class AutoNLEControls:
                 elif 'clear'.startswith(ui):
                     flush(1)
                     yield None  # just update the tty
+                    continue
+
+            elif ui.startswith('\033\033'):
+                # prefix special commands with double-escape in user mode
+                ui = ui[2:]
+
+                if ui == 'debug':
+                    self.playback = self.debug = True
+                    obs_ = deepcopy(obs)  # make a deep copy, just in case
                     continue
 
             # player control mode
@@ -187,7 +212,8 @@ class AutoNLEControls:
                         # yield the action from the user input and them gobble
                         #  the potential more messages
                         obs = yield self.ctoa[ord(c)]
-                        obs = yield self.skip_mores(obs)
+                        if self.skip:
+                            obs = yield self.skip_mores(obs)
 
                     except KeyError:
                         if input('Invalid action. abort? [yn] (y)') != 'n':
@@ -208,7 +234,13 @@ class AutoNLEControls:
             obs = yield self.ctoa[0o15]  # hit ENTER (can use ESC 0o33)
 
 
-def replay(filename, delay=0.06, debug=False):
+def render(obs):
+    sys.stdout.write(render_obs(**fixup_tty(**obs)))
+    sys.stdout.flush()
+    return True
+
+
+def replay(filename, delay=0.06, debug=False, skip=False):
     breakpoint() if debug else None
 
     state_dict = pickle.load(open(filename, 'rb'))
@@ -227,7 +259,7 @@ def replay(filename, delay=0.06, debug=False):
     env.seed(seed=state_dict['seed'])
 
     # the player and game controls
-    ctrl = AutoNLEControls(env, trace=state_dict['actions'])
+    ctrl = AutoNLEControls(env, trace=state_dict['actions'], skip=skip)
 
     # start the interactive playthrough
     while True:
@@ -235,7 +267,7 @@ def replay(filename, delay=0.06, debug=False):
         obs_, fin = env.reset(), False
         flow, obs = yield_from_nested(ctrl.run(obs_)), None
         try:
-            while env.render('human') and not fin:
+            while render(obs_) and not fin:
                 act = flow.send(obs)
                 if act is not None:
                     obs_, rew, fin, info = env.step(act)

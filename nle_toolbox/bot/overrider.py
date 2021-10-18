@@ -1,7 +1,10 @@
+from collections import deque
+from collections.abc import Iterable
+
 from inspect import isgenerator, getgeneratorlocals
 from nle_toolbox.bot.genfun import is_suspended
 
-from gym import Wrapper
+from gym import Wrapper, ActionWrapper
 
 
 class UnhandledObservation(Exception):
@@ -290,3 +293,55 @@ class BaseTemporalAbstractionWrapper(Wrapper):
         # (or bubble it from sub-generators). The exception can be throwns
         # only implicitly via `return`.
         return obs, reduce(rewards), done, info
+
+
+class AtomicActionWrapper(ActionWrapper):
+    """Open loop (atomic) Temporal Abstraction Wrapper."""
+    _generator = None
+
+    def action(self, action):
+        if not isinstance(action, Iterable):
+            action = action,
+        return action
+
+    def reset(self):
+        """Reset the environment's state and return an initial observation."""
+        if isgenerator(self._generator):
+            self._generator.close()
+
+        self._generator = self.loop(self.env)
+
+        obs, rew, done, info = self._generator.send(None)
+        return obs
+
+    def step(self, action):
+        """Run one abstract time step of the environment's dynamics."""
+        try:
+            return self._generator.send(self.action(action))
+
+        except StopIteration as e:
+            return e.value
+
+    def close(self):
+        """Perform the necessary cleanup."""
+        if isgenerator(self._generator):
+            self._generator.close()
+
+        return super().close()
+
+    @staticmethod
+    def loop(env, *, reduce=sum):
+        """Interact with the env in atomic action sequences."""
+        # pipe0 is the low-level instruction execution pipeline
+        pipe0 = deque([])
+        obs, rewards, done, info = env.reset(), [0.], False, {}
+        while not done:
+            pipe0.extend((yield obs, reduce(rewards), False, info))
+            rewards = []
+
+            # open loop low-level instruction execution: non-preemptable
+            while pipe0 and not done:
+                obs, rew, done, info = env.step(pipe0.popleft())
+                rewards.append(rew)
+
+        return obs, reduce(rewards), True, info

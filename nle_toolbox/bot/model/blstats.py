@@ -41,18 +41,14 @@ class BLStatsVitalsEmbedding(torch.nn.Module):
         #  'hunger_state',
         #  'condition',
         #  'hitpoints', 'max_hitpoints',
+        hp = torch.nan_to_num_(blstats.hitpoints / blstats.max_hitpoints)
+        mp = torch.nan_to_num_(blstats.energy / blstats.max_energy)
         #  'energy', 'max_energy',
         return self.features(torch.cat([
             self.hunger(blstats.hunger_state),
             self.status(blstats.condition),
-            torch.unsqueeze(
-                blstats.hitpoints / blstats.max_hitpoints - 0.5,
-                dim=-1,
-            ),
-            torch.unsqueeze(
-                blstats.energy / blstats.max_energy - 0.5,
-                dim=-1,
-            ),
+            torch.unsqueeze(hp - 0.5, dim=-1,),
+            torch.unsqueeze(mp - 0.5, dim=-1,),
         ], dim=-1))
 
 

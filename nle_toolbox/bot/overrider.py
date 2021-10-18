@@ -267,7 +267,8 @@ class BaseTemporalAbstractionWrapper(Wrapper):
             # perform necessary in-env preparations, inits and configs, since
             # the first `.step` can set things up.
             try:
-                act, rewards = gen.send(None), []
+                rewards = []
+                act = gen.send(None)
                 while True:
                     # step and accumulate the rewards for the downstream consumer
                     obs, rew, done, info = env.step(act)

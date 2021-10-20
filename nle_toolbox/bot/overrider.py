@@ -295,29 +295,76 @@ class BaseTemporalAbstractionWrapper(Wrapper):
         return obs, reduce(rewards), done, info
 
 
-class AtomicActionWrapper(ActionWrapper):
-    """Open loop (atomic) Temporal Abstraction Wrapper."""
-    _generator = None
+class Continue(Exception):
+    """Special action to continue with the preempted option."""
+    def __init__(self, *args, **kwargs):
+        super().__init__()
 
-    def action(self, action):
-        if not isinstance(action, Iterable):
-            action = action,
-        return action
+
+class AtomicOptionWrapper(Wrapper):
+    """Temporal Abstraction Wrapper with interruptible atomic composite action.
+
+    Parameters
+    ----------
+    env : gym.Env
+        The environment which to apply temporal abstraction to.
+
+    reduce : callable, default=sum
+        A callable, which aggregates the rewards given to it in a list.
+
+    allow_empty : bool, default=False
+        Whether to allow empty options, i.e. those which refuse to execute
+        any actions even on initialization.
+
+    Details
+    -------
+    The logic of the option interruption resembles the high-level design
+    considered in
+
+        Sutton, R.S., Precup, D., Singh, S. (1999) `A framework for
+        temporal abstraction in reinforcement learning`, Artificial
+        Intelligence 112, 181–211
+    """
+    _generator = None
+    def __init__(self, env, *, reduce=sum, allow_empty=False):
+        super().__init__(env)
+        self.reduce = reduce
+        self.allow_empty = allow_empty
 
     def reset(self):
         """Reset the environment's state and return an initial observation."""
         if isgenerator(self._generator):
             self._generator.close()
 
-        self._generator = self.loop(self.env)
+        self._generator = self.loop(
+            self.env,
+            reduce=self.reduce,
+            allow_empty=self.allow_empty,
+        )
 
+        # no need to catch StopIteration, since by design our generator is
+        # non-empty, because gym.Env's episodes cannot terminate during reset.
         obs, rew, done, info = self._generator.send(None)
         return obs
 
-    def step(self, action):
+    def step(self, option=Continue):
         """Run one abstract time step of the environment's dynamics."""
+        if not isgenerator(self._generator):
+            raise RuntimeError("Please call `.reset` before stepping.")
+
         try:
-            return self._generator.send(self.action(action))
+            if not (
+                isinstance(option, Exception) or
+                isinstance(option, type) and issubclass(option, Exception)
+            ):
+                return self._generator.send(option)
+
+            # try not to protect the generator from getting killed accidentally
+            if isinstance(option, Continue) and not self.is_running:
+                raise RuntimeError("No option is currently running.")
+
+            # why forbid sending exceptions into the running loop?
+            return self._generator.throw(option)
 
         except StopIteration as e:
             return e.value
@@ -329,19 +376,121 @@ class AtomicActionWrapper(ActionWrapper):
 
         return super().close()
 
+    @property
+    def is_running(self):
+        if not isgenerator(self._generator):
+            return False
+
+        # peek into generator's context and get the special flag
+        ctx = getgeneratorlocals(self._generator)
+        return ctx.get('is_running', False)
+
     @staticmethod
-    def loop(env, *, reduce=sum):
-        """Interact with the env in atomic action sequences."""
+    def loop(env, *, reduce=sum, allow_empty=True):
+        """Interact with the env in atomic action sequences, actively pooling
+        for preemption by a downstream users.
+
+        Parameters
+        ----------
+        env : gym.Env
+            The environment which to apply temporal abstraction to.
+
+        reduce : callable, default=sum
+            The callable which takes a list of rewards (floats or arrays, if
+            the env has vector rewards) and computes and aggregate reward.
+            By default we sum whatever rewards were tracked.
+
+        Details
+        -------
+        It resets the environment, and then yields 4-tuples returned by the
+        .step of the env, except that the rewards are aggregated since the last
+        yield.
+
+        Design Considerations
+        ---------------------
+        A neat idea is to use `.step`-granular timer to schedule the next
+        preemption by the manger (the downstream user), which checks if the
+        control by the currently running option should not be overtaken by
+        another option. This requires the user to communicate a parameter
+        `n_slice`, which specifies the number of steps until the next
+        preemption event.
+
+        The complications came from deciding what determines this time-slice
+        value. On the one hand, the manger, being the one to decide what and
+        when to run should be able to set the time-slice. This protects against
+        malicious/faulty options, whose policy sets the slice so high, as to
+        effectively make it never yield the control flow. On the other hand,
+        the option's policy's internal logic `knows` better how often it can
+        be polled for interruption.
+
+        From responsibility separation standpoints, the manager could not know
+        the allowed preemption interval better than the option. Besides, since
+        the manager issues policies that come from a trusted source, it might
+        be better to assume cooperation between policies, meaning that a policy
+        yields back control as soon as exclusive control becomes non-critical.
+
+        Long before considering the interruptions it was decided that options'
+        policies may communicate simple and composite actions, in the form of
+        short sequences of instructions that are to be executed atomically,
+        i.e. in an open-loop control fashion without exchanging responses.
+        Since the policy decides the atomicity of the instructions, it seems
+        reasonable to postpone preemption events until the current action has
+        been executed in its entirety. If an option is low priority, i.e.
+        considers preemption permissible and highly likely, then it can enable
+        finest-grained control by issuing singleton actions. Otherwise, the
+        instruction sequence determines the minimally required time slice.
+        """
+        obs, macro, done, info = env.reset(), [0.], False, {}
+
         # pipe0 is the low-level instruction execution pipeline
-        pipe0 = deque([])
-        obs, rewards, done, info = env.reset(), [0.], False, {}
+        option, micro, pipe0 = None, [], deque([])
         while not done:
-            pipe0.extend((yield obs, reduce(rewards), False, info))
-            rewards = []
+            is_running = option is not None and is_suspended(option)
 
-            # open loop low-level instruction execution: non-preemptable
-            while pipe0 and not done:
-                obs, rew, done, info = env.step(pipe0.popleft())
-                rewards.append(rew)
+            try:
+                # get the option to execute and reset the reward accumulator
+                #  programmatically the option is a generator, which yields
+                #  actions and receives the observations from the resulting
+                #  transitions:  s_t, a_t -->> s_{t+1}, r_{t+1}.
+                option = yield obs, reduce(macro), False, info
+                macro = []
 
-        return obs, reduce(rewards), True, info
+                # start by sending a `None` to the generator
+                #  see pytorch PR#49017 and PEP-342
+                pipe0.extend(option.send(None))
+
+            except StopIteration:
+                if not allow_empty:
+                    # XXX it is still unclear what should we do with empty options
+                    raise RuntimeError("Cannot execute empty options.") from None
+
+            except Continue:
+                # we definitely cannot continue something, that has not been
+                #  started
+                if not is_running:
+                    raise RuntimeError(
+                        "Cannot continue when no option is running."
+                    ) from None
+
+            try:
+                micro = []
+                # a non-preemptible open-loop sub-policy
+                while pipe0 and not done:
+                    # accumualte rewards from low-level instructions execution
+                    obs, rew, done, info = env.step(pipe0.popleft())
+                    micro.append(rew)
+
+                # record the rewards for the manager
+                macro.extend(micro)
+
+                # fetch the next composite action
+                if not pipe0:
+                    pipe0.extend(option.send((obs, reduce(micro), done, info)))
+
+            except StopIteration:
+                # could not fetch a sequence of instructions, since the option
+                #  has terminated
+                pass
+
+        # communicate the last observation through `StopIteration`
+        return obs, reduce(macro), True, info

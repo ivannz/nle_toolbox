@@ -301,6 +301,14 @@ class Continue(Exception):
         super().__init__()
 
 
+class Interject(Exception):
+    """Special action to temporarily suspend the current option and
+    give control to another one.
+    """
+    def __init__(self, option, *args, **kwargs):
+        super().__init__(option)
+
+
 class AtomicOptionWrapper(Wrapper):
     """Temporal Abstraction Wrapper with interruptible atomic composite action.
 
@@ -360,7 +368,7 @@ class AtomicOptionWrapper(Wrapper):
                 return self._generator.send(option)
 
             # try not to protect the generator from getting killed accidentally
-            if isinstance(option, Continue) and not self.is_running:
+            if isinstance(option, (Continue, Interject)) and not self.is_running:
                 raise RuntimeError("No option is currently running.")
 
             # why forbid sending exceptions into the running loop?
@@ -443,21 +451,23 @@ class AtomicOptionWrapper(Wrapper):
         obs, macro, done, info = env.reset(), [0.], False, {}
 
         # pipe0 is the low-level instruction execution pipeline
-        option, micro, pipe0 = None, [], deque([])
+        option, micro, pipe0, stack = None, [], deque([]), []
         while not done:
             is_running = option is not None and is_suspended(option)
 
             try:
-                # get the option to execute and reset the reward accumulator
-                #  programmatically the option is a generator, which yields
-                #  actions and receives the observations from the resulting
-                #  transitions:  s_t, a_t -->> s_{t+1}, r_{t+1}.
-                option = yield obs, reduce(macro), False, info
-                macro = []
+                # forbid preempting an already interjecting option
+                if not stack:
+                    # get the option to execute and reset the reward accumulator
+                    #  programmatically the option is a generator, which yields
+                    #  actions and receives the observations from the resulting
+                    #  transitions:  s_t, a_t -->> s_{t+1}, r_{t+1}.
+                    option = yield obs, reduce(macro), False, info
+                    macro = []
 
-                # start by sending a `None` to the generator
-                #  see pytorch PR#49017 and PEP-342
-                pipe0.extend(option.send(None))
+                    # start by sending a `None` to the generator
+                    #  see pytorch PR#49017 and PEP-342
+                    pipe0.extend(option.send(None))
 
             except StopIteration:
                 if not allow_empty:
@@ -472,11 +482,20 @@ class AtomicOptionWrapper(Wrapper):
                         "Cannot continue when no option is running."
                     ) from None
 
+            except Interject as e:
+                # suspend the currently running option
+                stack.append(option)
+
+                # read off the interjecting option, but do not reset the reward
+                # accumulator
+                option, = e.args
+                pipe0.extend(option.send(None))
+
             try:
                 micro = []
                 # a non-preemptible open-loop sub-policy
                 while pipe0 and not done:
-                    # accumualte rewards from low-level instructions execution
+                    # accumulate rewards from executing low-level instructions
                     obs, rew, done, info = env.step(pipe0.popleft())
                     micro.append(rew)
 
@@ -490,7 +509,10 @@ class AtomicOptionWrapper(Wrapper):
             except StopIteration:
                 # could not fetch a sequence of instructions, since the option
                 #  has terminated
-                pass
+
+                if stack:
+                    # pop any interjected options
+                    option = stack.pop()
 
         # communicate the last observation through `StopIteration`
         return obs, reduce(macro), True, info

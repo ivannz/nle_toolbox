@@ -143,7 +143,7 @@ class OptionWrapper(Wrapper):
                         micro = []
 
             except StopIteration:
-                if allow_empty and not rewards:
+                if not allow_empty and not rewards:
                     raise RuntimeError(
                         "Cannot execute empty options."
                     ) from None

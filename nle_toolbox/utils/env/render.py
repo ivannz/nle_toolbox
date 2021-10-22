@@ -69,6 +69,7 @@ def fixup_tty(
         tty_chars=tty_chars,
         tty_colors=tty_colors,
         tty_cursor=tty_cursor,
+        message=message,
     )
 
 

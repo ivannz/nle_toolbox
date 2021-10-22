@@ -1,12 +1,27 @@
 import numpy as np
 
-from gym import ObservationWrapper
+from gym import ObservationWrapper, ActionWrapper
 
 from ..utils.env.obs import fold2d, BLStats
 from ..utils.env.render import fixup_tty
 from ..utils.env.defs import special
 
 from nle.nethack import NLE_BL_STR25, NLE_BL_STR125
+
+
+class NLEAtoN(ActionWrapper):
+    """Map ascii characters into NLE's actions."""
+    from nle.nethack import USEFUL_ACTIONS
+
+    def __init__(self, env):
+        super().__init__(env)
+        # XXX we could use `USEFUL_ACTIONS` here
+        self.ctoa = {
+            chr(a): j for j, a in enumerate(self.unwrapped._actions)
+        }
+
+    def action(self, action):
+        return self.ctoa[action]
 
 
 class NLEPatches(ObservationWrapper):

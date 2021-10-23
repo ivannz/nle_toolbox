@@ -41,15 +41,19 @@ rx_menu_item = re.compile(
 
 rx_is_prompt = re.compile(
     r"""
-    ^(
-        # messages beginning with a hash are considered prompts,
-        #  since they expect extenden command input
-        \#
+    ^(?P<prompt>
+        (
+            # messages beginning with a hash are considered prompts,
+            #  since the game expects input of an extended command
+            \#
         |
-        # y/n, direction, naming, and other etc prompts, always
-        #  contains a question mark. We look for the first one.
-        (?P<prompt>[^\?]+)\?
+            # y/n, direction, naming, and other etc prompts, always
+            #  contains a question mark. We look for the first one.
+            [^\#][^\?]+\?
+        )
     )
+    \s*
+    (?P<tail>.*)?
     """,
     re.VERBOSE | re.IGNORECASE | re.ASCII,
 )
@@ -144,21 +148,6 @@ def has_more_messages(obs):
     return '--More--' in fetch_message(obs, top=True)
 
 
-def is_prompt(messages):
-    # nothing to chec if we've got no messages
-    if not messages:
-        return None
-
-    # check for the prompt in the message
-    *ignore, message = messages
-    match = rx_is_prompt.search(message)
-    if match is None:
-        return None
-
-    # the hash symbol indicates that NetHack expects an extended command
-    return match.group('prompt') or '#'
-
-
 class InteractiveWrapper(Wrapper):
     """The base interaction architecture is essentially a middleman, who passes
     the action to the underlying env, but intercepts the resulting transition
@@ -200,16 +189,24 @@ class Chassis(InteractiveWrapper):
         # appear when they are active
         tx = self.fetch_menus(obs, rew, done, info)
         tx = self.fetch_messages(*tx)
-        tx = self.check_prompt(*tx)
+
+        # passive checks and updates
+        self.update_prompt()
         return tx
 
-    def check_prompt(self, obs, rew=0., done=False, info=None):
+    def update_prompt(self):
         """Detect whether NetHack expects some input form a user, either text
         or a response to a yes/no question.
         """
-        self.prompt = is_prompt(self.messages)
+        self.prompt = None
 
-        return obs, rew, done, info
+        # nothing to check if we've got no messages
+        if self.messages:
+            # check for the prompt in the last message
+            *ignore, message = self.messages
+            match = rx_is_prompt.search(message)
+            if match is not None:
+                self.prompt = match.groupdict('')
 
     def fetch_messages(self, obs, rew=0., done=False, info=None):
         """Deal with top line messages

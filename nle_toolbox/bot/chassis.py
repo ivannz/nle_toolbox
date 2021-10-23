@@ -129,7 +129,32 @@ def has_more_messages(obs):
     return '--More--' in fetch_message(obs, top=True)
 
 
-class Chassis(Wrapper):
+class InteractiveWrapper(Wrapper):
+    """The base interaction architecture is essentially a middleman, who passes
+    the action to the underlying env, but intercepts the resulting transition
+    data. It also is allowed, but not obliged to interact with the env, while
+    intercapting the observations.
+    """
+    def reset(self):
+        obs, rew, done, info = self.update(self.env.reset(), 0., False, None)
+        return obs
+
+    def step(self, action):
+        return self.update(*self.env.step(action))
+
+    def update(self, obs, rew=0., done=False, info=None):
+        """Perform the necessary updates and envireonment interactions based
+        on the data, intercepted from `.env.step` in response to the action
+        most recently sent by the downstream user via our `.step` method.
+        """
+
+        raise NotImplementedError
+
+        # update must always return the most recent relevant transition data
+        return obs, rew, done, info
+
+
+class Chassis(InteractiveWrapper):
     """Handle multi-part messages, yes-no-s, and other gui events, which
     were not deliberately requested by downstream policies.
 
@@ -140,17 +165,10 @@ class Chassis(Wrapper):
         super().__init__(env)
         self.top = top
 
-    def reset(self):
-        obs, rew, done, info = self.fetch(self.env.reset(), 0., False, None)
-        return obs
-
-    def step(self, action):
-        return self.fetch(*self.env.step(action))
-
-    def fetch(self, *tx):
+    def update(self, obs, rew=0., done=False, info=None):
         # first we detect and parse menus, since messages cannot
         # appear when they are active
-        tx = self.fetch_menus(*tx)
+        tx = self.fetch_menus(obs, rew, done, info)
         tx = self.fetch_messages(*tx)
         return tx
 
@@ -212,7 +230,13 @@ class Chassis(Wrapper):
                 obs, rew, done, info = self.env.step(' ')  # send SPACE
                 page = menu_parse(obs)
 
+            # no pages until the current page have been interactive, and either
+            #  the current page is an interactive one, or the menu has run out
+            #  of pages and this is the last page
             pages.append(page)
+
+            # if the current page is non-interactive, then it mustr be the last
+            #  one. Send space to close the menu.
             if not page.letters:
                 obs, rew, done, info = self.env.step(' ')  # send SPACE
 
@@ -223,8 +247,13 @@ class Chassis(Wrapper):
                 page.letters,
             )
 
+            # if we've got an interactive page the we are mid-menu, otherwise
+            #  the extra space sent above has closed the menu.
+            self.in_menu = bool(page.letters)
+
         else:
             self.menu = None
+            self.in_menu = False
 
         # XXX we'd better listen to special character action when
         #  dealing with interactive menus.

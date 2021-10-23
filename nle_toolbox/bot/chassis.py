@@ -64,8 +64,8 @@ GUIMenu = namedtuple('GUIMenu', 'n_pages_left,items,letters')
 
 
 def menu_extract(lines):
-    """Detect the type of the menu (overlay/fullscreen), the number of
-    pages, and extract its raw content.
+    """Detect the type of the menu (overlay or full screen), the number
+    of pages, and extract its raw content.
     """
     col, row, match = 80, 0, None
 
@@ -152,7 +152,7 @@ class InteractiveWrapper(Wrapper):
     """The base interaction architecture is essentially a middleman, who passes
     the action to the underlying env, but intercepts the resulting transition
     data. It also is allowed, but not obliged to interact with the env, while
-    intercapting the observations.
+    intercepting the observations.
     """
     def reset(self):
         obs, rew, done, info = self.update(self.env.reset(), 0., False, None)
@@ -162,7 +162,7 @@ class InteractiveWrapper(Wrapper):
         return self.update(*self.env.step(action))
 
     def update(self, obs, rew=0., done=False, info=None):
-        """Perform the necessary updates and envireonment interactions based
+        """Perform the necessary updates and environment interactions based
         on the data, intercepted from `.env.step` in response to the action
         most recently sent by the downstream user via our `.step` method.
         """
@@ -198,7 +198,7 @@ class Chassis(InteractiveWrapper):
         """Detect whether NetHack expects some input form a user, either text
         or a response to a yes/no question.
         """
-        self.prompt = None
+        self.prompt = {}
 
         # nothing to check if we've got no messages
         if self.messages:
@@ -244,7 +244,7 @@ class Chassis(InteractiveWrapper):
         Details
         -------
         There are two types of menus on NetHack: single paged and multipage.
-        Single page menus popup in the middle of the terminal ontop of the
+        Single page menus popup in the middle of the terminal on top of the
         dungeon map (and are sort of `dirty`, meaning that they have arbitrary
         symbols around them), while multi-page menus take up the entire screen
         after clearing it. Overlaid menu regions appear to be right justified,
@@ -254,7 +254,7 @@ class Chassis(InteractiveWrapper):
         player to select items with letters or punctuation. However, both kinds
         share two special control keys. The space `\\0x20` (`\\040`, 32,
         `<SPACE>`) advances to the next page, or closes the menu, if the page
-        was the last or the only one. The escape `\0x1b` (`\033`, 27, `^[`)
+        was the last or the only one. The escape `\\0x1b` (`\\033`, 27, `^[`)
         immediately exits any menu.
         """
         page = menu_parse(obs)
@@ -271,16 +271,16 @@ class Chassis(InteractiveWrapper):
             #  of pages and this is the last page
             pages.append(page)
 
-            # if the current page is non-interactive, then it mustr be the last
+            # if the current page is non-interactive, then it must be the last
             #  one. Send space to close the menu.
             if not page.letters:
                 obs, rew, done, info = self.env.step(' ')  # send SPACE
 
             # join the pages collected so far
-            self.menu = GUIMenu(
-                page.n_pages_left,
-                tuple([it for page in pages for it in page.items]),
-                page.letters,
+            self.menu = dict(
+                n_pages_left=page.n_pages_left,
+                items=tuple([it for page in pages for it in page.items]),
+                letters=page.letters,
             )
 
             # if we've got an interactive page the we are mid-menu, otherwise
@@ -288,7 +288,7 @@ class Chassis(InteractiveWrapper):
             self.in_menu = bool(page.letters)
 
         else:
-            self.menu = None
+            self.menu = {}
             self.in_menu = False
 
         # XXX we'd better listen to special character action when

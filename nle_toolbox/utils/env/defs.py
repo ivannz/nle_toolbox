@@ -351,7 +351,7 @@ class symbol:
     condensed_index = {
         el: j
         for j, group in enumerate([
-            # dungeon features
+            # walls and generally impassable or locked dungeon features
             [S_stone],
             [S_tree],
             [S_vwall, S_hwall, S_crwall, S_tuwall, S_tdwall, S_tlwall,
@@ -360,9 +360,18 @@ class symbol:
             [S_vcdoor, S_hcdoor, S_vcdbridge, S_hcdbridge],
             [S_pool, S_water],
             [S_lava],
+
+            # passages
             [S_ndoor, S_vodoor, S_hodoor, S_vodbridge, S_hodbridge],
             [S_corr, S_litcorr],
             [S_room, S_darkroom],
+            # XXX what is the gameplay-effective difference between a corrdor,
+            #  room floor, and open door lowered bridge? You cannot move
+            #  diagonally from a doorway, but then a doorway is a chokepoint
+            #  between two walls, and thus can be distinguished from its
+            #  surroundings.
+
+            # furniture
             [S_upstair, S_dnstair, S_upladder, S_dnladder],
             [S_fountain],
             [S_throne],
@@ -416,6 +425,7 @@ class symbol:
 
             # swallow
             # skipped, since we remap it to dingeon features
+            #  with `symbol_sw_to_cmap`
         ]) for el in group
     }
 
@@ -703,17 +713,18 @@ def glyph_lookup(condensed=False):
             n_entity_index += 1
 
     else:
-        # XXX there is no actionalbe information in  distinguishing
-        #  `([hv]|cr|t[udlr])wall` or `[tb][lr]corn`, i.e. different wall geometry,
-        #  or orientation of doors/drawbridges ought not to have impact on the
-        #  AI gameplay.
+        # XXX there is no actionalbe information in distinguishing
+        #  `([hv]|cr|t[udlr])wall` or `[tb][lr]corn`, i.e. different
+        #  wall geometry, and orientation of doors/drawbridges ought
+        #  not to have impact on the AI gameplay. There are also lit/dark
+        #  glyph symbols `S_corr`, `S_litcorr`, `S_room`, and `S_darkroom`.
         for glyph in range(GLYPH_CMAP_OFF, GLYPH_EXPLODE_OFF):
             cmap = glyph - GLYPH_CMAP_OFF
             table[glyph] = (
                 glyph,
                 glyph_group.CMAP,
                 cmap,
-                symbol.condensed_index[cmap],
+                n_entity_index + symbol.condensed_index[cmap],
             )
 
         n_entity_index += len(set(symbol.condensed_index.values()))

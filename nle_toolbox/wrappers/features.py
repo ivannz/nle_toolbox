@@ -11,11 +11,12 @@ from nle.nethack import NLE_BL_STR25, NLE_BL_STR125
 
 class NLEAtoN(ActionWrapper):
     """Map ascii characters into NLE's actions."""
-    from nle.nethack import USEFUL_ACTIONS
+    from nle.nethack import ACTIONS
 
     def __init__(self, env):
         super().__init__(env)
-        # XXX we could use `USEFUL_ACTIONS` here
+        # XXX for `NetHackChallenge` we could rely on `ACTIONS`
+        #  see ./nle/env/tasks.py#L52,328
         self.ctoa = {
             chr(a): j for j, a in enumerate(self.unwrapped._actions)
         }

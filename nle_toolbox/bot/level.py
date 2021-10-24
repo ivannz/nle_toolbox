@@ -22,7 +22,9 @@ dt_map = np.dtype([
     ('xy', np.dtype([('x', int), ('y', int)])),
     # the glyph id
     ('glyph', int),
-    # boolean visited flag
+    # foreground object flag
+    # ('is_foreground', bool),  # identical to not `is_background`
+    # visitation counter
     ('n_visited', int),
     # the number of times this xy was updated
     ('n_updates', int),
@@ -40,12 +42,13 @@ class Level:
         #  the vicinity viewport. `glyph` determines if it
         #  is in the valid map region.
         rows, cols = shape
-        data = np.empty((3, k + rows + k, k + cols + k), dtype=dt_map)
+        data = np.empty((2, k + rows + k, k + cols + k), dtype=dt_map)
 
         # fill with default values for the border
         data[:] = (
             (-1, -1),    # invalid x-y coords
             MAX_GLYPH,   # invalid glyph
+            # False,       # is a foreground glyph
             0,           # was never visited
             0,           # never got updated
             -1,          # last updated info is not available
@@ -54,13 +57,13 @@ class Level:
         )
 
         # fill in the x-y coordinate for backreference
-        tiles = self.bg_tiles, self.fg_tiles, self.stg_tiles, \
+        tiles = self.bg_tiles, self.stg_tiles, \
             = data[:, k:-k, k:-k].view(np.recarray)
         for x, y in np.ndindex(rows, cols):
             tiles.xy[:, x, y] = x, y
 
         # setup read-only view for adjacent tiles
-        self.bg_vicinity, self.fg_vicinity, self.stg_vicinity, \
+        self.bg_vicinity, self.stg_vicinity, \
             = fold2d(data, k=k, leading=1, writeable=False).view(np.recarray)
 
         # sparse data structures with x-y keys (unbordered coords)
@@ -81,9 +84,6 @@ class Level:
         """
         glyphs = obs['glyphs']
 
-        # the game is not in gui mode and the player is not engulfed
-        self.n_updates += 1
-
         # differentially update the glyph staging layer
         stage = self.stg_tiles
         diff = glyphs != stage.glyph
@@ -93,14 +93,16 @@ class Level:
         if n_diff < 1:
             return
 
-        # save previous data and update glyphs
-        old = stage[diff]
-        new = stage.glyph[diff] = glyphs[diff]
+        # the game is not in gui mode and the player is not engulfed
+        self.n_updates += 1
 
-        # update the last time, the number of updates, and properties metadata
-        stage.n_updates[diff] += 1
+        # update glyphs, the step number, the number of updates, and fetch
+        #  new metadata
+        glyphs = stage.glyph[diff] = glyphs[diff]
         stage.n_last_updated[diff] = self.n_updates
-        stage.info[diff] = ext_glyphlut[new]
+        stage.n_updates[diff] += 1
+
+        stage.info[diff] = ext_glyphlut[glyphs]
 
         # trace the player's coordinates through the level
         bls = obs['blstats']
@@ -109,9 +111,10 @@ class Level:
             stage.n_visited[location] += 1
             self.trace.append(location)
 
-        # 3. analyze the staged glyphs and split into bg/fg
-        # xy, glyph, n_visited, n_updates, n_last_updated, area, info
-        pass
+        # update bg only if the __staged background__ glyph is NOT the same
+        #  as the current bg glyph.
+        to_bg = (stage.glyph != self.bg_tiles.glyph) & stage.info.is_background
+        self.bg_tiles[to_bg] = stage[to_bg]
 
 
 class DungeonMapper(InteractiveWrapper):

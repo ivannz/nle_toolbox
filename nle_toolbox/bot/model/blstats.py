@@ -142,8 +142,10 @@ class BLStatsEmbedding(torch.nn.Module):
         # what do we do with these? 
         #  'x', 'y',
         #  'score', 'gold',
-        #  'experience_level', 'experience_points',
-        #  'depth', 'level_number', 'monster_level', 'dungeon_number',
+        # 'experience_level', 'experience_points',
+        #  'depth' is determined by 'level_number' and 'dungeon_number'
+        # 'monster_level' -- the level of the monster when polymorphed
+        #  [``](./nle/win/rl/winrl.cc#L552-553)
         #  'time',  # step counter
 
 

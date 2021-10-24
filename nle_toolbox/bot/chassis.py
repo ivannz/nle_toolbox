@@ -138,6 +138,10 @@ def fetch_message(obs, *, top=False):
         # has trailing zero bytes
         message = bytes(obs['message'].view('S256')[0])
 
+    # XXX we might potentially want to split the message by `\x20\x20`,
+    #  because [`update_topl`](\.nle/src/topl.c#L255-265) separates multiple
+    #  messages, that fin in one line with `  `.
+
     return message.rstrip().decode('ascii')
 
 
@@ -294,3 +298,14 @@ class Chassis(InteractiveWrapper):
         # XXX we'd better listen to special character action when
         #  dealing with interactive menus.
         return obs, rew, done, info
+
+
+def get_wrapper(env, cls=Chassis):
+    """Get the specified underlying wrapper."""
+    while isinstance(env, Wrapper):
+        if isinstance(env, cls):
+            return env
+
+        env = env.env
+
+    raise RuntimeError

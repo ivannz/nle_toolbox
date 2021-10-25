@@ -22,8 +22,6 @@ dt_map = np.dtype([
     ('xy', np.dtype([('x', int), ('y', int)])),
     # the glyph id
     ('glyph', int),
-    # foreground object flag
-    # ('is_foreground', bool),  # identical to not `is_background`
     # visitation counter
     ('n_visited', int),
     # the number of times this xy was updated
@@ -31,6 +29,10 @@ dt_map = np.dtype([
     ('n_last_updated', int),
     # area it belongs to
     ('area', int),
+    # foreground object flag
+    # ('is_foreground', bool),  # equals `not .info.is_background`
+    # pathfinding cost
+    ('cost', float),
     # the extracted glyph info
     ('info', dt_glyph_ext),
 ])
@@ -48,11 +50,12 @@ class Level:
         data[:] = (
             (-1, -1),    # invalid x-y coords
             MAX_GLYPH,   # invalid glyph
-            # False,       # is a foreground glyph
             0,           # was never visited
             0,           # never got updated
             -1,          # last updated info is not available
             -1,          # parent flood-fill area is the Universum
+            # False,       # is a foreground glyph
+            float('inf'),  # prohibitively expensive for pathfinding
             ext_glyphlut[MAX_GLYPH],  # extra info for the invalid gylph
         )
 
@@ -112,9 +115,15 @@ class Level:
             self.trace.append(location)
 
         # update bg only if the __staged background__ glyph is NOT the same
-        #  as the current bg glyph.
+        #  as the current bg glyph. This way we permit a certain degree of
+        #  stickyness to bg.
         to_bg = (stage.glyph != self.bg_tiles.glyph) & stage.info.is_background
         self.bg_tiles[to_bg] = stage[to_bg]
+
+        # enumerate the list of `interesting` objects
+        # `is_accessible` -- used for pathfinding to determine the base cost
+        # `is_actor`, `is_trap` --
+        # stage.info.is_interesting
 
 
 class DungeonMapper(InteractiveWrapper):

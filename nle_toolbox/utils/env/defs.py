@@ -833,6 +833,7 @@ dt_glyph_ext = np.dtype([
     ('is_floodable', bool),
     ('is_accessible', bool),
     ('is_actor', bool),
+    ('is_interesting', bool),
     ('screen', 'c'),  # the representation of the symbol on the screen
 ])
 
@@ -901,6 +902,36 @@ symbol_is_background = get_group(
 )
 
 
+glyph_is_mundane = get_group(
+    symbol,
+    GLYPH_CMAP_OFF,
+    # stone, trees, walls and other obstacles
+    'S_stone', 'S_tree',
+    'S_bars',
+    'S_vwall', 'S_hwall', 'S_crwall',
+    'S_tuwall', 'S_tdwall', 'S_tlwall', 'S_trwall',
+    'S_tlcorn', 'S_trcorn', 'S_blcorn', 'S_brcorn',
+
+    # open doors, doorways, lowered brigdes
+    'S_ndoor', 'S_vodoor', 'S_hodoor', 'S_vodbridge', 'S_hodbridge',
+
+    # room floors and corridors
+    'S_corr', 'S_litcorr', 'S_room', 'S_darkroom',
+
+    # terrain including lava and water
+    'S_ice', 'S_air', 'S_cloud', 'S_lava', 'S_water', 'S_pool',
+
+    # all kinds of traps
+    'S_arrow_trap', 'S_dart_trap', 'S_falling_rock_trap',
+    'S_squeaky_board', 'S_bear_trap', 'S_land_mine',
+    'S_rolling_boulder_trap', 'S_sleeping_gas_trap',
+    'S_rust_trap', 'S_fire_trap', 'S_pit', 'S_spiked_pit',
+    'S_hole', 'S_trap_door', 'S_teleportation_trap', 'S_level_teleporter',
+    'S_magic_portal', 'S_web', 'S_statue_trap', 'S_magic_trap',
+    'S_anti_magic_trap', 'S_polymorph_trap', 'S_vibrating_square',
+)
+
+
 # copied from ./src/drawing.c#L139-243
 symbol_to_screen = (
     """ |--------||.-|++##..##<><>_|\\#{}.}..## #}"""
@@ -929,6 +960,7 @@ def extended_lut(basic):
             (id.group in glyph_group.LEVEL
                 and id.index in symbol_is_accessible),
             id.group in glyph_group.ACTORS,
+            id.value not in glyph_is_mundane,
             screen,
         )
 

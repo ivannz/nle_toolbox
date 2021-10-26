@@ -9,7 +9,11 @@ from ...utils.nn import OneHotBits
 
 
 class BLStatsVitalsEmbedding(torch.nn.Module):
-    """Glyph Embedding is the shared representation layer."""
+    """Embed Vitals:
+    * hitpoints, max_hitpoints
+    * energy, max_energy
+    * hunger_state, condition
+    """
     def __init__(self, n_features=128):
         super().__init__()
 
@@ -53,11 +57,16 @@ class BLStatsVitalsEmbedding(torch.nn.Module):
 
 
 class BLStatsBuildEmbedding(torch.nn.Module):
+    """Embed character build:
+    * str, strength_percentage
+    * dex, con, int, wis, cha
+    * armor_class, carrying_capacity
+    """
     def __init__(self, n_features=128):
         super().__init__()
 
         self.stat = torch.nn.Embedding(
-            25,  # stats range 0..25
+            25 + 1,  # stats range 0..25
             32,
             max_norm=1.,
             norm_type=2,
@@ -65,7 +74,7 @@ class BLStatsBuildEmbedding(torch.nn.Module):
         )
 
         self.kind = torch.nn.Embedding(
-            6,  # 6 basic stats (luck is hidden)
+            6,  # 6 base stats (luck is hidden)
             32,
         )
 
@@ -76,7 +85,40 @@ class BLStatsBuildEmbedding(torch.nn.Module):
             bias=False
         )
 
-        self.features = torch.nn.Linear(32 * 6, n_features, bias=True)
+        self.encumberance = torch.nn.Embedding(
+            encumberance.MAX + 1,
+            8,
+            padding_idx=encumberance.MAX,
+            max_norm=1.,
+            norm_type=2.,
+            scale_grad_by_freq=False,
+            sparse=False,
+        )
+
+        # a bin lookup table for armor_class, a categorical variable.
+        self.register_buffer(
+            'ac_lookup', torch.tensor(
+                # 0..10 mapped to 11..1, 11..127 to 0
+                [*reversed(range(1, 12))] + [0] * 117
+                # 128..244 mapped to 23, 245..256 to 22..12
+                + [23] * 117 + [*range(22, 11, -1)]
+            )
+        )
+        self.armor_class = torch.nn.Embedding(
+            24,
+            8,
+            # no padding index,
+            max_norm=1.,
+            norm_type=2.,
+            scale_grad_by_freq=False,
+            sparse=False,
+        )
+
+        self.features = torch.nn.Linear(
+            32 * 6 + 8 + 8,
+            n_features,
+            bias=True,
+        )
 
     def forward(self, blstats):
         assert isinstance(blstats, BLStats)
@@ -87,7 +129,7 @@ class BLStatsBuildEmbedding(torch.nn.Module):
         # this is slooow.
         # XXX maybe we should not share tables between stats?
         #   ... but saving throws?
-        out = torch.stack([
+        stats = torch.stack([
             self.stat(blstats.str), self.stat(blstats.dex),
             self.stat(blstats.con), self.stat(blstats.int),
             self.stat(blstats.wis), self.stat(blstats.cha),
@@ -95,31 +137,8 @@ class BLStatsBuildEmbedding(torch.nn.Module):
 
         # adjust strength by the percentage score (integer 0..99)
         strpc = blstats.strength_percentage.div(99).unsqueeze(-1)
-        out[..., 0, :] = out[..., 0, :] + self.strength_percentage(strpc)
+        stats[..., 0, :] = stats[..., 0, :] + self.strength_percentage(strpc)
 
-        return self.features(out.flatten(-2, -1))
-
-
-class BLStatsEmbedding(torch.nn.Module):
-    """Glyph Embedding is the shared representation layer."""
-    def __init__(self):
-        super().__init__()
-        self.vitals = BLStatsVitalsEmbedding()
-        self.build = BLStatsBuildEmbedding()
-
-        self.encumberance = torch.nn.Embedding(
-            encumberance.MAX,
-            8,
-            max_norm=1.,
-            norm_type=2.,
-            scale_grad_by_freq=False,
-            sparse=False,
-        )
-
-        # self.armor_class = torch.nn.Embedding(...)
-
-    def forward(self, blstats):
-        assert isinstance(blstats, BLStats)
         # 'armor_class' in NetHack is descending just like in adnd. In the
         # [code](src/do_wear.c#L2107-2153) it appears that AC is confined
         # to the range of a `signed char`, however to adnd 2e mechanics it
@@ -127,26 +146,53 @@ class BLStatsEmbedding(torch.nn.Module):
         # since we make d20 rolls anyway.
         # https://merricb.com/2014/06/08/a-look-at-armour-class-in-original-dd-and-first-edition-add/
         # XXX Also, NetHack, just why?! include/hack.h#L499-500
-        #  'armor_class',
-        pass
+        armor_class = self.armor_class(self.ac_lookup[blstats.armor_class])
 
-        #  'carrying_capacity',
-        return torch.cat([
-            self.vitals(blstats),
-            self.build(blstats),
-            self.encumberance(blstats.carrying_capacity),
-        ], dim=-1)
-
-        raise NotImplementedError
-
-        # what do we do with these? 
-        #  'x', 'y',
-        #  'score', 'gold',
-        # 'experience_level', 'experience_points',
-        #  'depth' is determined by 'level_number' and 'dungeon_number'
         # 'monster_level' -- the level of the monster when polymorphed
         #  [``](./nle/win/rl/winrl.cc#L552-553)
-        #  'time',  # step counter
+        # XXX probably should be combined with `self` glyph embedding
+        # self.monster_level(blstats.monster_level)
+
+        #  'carrying_capacity'
+        carrying_capacity = self.encumberance(blstats.carrying_capacity)
+        return self.features(torch.cat([
+            stats.flatten(-2, -1),
+            carrying_capacity,
+            armor_class,
+        ], dim=-1))
+
+
+class BLStatsEmbedding(torch.nn.Module):
+    """Embed Bottom Line Stats:
+    * str, strength_percentage, dex, con, int, wis, cha
+    * hitpoints, max_hitpoints
+    * energy, max_energy
+    * armor_class
+    * hunger_state
+    * carrying_capacity
+    * condition
+    """
+    def __init__(self, n_vitals=128, n_build=32):
+        super().__init__()
+        self.vitals = BLStatsVitalsEmbedding(n_vitals)
+        self.build = BLStatsBuildEmbedding(n_build)
+
+    def forward(self, obs):
+        # turn blstats into a namedtuple
+        bls = BLStats(*obs['blstats'].unbind(-1))
+
+        return torch.cat([
+            self.vitals(bls),
+            self.build(bls),
+        ], dim=-1)
+
+        # what do we do with these?
+        # x, y, score
+        # 'gold'  # XXX useful for shops
+        # 'depth', 'dungeon_number', 'level_number'
+        # XXX 'depth' is determined by 'level_number' and 'dungeon_number'
+        # monster_level, experience_level, experience_points
+        # 'time'  # XXX is the game time counter useful at all?
 
 
 # src/allmain.c#L681-682 -- always assume new game

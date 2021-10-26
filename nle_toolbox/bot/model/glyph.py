@@ -70,13 +70,16 @@ class GlyphFeatures(torch.nn.Module):
     def forward(self, obs):
         k = self.window
 
+        glyphs = obs['glyphs']
+        dims = dict(zip('TBRC', glyphs.shape))
+
         # turn T x B x R x C into T x B x (k+R+k) x (k+C+k) x *F
         #  by pading symmetrically with invalid glyphs and embedding.
-        glyphs = obs['glyphs']
         gl_padded = self.embedding(F.pad(glyphs, (k,) * 4, value=MAX_GLYPH))
         # XXX we embed extra 2(R + C) + 4 glyphs, i.e. about 13% overhead
 
         # unfold into [T x B] x R x C x *F x (k+1+k) x (k+1+k)
+        # XXX could we have used einops here?
         n_seq, n_batch, n_rows, n_cols = glyphs.size()  # use unpadded dims
         n_features = gl_padded.shape[4:]
         s_seq, s_batch, s_rows, s_cols, *s_features = gl_padded.stride()
@@ -102,28 +105,21 @@ class GlyphFeatures(torch.nn.Module):
         # XXX there has to be a better way to pick over dims (0, 1, 2)!
 
         # now permute the embedded glyphs to T x B x *F x R x C
-        n_seq, n_batch, n_rows, n_cols, *n_features = gl_padded.size()
-        s_seq, s_batch, s_rows, s_cols, *s_features = gl_padded.stride()
-        gl_permuted = gl_padded.as_strided(
-            (n_seq, n_batch, *n_features, n_rows, n_cols),
-            (s_seq, s_batch, *s_features, s_rows, s_cols),
-        )
+        gl_permuted = rearrange(gl_padded, 'T B R C ... -> T B ... R C')
         gl_screen = gl_permuted[..., k:-k, k:-k].contiguous()
 
         # embed inventory glyphs (need to replace NO_GLYPH with MAX_GLYPH,
         #  unless they coincide)
-        gl_inventory = self.embedding(obs['inv_glyphs'])
-        n_seq, n_batch, n_size, *n_features = gl_inventory.size()
-        s_seq, s_batch, s_size, *s_features = gl_inventory.stride()
-        gl_inventory = gl_inventory.as_strided(
-            (n_seq, n_batch, *n_features, n_size),
-            (s_seq, s_batch, *s_features, s_size),
-        )
+        gl_inventory = rearrange(self.embedding(obs['inv_glyphs']),
+                                 'T B N ... -> T B ... N')
 
+        # final touch is to extract the embedding of `self` on the map
+        gl_self = gl_vicinity[..., k, k]
         return dict(
             screen=gl_screen,  # already contiguous
             vicinity=gl_vicinity,  # already contiguous
             inventory=gl_inventory.contiguous(),
+            self=gl_self.contiguous(),
         )
 
 

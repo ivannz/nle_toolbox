@@ -1,4 +1,15 @@
 import torch
+import torch.nn.functional as F
+
+from nle.nethack import (
+    MAX_GLYPH,
+    # NO_GLYPH,
+    # NLE_BLSTATS_SIZE,
+    # NLE_INVENTORY_SIZE,
+    NLE_BL_X,
+    NLE_BL_Y,
+)
+
 from einops import rearrange
 
 from ...utils.env.defs import glyphlut
@@ -43,6 +54,77 @@ class GlyphEmbedding(torch.nn.Module):
     def forward(self, glyphs):
         grp, ent = torch.unbind(self.gl_lookup[glyphs], dim=-1)
         return torch.cat([self.entity(ent), self.group(grp)], dim=-1)
+
+
+class GlyphFeatures(torch.nn.Module):
+    """This service layer performs glyph embedding form the inventory and
+    the screen glyphs. From the latter it extracts a vicinity of the specified
+    radius about the coordinates given in the bottom line stats.
+    """
+    def __init__(self, embedding_dim=128, window=1):
+        super().__init__()
+
+        self.embedding = GlyphEmbedding(embedding_dim)
+        self.embedding_dim, self.window = embedding_dim, window
+
+    def forward(self, obs):
+        k = self.window
+
+        # turn T x B x R x C into T x B x (k+R+k) x (k+C+k) x *F
+        #  by pading symmetrically with invalid glyphs and embedding.
+        glyphs = obs['glyphs']
+        gl_padded = self.embedding(F.pad(glyphs, (k,) * 4, value=MAX_GLYPH))
+        # XXX we embed extra 2(R + C) + 4 glyphs, i.e. about 13% overhead
+
+        # unfold into [T x B] x R x C x *F x (k+1+k) x (k+1+k)
+        n_seq, n_batch, n_rows, n_cols = glyphs.size()  # use unpadded dims
+        n_features = gl_padded.shape[4:]
+        s_seq, s_batch, s_rows, s_cols, *s_features = gl_padded.stride()
+
+        # use stride trix to dimshiffle and unfold into sliding local windows
+        gl_folded = gl_padded.as_strided(
+            # flatten T x B, fold R x C into 2d windows in dims after F
+            (n_seq * n_batch, n_rows, n_cols, *n_features, k+1+k, k+1+k),
+            # when mul-ing dims in shape use the lowest stride
+            (s_batch, s_rows, s_cols, *s_features, s_rows, s_cols),
+        )
+
+        # extract vicinities around the row-col coordinates, specified in bls
+        bls = obs['blstats']
+        idx = torch.stack([
+            torch.arange(n_seq * n_batch),
+            bls[..., NLE_BL_Y].flatten(),
+            bls[..., NLE_BL_X].flatten(),
+        ], dim=0).T
+        gl_vicinity = torch.stack([
+            gl_folded[j, r, c] for j, r, c in idx
+        ], dim=0).reshape(n_seq, n_batch, *gl_folded.shape[3:])
+        # XXX there has to be a better way to pick over dims (0, 1, 2)!
+
+        # now permute the embedded glyphs to T x B x *F x R x C
+        n_seq, n_batch, n_rows, n_cols, *n_features = gl_padded.size()
+        s_seq, s_batch, s_rows, s_cols, *s_features = gl_padded.stride()
+        gl_permuted = gl_padded.as_strided(
+            (n_seq, n_batch, *n_features, n_rows, n_cols),
+            (s_seq, s_batch, *s_features, s_rows, s_cols),
+        )
+        gl_screen = gl_permuted[..., k:-k, k:-k].contiguous()
+
+        # embed inventory glyphs (need to replace NO_GLYPH with MAX_GLYPH,
+        #  unless they coincide)
+        gl_inventory = self.embedding(obs['inv_glyphs'])
+        n_seq, n_batch, n_size, *n_features = gl_inventory.size()
+        s_seq, s_batch, s_size, *s_features = gl_inventory.stride()
+        gl_inventory = gl_inventory.as_strided(
+            (n_seq, n_batch, *n_features, n_size),
+            (s_seq, s_batch, *s_features, s_size),
+        )
+
+        return dict(
+            screen=gl_screen,  # already contiguous
+            vicinity=gl_vicinity,  # already contiguous
+            inventory=gl_inventory.contiguous(),
+        )
 
 
 class GlyphEncoder(torch.nn.Module):

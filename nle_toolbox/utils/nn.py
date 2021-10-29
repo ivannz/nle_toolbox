@@ -1,5 +1,5 @@
 import torch
-from typing import Optional, Mapping
+from typing import Optional, Mapping, Any, Union, NamedTuple
 from torch.nn import Module, ModuleDict as BaseModuleDict
 
 
@@ -46,18 +46,22 @@ class ModuleDict(BaseModuleDict):
     def __init__(
         self,
         modules: Optional[Mapping[str, Module]] = None,
-        dim: Optional[int] = None
+        dim: Optional[int] = None,
     ) -> None:
         super().__init__(modules)
         self.dim = dim
 
     def forward(
         self,
-        input: torch.Tensor,
+        input: Union[Mapping[str, Any], NamedTuple],
     ):
+        # namedtupels are almost like frozen dicts
+        if isinstance(input, tuple) and hasattr(type(input), '_fields'):
+            input = input._asdict()
+
+        # the same key order as the order of the declaration in  __init__
         apply = {k: m(input[k]) for k, m in self.items()}
         if self.dim is None:
             return apply
 
-        # enforce concatenation in the order of the declaration in  __init__
-        return torch.cat(list(apply.values()), dim=self.dim)
+        return torch.cat(tuple(apply.values()), dim=self.dim)

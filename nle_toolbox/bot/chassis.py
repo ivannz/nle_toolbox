@@ -5,7 +5,7 @@ from collections import namedtuple
 
 
 rx_menu_is_overlay = re.compile(
-    r"""
+    rb"""
     \(
         (
             # either we get a short single-page overlay menu
@@ -22,7 +22,7 @@ rx_menu_is_overlay = re.compile(
 )
 
 rx_menu_item = re.compile(
-    r"""
+    rb"""
     ^(
         # An interactable menu item begins with a letter and if
         # followed by some whitespace and either a dash or a plus
@@ -40,7 +40,7 @@ rx_menu_item = re.compile(
 )
 
 rx_is_prompt = re.compile(
-    r"""
+    rb"""
     ^(?P<prompt>
         (
             # messages beginning with a hash are considered prompts,
@@ -101,13 +101,13 @@ def menu_parse(obs):
     """Extract raw data from a menu and enumerate all items, that can
     be interacted with.
     """
-    tty_lines = obs['tty_chars'].view('S80')[:, 0]
-
     # Assume a menu is on the screen. Detect which one (single,
     # multi), (letters if interactive) and extract its content.
-    menu = menu_extract([ll.decode('ascii') for ll in tty_lines])
+    menu = menu_extract(obs['tty_chars'].view('S80')[:, 0])
     if menu is None:
         return None
+    # XXX to make parsing more robust, `.decode('ascii')` was dropped,
+    #  see `fetch_message()`
 
     # extract menu items
     items, letters = [], {}
@@ -142,14 +142,19 @@ def fetch_message(obs, *, top=False):
     #  because [`update_topl`](\.nle/src/topl.c#L255-265) separates multiple
     #  messages, that fin in one line with `  `.
 
-    return message.rstrip().decode('ascii')
+    # It would be nice to use `.decode('ascii')` to aviod dealing with bytes
+    #  objects, especially un downtream message consumers and parsers. However
+    #  in the case of random exploration, which is a commun use case, decoding
+    #  could fail with a `UnicodeDecodeError`, whever the the game ended up
+    #  in a user text prompt.
+    return message.rstrip()  # .decode('ascii')
 
 
 def has_more_messages(obs):
     # get the top line from tty-chars
     # XXX `Misc(*obs['misc']).xwaitingforspace` reacts to menus as well,
-    #  bu we want pure multi-part messages.
-    return '--More--' in fetch_message(obs, top=True)
+    #  but we want pure multi-part messages.
+    return b'--More--' in fetch_message(obs, top=True)
 
 
 class InteractiveWrapper(Wrapper):
@@ -183,6 +188,31 @@ class Chassis(InteractiveWrapper):
 
     NetHack's gui is not as intricate as in other related games. We need to
     deal with menus, text prompts, messages and y/n questions.
+
+    Attributes
+    ----------
+    messages : tuple of bytes
+        This may be empty if no message was encountered, otherwise it contains
+        all pieces of multipart message that the game threw at us due to
+        the last action.
+
+    menu : dict
+        Either an empty dictionary, which means that the last action did not
+        summon a menu, of a non-empty dictionary, with all the menu data
+        collected until the menu's last page or a page with interactible items.
+        'n_pages_left' indicated the number of pages left in the menu, 'items'
+        is the list of all menu items, and 'letters' is a letter-keyed dict of
+        items which can be interacted with.
+
+    in_menu : bool
+        A handy boolean flag that indicates if the game's gui is currently mid
+        menu with an interactible page. Typically the flag is False, because
+        it is set when 'letters' in .menu is non-empty.
+
+    prompt : dict
+        The current gui prompt. No prompt is empty, otherwise the key 'prompt'
+        contains the query, and 'tail' -- the available options or the current
+        reply.
     """
     def __init__(self, env, *, top=False, space=' '):
         super().__init__(env)

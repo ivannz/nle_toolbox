@@ -47,8 +47,8 @@ rx_is_prompt = re.compile(
             #  since the game expects input of an extended command
             \#
         |
-            # y/n, direction, naming, and other etc prompts, always
-            #  contains a question mark. We look for the first one.
+            # y/n, direction, naming, and other prompts, always contain
+            #  a question mark. We look for the first one.
             [^\#][^\?]+\?
         )
     )
@@ -139,7 +139,7 @@ def fetch_message(obs, *, top=False):
         message = bytes(obs['message'].view('S256')[0])
 
     # XXX we might potentially want to split the message by `\x20\x20`,
-    #  because [`update_topl`](\.nle/src/topl.c#L255-265) separates multiple
+    #  because [`update_topl`](./nle/src/topl.c#L255-265) separates multiple
     #  messages, that fin in one line with `  `.
 
     # It would be nice to use `.decode('ascii')` to aviod dealing with bytes
@@ -228,17 +228,25 @@ class Chassis(InteractiveWrapper):
         tx = self.fetch_messages(*tx)
 
         # passive checks and updates
-        self.update_prompt()
+        self.update_prompt(*tx)
         return tx
 
-    def update_prompt(self):
+    def update_prompt(self, obs, rew=0., done=False, info=None):
         """Detect whether NetHack expects some input form a user, either text
         or a response to a yes/no question.
         """
         self.prompt = {}
 
-        # nothing to check if we've got no messages
-        if self.messages:
+        # We should detect prompts that do not expect a user input, but look
+        #  like ones according to `rx_is_prompt`. A smart way is to figure out
+        # if the game's gui is in a [getlin()](./nle/src/ .c#L ) or a `yn`-like
+        # function. obs[`misc`] greatly helps us here!
+        self.in_yn_function, self.in_getlin, \
+            self.xwaitingforspace = map(bool, obs['misc'])
+
+        # nothing to check if we've got no messages, however some messages are
+        #  fake prompts, so also try to avoid such cases by inspecting `misc`.
+        if self.messages and (self.in_yn_function or self.in_getlin):
             # check for the prompt in the last message
             *ignore, message = self.messages
             match = rx_is_prompt.search(message)

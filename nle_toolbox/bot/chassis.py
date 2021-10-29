@@ -108,7 +108,7 @@ rx_prompt_getobj_options = re.compile(
 
 GUIRawMenu = namedtuple('GUIRawMenu', 'n_pages,n_page,is_overlay,data')
 
-GUIMenu = namedtuple('GUIMenu', 'n_pages_left,items,letters')
+GUIMenu = namedtuple('GUIMenu', 'n_pages_left,title,items,letters')
 
 
 def menu_extract(lines):
@@ -158,7 +158,7 @@ def menu_parse(obs):
     #  see `fetch_message()`
 
     # extract menu items
-    items, letters = [], {}
+    title, items, letters = b'', [], {}
     for entry in menu.data:
         m = rx_menu_item.match(entry)
         if m is not None:
@@ -167,10 +167,16 @@ def menu_parse(obs):
             if lt is not None:
                 letters[lt] = it
 
+        # the title of the menu is the first non-empty row of its first page
+        elif entry and not title and menu.n_page == 1:
+            title = entry
+
     # return the parsed menu
     return GUIMenu(
         # number of additional pages
         menu.n_pages - menu.n_page,
+        # the title of the menu (empty if not the first page)
+        title,
         # the line-by-line content of the menu
         items,
         # which items can be interacted with
@@ -352,6 +358,11 @@ class Chassis(InteractiveWrapper):
         """
         page = menu_parse(obs)
         if page is not None:
+            # get the title from the first page. This might not be the real
+            #  title though, since the first page that we're parsing here
+            #  might actually be some intermediate page in the current menu.
+            title = page.title
+
             # parse menus and collect all their data unless interactive
             pages = []
             while not page.letters and page.n_pages_left > 0:
@@ -370,15 +381,31 @@ class Chassis(InteractiveWrapper):
                 obs, rew, done, info = self.env.step(self.space)  # send SPACE
 
             # join the pages collected so far
-            self.menu = dict(
+            new_menu = dict(
+                title=title,
                 n_pages_left=page.n_pages_left,
                 items=tuple([it for page in pages for it in page.items]),
                 letters=page.letters,
             )
 
+            # check if the current set of pages belong to a menu which was
+            #  interupted by an interactible page.
+            if self.menu and self.menu['n_pages_left'] > 0:
+                new_menu = dict(
+                    # the title stays with us from the very first page
+                    title=self.menu['title'],
+                    # update the page counter
+                    n_pages_left=new_menu['n_pages_left'],
+                    # join the lists of items
+                    items=self.menu['items'] + new_menu['items'],
+                    # new letters overrride the older irrelevant ones
+                    letters=new_menu['letters'],
+                )
+            self.menu = new_menu
+
             # if we've got an interactive page the we are mid-menu, otherwise
             #  the extra space sent above has closed the menu.
-            self.in_menu = bool(page.letters)
+            self.in_menu = bool(new_menu['letters'])
 
         else:
             self.menu = {}

@@ -184,9 +184,12 @@ class Chassis(InteractiveWrapper):
     NetHack's gui is not as intricate as in other related games. We need to
     deal with menus, text prompts, messages and y/n questions.
     """
-    def __init__(self, env, *, top=False):
+    def __init__(self, env, *, top=False, space=' '):
         super().__init__(env)
         self.top = top
+
+        # let the user decide what is the space action's encoding
+        self.space = space
 
     def update(self, obs, rew=0., done=False, info=None):
         # first we detect and parse menus, since messages cannot
@@ -231,7 +234,7 @@ class Chassis(InteractiveWrapper):
         while has_more_messages(obs) and not done:
             # inside this loop the message CANNOT be empty by design
             buffer.append(fetch_message(obs, top=self.top))
-            obs, rew, done, info = self.env.step(' ')  # send SPACE
+            obs, rew, done, info = self.env.step(self.space)  # send SPACE
 
         # the final message may be empty so we сheck for it
         message = fetch_message(obs, top=self.top)
@@ -267,7 +270,7 @@ class Chassis(InteractiveWrapper):
             pages = []
             while not page.letters and page.n_pages_left > 0:
                 pages.append(page)
-                obs, rew, done, info = self.env.step(' ')  # send SPACE
+                obs, rew, done, info = self.env.step(self.space)  # send SPACE
                 page = menu_parse(obs)
 
             # no pages until the current page have been interactive, and either
@@ -278,7 +281,7 @@ class Chassis(InteractiveWrapper):
             # if the current page is non-interactive, then it must be the last
             #  one. Send space to close the menu.
             if not page.letters:
-                obs, rew, done, info = self.env.step(' ')  # send SPACE
+                obs, rew, done, info = self.env.step(self.space)  # send SPACE
 
             # join the pages collected so far
             self.menu = dict(

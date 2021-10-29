@@ -1,6 +1,8 @@
 import re
+import numpy as np
 from gym import Wrapper
 
+from itertools import chain
 from collections import namedtuple
 
 
@@ -57,6 +59,52 @@ rx_is_prompt = re.compile(
     """,
     re.VERBOSE | re.IGNORECASE | re.ASCII,
 )
+
+# NetHack asks for directions mostly through
+#  [getdir(<prompt>)](./nle/src/cmd.c#L5069-5118), however ins special cases
+#  it calls its wrapper. For example, [looting](./nle/src/pickup.c#L1888) and
+#  [applying](./nle/src/apply.c#L633) use
+#  [get_adjacent_loc](./nle/src/cmd.c#L5035-5067), which relies on `getdir`.
+# In summery, directional prompts are questions with `what direction`
+rx_prompt_what_direction = re.compile(
+    rb"""
+    what\s+
+    direction
+    """,
+    re.VERBOSE | re.IGNORECASE | re.ASCII,
+)
+
+# the object selection ui is [getobj()](./nle/src/invent.c#L1416-1829). On
+# line [L1654](./nle/src/invent.c#L1654) it forms the query itself from the
+# `word` sz with the verb (eat, read, write, wield,, sacrifice etc.) and on
+# line L1670 it invokes [`yn_function`](./nle/src/invent.c#L1670). The loop
+# on line [L1488](./nle/src/invent.c#1488-1631) forms the list of
+# allowed letters.  [HANDS_SYM](./nle/src/invent.c#14) is '-'.
+# XXX trying to detect the getobj prompts is a bit tedious, since in many other
+# places the game asks similarly worded `what do you want to` prompt, e.g.
+#  [do_oname()](./nle/src/do_name.c#L1200-1280) for objects naming,
+#  [do_mname()](./nle/src/do_name.c#L1118-1196) for monster calling, and
+#  [doengrave()](./nle/src/engrave.c#L1023) for engraving.
+pass
+
+# Perhaps the key distinguishing feature of `getobj` prompts are the letter
+# options, listed in its tail after the question marl. Notice, that on line
+# [L1639](./nle/src/invent.c#1639) `getobj` calls
+# [compactify](./nle/src/invent.c#1353-1359) which replaces consecutive
+# letters by spans a-z.
+rx_prompt_getobj_options = re.compile(
+    rb"""
+    ^\[
+        (
+            (?P<options>[a-z\-\#]+)  # available letters L1669
+            \s+or\s+
+        )?
+        [\?\*ynqa]+                  # select from menu L1667
+    \]
+    """,
+    re.VERBOSE | re.IGNORECASE | re.ASCII,
+)
+
 
 GUIRawMenu = namedtuple('GUIRawMenu', 'n_pages,n_page,is_overlay,data')
 
@@ -350,3 +398,136 @@ def get_wrapper(env, cls=Chassis):
         env = env.env
 
     raise RuntimeError
+
+
+def decompactify(text, defaults=b'\033'):
+    """Unpacks sorted letter spans ?-? in bytes-objects into a frozenset.
+
+    Sort of inverse to [compactify](./nle/src/invent.c#1353-1359).
+    """
+    assert isinstance(text, bytes)
+    letters = list(defaults)
+
+    lead, und, text = text.partition(b'-')
+    while und:
+        letters.extend(chain(
+            lead[:-1],
+            range(ord(lead[-1:]), ord(text[:1]))
+        ))
+        lead, und, text = text.partition(b'-')
+    letters.extend(lead)
+
+    return frozenset(letters)
+
+
+class ActionMasker(InteractiveWrapper):
+    # carriage return, line feed, space or escape
+    _spc_esc_crlf = frozenset(map(ord, '\033\015\r\n '))
+
+    # cardinal directions, esc, cr, and lf
+    _directions = frozenset(map(ord, 'ykuh.ljbn\033\015\r\n'))
+
+    # the letters below are always forbidden, because they either have no
+    #  effect or are useless, given the data in obs, or outright dangerous.
+    _prohibited = frozenset([
+        18,   # \x12  -- 68 REDRAW
+        36,   # $     -- 112 DOLLAR
+        38,   # &     -- 92 WHATDOES
+        42,   # *     -- 76 SEEALL
+        47,   # /     -- 93 WHATIS
+        59,   # ;     -- 15 OVERVIEW // No need for farlook
+        71,   # G     -- 73 RUSH2
+        73,   # I     -- 45 INVENTTYPE
+        77,   # M     -- 55 MOVEFAR
+        79,   # O     -- 58 OPTIONS
+        83,   # S     -- 74 SAVE
+        86,   # V     -- 43 HISTORY
+        92,   # \\    -- 49 KNOWN
+        95,   # _     -- 85 TRAVEL  // fast travel works on landmarks, but
+              #                        otherwise consumes slightly more actions
+        96,   # `     -- 50 KNOWNCLASS
+        103,  # g     -- 72 RUSH
+        105,  # i     -- 44 INVENTORY
+        109,  # m     -- 54 MOVE
+        118,  # v     -- 90 VERSIONSHORT
+        191,  # \xbf  -- 21 EXTLIST
+        193,  # \xc1  -- 23 ANNOTATE
+        225,  # \xe1  -- 22 ADJUST
+        246,  # \xf6  -- 89 VERSION
+        # 241,  # \xf1  -- 65 QUIT  // win by quitting!
+    ])
+
+    def __init__(self, env):
+        super().__init__(env)
+
+        # we need a reference to the underlying chassis wrapper
+        self.chassis = get_wrapper(env, Chassis)
+
+        # either way let's keep our own copy of ascii to action id mapping
+        self.ascii_to_action = {
+            int(a): j for j, a in enumerate(self.unwrapped._actions)
+        }
+
+        # pre-compute common masks
+        self._allowed_actions = np.array([
+            c in self._prohibited for c, a in self.ascii_to_action.items()
+        ], dtype=bool)
+
+        # printable text and controls
+        self._printable_only = np.array([
+            not (
+                (32 <= c < 128) or c in self._spc_esc_crlf
+            ) for c, a in self.ascii_to_action.items()
+        ], dtype=bool)
+
+        # directions and escapes
+        self._directions_only = np.array([
+            c not in self._directions
+            for c, a in self.ascii_to_action.items()
+        ], dtype=bool)
+
+    def update(self, obs, rew=0., done=False, info=None):
+        # after all the possible menu/message interactions have been complete
+        #  compute the mask of allowed actions and inject into the `obs`.
+        # XXX the mask never forbids the ESC action
+
+        cha = self.chassis
+        if cha.in_menu:
+            # allow escape, space, or the letters if we're in interactible menu
+            letters = frozenset(chain(
+                self._spc_esc_crlf, map(ord, cha.menu['letters']),
+            ))
+            mask = np.array([
+                c not in letters for c, a in self.ascii_to_action.items()
+            ], dtype=bool)
+
+        elif cha.prompt:
+            prompt = cha.prompt['prompt']
+            match = rx_prompt_getobj_options.match(cha.prompt['tail'])
+
+            if rx_prompt_what_direction.search(prompt):
+                mask = self._directions_only.copy()
+
+            elif match is not None:  # prompt with [...] options
+                # [getobj()](./nle/src/invent.c#L1416-1829) prompts always
+                #  have a list of options in the tail
+                # fetch letters and produce a mask
+                letters = decompactify(match.group('options') or b'', b'\033')
+                mask = np.array([
+                    c not in letters for c, a in
+                    self.ascii_to_action.items()
+                ], dtype=bool)
+
+            else:
+                # free-form prompt allow all well-behaving chars, ESC and CR
+                mask = self._printable_only.copy()
+
+        else:
+            # we're in proper gameplay mode, only allow only certain actions
+            mask = self._allowed_actions.copy()
+
+        # a numpy mask indicating actions, that SHOULD NOT be taken
+        # i.e. masked or forbidden.
+        obs['chassis_mask'] = mask
+
+        return obs, rew, done, info

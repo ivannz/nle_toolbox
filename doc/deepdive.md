@@ -13,7 +13,6 @@ finding symbols for [start](./nle/sys/unix/nledl.c#23), [step](./nle/sys/unix/nl
 and graceful [end](./nle/sys/unix/nledl.c#46). These symbols correspond to the functions in
 [nle.c](./nle/src/nle.c).
 
-
 ## Hooking into Nethack proper
 
 The developers of the NLE also provide extensive documentation about the internal
@@ -33,6 +32,10 @@ by [`win_nhgetch` and `win_nh_poskey`](/include/winprocs.h#L51-52), respectively
 6. Finally `rl_procs` is added to the list of [win_choices](/src/windows.c#L92-98)
 on [lines 135-137](/src/windows.c#L135-137)
 7. This is controlled by macro def [RL_GRAPHICS](include/config.h#L53)
+
+<!-- win/rl interacts with nethack through win/tty -->
+NetHack interfaces with `win/rl` window procs which hook into `win/tty` emulator, and yield
+control back to python space.
 
 Note that no functions that refer to `win_choices` have been modified by the NLE team.
 ```

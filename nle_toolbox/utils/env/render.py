@@ -29,14 +29,30 @@ def fixup_tty(
 
     # message containing an LF means that originally it did not fit 80 cols
     lf_mask = message == 0x0A
+    has_any_lf = lf_mask.any()
+
+    # detecting a rare event when themessage is a part of a chain, and has
+    #  --More--, but fully fits into the top line and thus has no lf in
+    # the message. For example, executing 'acy' in a seeded nethack with
+    #     seed = 12604736832047991440, 12469632217503715839
+    # causes the following message on the top line:
+    # ```Raising your wand of slow monster high above your head, you break it in two!```
+    # which fits on the top line, yet is a multi-part message.
+    text = message.view('S256')[0]
+    if not has_any_lf and len(text) > 72:
+        # we immediately go the the second line and slice from
+        # the proper row, since lf had no cr.
+        topl = bytes(tty_chars.view('S80')[1:3, 0])[len(text):]
+        has_any_lf = b'--More--' in topl
+
     misc = Misc(*misc.astype(bool))
-    if lf_mask.any() and misc.xwaitingforspace:
+    if has_any_lf and misc.xwaitingforspace:
         # fix the message: replace lf '\n' (\x0a) with whitespace ` ` (\x20)
         message = np.where(lf_mask, 0x20, message)
 
         # properly wrap the text at 80
         text = message.view('S256')[0].decode('ascii')
-        pieces = wrap(text + '--More--', 80)
+        pieces = wrap(text + '--More--', 80, break_on_hyphens=False)
         if len(pieces) != 2:
             raise RuntimeError(f"Message `{text}` is too long.")
 

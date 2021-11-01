@@ -49,8 +49,8 @@ rx_menu_item = re.compile(
 
 rx_is_prompt = re.compile(
     rb"""
-    ^(?P<full>(?P<prompt>
-        (
+    ^(?P<full>
+        (?P<prompt>
             # messages beginning with a hash are considered prompts,
             #  since the game expects input of an extended command
             \#
@@ -59,19 +59,23 @@ rx_is_prompt = re.compile(
             #  a question mark. We look for the first one.
             [^\#][^\?]+\?
         )
-    )
-    \s*
-    (?P<tail>.*)?)
+        \s*
+        (?P<tail>.*)
+    ?)
     """,
     re.VERBOSE | re.IGNORECASE | re.ASCII,
 )
 
 # NetHack asks for directions mostly through
-#  [getdir(<prompt>)](./nle/src/cmd.c#L5069-5118), however ins special cases
-#  it calls its wrapper. For example, [looting](./nle/src/pickup.c#L1888) and
-#  [applying](./nle/src/apply.c#L633) use
-#  [get_adjacent_loc](./nle/src/cmd.c#L5035-5067), which relies on `getdir`.
-# In summery, directional prompts are questions with `what direction`
+#     [getdir(<prompt>)](./nle/src/cmd.c#L5069-5118), however in special
+# cases it calls its wrapper. For example,
+#     [looting](./nle/src/pickup.c#L1888)
+# and
+#     [applying](./nle/src/apply.c#L633)
+# use
+#     [get_adjacent_loc](./nle/src/cmd.c#L5035-5067),
+# which relies on `getdir`. In summery, directional prompts are questions
+#  with `what direction`.
 rx_prompt_what_direction = re.compile(
     rb"""
     what\s+
@@ -82,7 +86,7 @@ rx_prompt_what_direction = re.compile(
 
 # the object selection ui is [getobj()](./nle/src/invent.c#L1416-1829). On
 # line [L1654](./nle/src/invent.c#L1654) it forms the query itself from the
-# `word` sz with the verb (eat, read, write, wield,, sacrifice etc.) and on
+# `word` sz with the verb (eat, read, write, wield, sacrifice etc.) and on
 # line L1670 it invokes [`yn_function`](./nle/src/invent.c#L1670). The loop
 # on line [L1488](./nle/src/invent.c#1488-1631) forms the list of
 # allowed letters.  [HANDS_SYM](./nle/src/invent.c#14) is '-'.
@@ -98,14 +102,18 @@ pass
 # [L1639](./nle/src/invent.c#1639) `getobj` calls
 # [compactify](./nle/src/invent.c#1353-1359) which replaces consecutive
 # letters by spans a-z.
-rx_prompt_getobj_options = re.compile(
+rx_prompt_options = re.compile(
     rb"""
-    ^\[
-        (
-            (?P<options>[a-z\-\#]+)  # available letters L1669
-            \s+or\s+
-        )?
-        [\?\*ynqa]+                  # select from menu L1667
+    \[
+    # lazily consume all characters between a comma and optional
+    #  or help-menu. this has been noticed in only one getlin call
+    # in [do_play_instrument](./nle/src/music.c#L715)
+    ([^,]+,\s+)?
+
+    (?P<options>.*?)  # available letters L1669, hash [0-9], gold, hands symbol
+
+    # menu options are formed in [`getobj`](./nle/src/invent.c#L1666-1670)
+    (\s*(?:or\s+)?[\?\*]+)?
     \]
     """,
     re.VERBOSE | re.IGNORECASE | re.ASCII,
@@ -477,9 +485,8 @@ class Chassis(InteractiveWrapper):
             # fullscreen menu with pagination info.
             _, modal = extract_modal_window(obs)
 
-            # XXX we cannot have menu pages interleaved with messages, since
-            #  `tty_end_menu` creates multiple pages in `cw->plist`, yet only
-            #  a single `cw->morestr`.  (citation-needed)
+            # In rare cases, e.g. drinking a potion of enlightenment, the game
+            # may spawn a chain of messages interleaved with overlay menus.
             if not modal.is_message:
                 pages.append(parse_menu_page(modal))
                 self.in_menu = bool(pages[-1].letters)
@@ -561,11 +568,16 @@ def decompactify(text, defaults=b'\033'):
 
     lead, und, text = text.partition(b'-')
     while und:
-        letters.extend(chain(
-            lead[:-1],
-            range(ord(lead[-1:]), ord(text[:1]))
-        ))
+        letters.extend(lead[:-1])
+        # we've got r"^-.*$" -- this means bare hands
+        if not lead:
+            letters.append(ord(und))
+
+        else:
+            letters.extend(range(ord(lead[-1:]), ord(text[:1])))
+
         lead, und, text = text.partition(b'-')
+
     letters.extend(lead)
 
     return frozenset(letters)
@@ -578,34 +590,74 @@ class ActionMasker(InteractiveWrapper):
     # cardinal directions, esc, cr, and lf
     _directions = frozenset(map(ord, 'ykuh.ljbn\033\015\r\n'))
 
-    # the letters below are always forbidden, because they either have no
-    #  effect or are useless, given the data in obs, or outright dangerous.
+    # the letters below are always forbidden for neural actors, because they
+    #  either have no effect or are useless, given the data in obs, or outright
+    #  dangerous.
     _prohibited = frozenset([
-        18,   # \x12  -- 68 REDRAW
-        36,   # $     -- 112 DOLLAR
-        38,   # &     -- 92 WHATDOES
-        42,   # *     -- 76 SEEALL
-        47,   # /     -- 93 WHATIS
-        59,   # ;     -- 15 OVERVIEW // No need for farlook
-        71,   # G     -- 73 RUSH2
-        73,   # I     -- 45 INVENTTYPE
-        77,   # M     -- 55 MOVEFAR
-        79,   # O     -- 58 OPTIONS
-        83,   # S     -- 74 SAVE
-        86,   # V     -- 43 HISTORY
-        92,   # \\    -- 49 KNOWN
-        95,   # _     -- 85 TRAVEL  // fast travel works on landmarks, but
-              #                        otherwise consumes slightly more actions
-        96,   # `     -- 50 KNOWNCLASS
-        103,  # g     -- 72 RUSH
-        105,  # i     -- 44 INVENTORY
-        109,  # m     -- 54 MOVE
-        118,  # v     -- 90 VERSIONSHORT
-        191,  # \xbf  -- 21 EXTLIST
-        193,  # \xc1  -- 23 ANNOTATE
-        225,  # \xe1  -- 22 ADJUST
-        246,  # \xf6  -- 89 VERSION
-        # 241,  # \xf1  -- 65 QUIT  // win by quitting!
+        # ascii  # char    gym-id  class                   name
+        15,      # \\x0f   59      Command                 OVERVIEW
+        18,      # \\x12   68      Command                 REDRAW
+
+        # we let the chassis hande mores, escs and spaces
+        13,      # \\r     19      MiscAction              MORE
+        27,      # \\x1b   36      Command                 ESC
+        32,      # \\x20   99      TextCharacters          SPACE
+
+        # we get attrs from the bls (altough it migh be useful to know
+        #  our diety, alignment and mission)
+        24,      # \\x18   25      Command                 ATTRIBUTES
+        # extended commands are handled as composite actions
+        35,      # #       20      Command                 EXTCMD
+        # we know our gold from bls
+        36,      # $       112     TextCharacters          DOLLAR
+        38,      # &       92      Command                 WHATDOES
+        42,      # *       76      Command                 SEEALL
+        43,      # +       97      TextCharacters          PLUS
+        47,      # /       93      Command                 WHATIS
+        # No need for farlook
+        59,      # ;       42      Command                 GLANCE
+        64,      # @       26      Command                 AUTOPICKUP
+        67,      # C       27      Command                 CALL
+        68,      # D       34      Command                 DROPTYPE
+        71,      # G       73      Command                 RUSH2
+        73,      # I       45      Command                 INVENTTYPE
+        77,      # M       55      Command                 MOVEFAR
+        79,      # O       58      Command                 OPTIONS
+        82,      # R       69      Command                 REMOVE
+        83,      # S       74      Command                 SAVE
+        86,      # V       43      Command                 HISTORY
+        92,      # \\\\    49      Command                 KNOWN
+        # NetHack travels by landmarks, but consumes two actions `_:`
+        95,      # _       85      Command                 TRAVEL
+        96,      # `       50      Command                 KNOWNCLASS
+        103,     # g       72      Command                 RUSH
+        105,     # i       44      Command                 INVENTORY
+        109,     # m       54      Command                 MOVE
+        118,     # v       90      Command                 VERSIONSHORT
+        191,     # \\xbf   21      Command                 EXTLIST
+        193,     # \\xc1   23      Command                 ANNOTATE
+        195,     # \\xc3   31      Command                 CONDUCT
+        225,     # \\xe1   22      Command                 ADJUST
+        # win by quitting!
+        241,     # \\xf1   65      Command                 QUIT
+        246,     # \\xf6   89      Command                 VERSION
+
+        # as with others, the following commands are useful in special prompts
+        34,      # "       101     TextCharacters          QUOTE
+        39,      # '       100     TextCharacters          APOS
+        45,      # -       98      TextCharacters          MINUS
+
+        # numeric inputs are for specific commands only
+        48,      # 0       102     TextCharacters          NUM_0
+        49,      # 1       103     TextCharacters          NUM_1
+        50,      # 2       104     TextCharacters          NUM_2
+        51,      # 3       105     TextCharacters          NUM_3
+        52,      # 4       106     TextCharacters          NUM_4
+        53,      # 5       107     TextCharacters          NUM_5
+        54,      # 6       108     TextCharacters          NUM_6
+        55,      # 7       109     TextCharacters          NUM_7
+        56,      # 8       110     TextCharacters          NUM_8
+        57,      # 9       111     TextCharacters          NUM_9
     ])
 
     def __init__(self, env):
@@ -643,35 +695,36 @@ class ActionMasker(InteractiveWrapper):
         # XXX the mask never forbids the ESC action
 
         cha = self.chassis
-        if cha.in_menu:
-            # allow escape, space, or the letters if we're in interactible menu
-            letters = frozenset(chain(
-                self._spc_esc_crlf, map(ord, cha.menu['letters']),
-            ))
+        if cha.in_menu:  # or cha.xwaitingforspace
+            # allow escape, space, and the letters
+            letters = frozenset(
+                chain(self._spc_esc_crlf, map(ord, cha.menu['letters']))
+            )
+
             mask = np.array([
                 c not in letters for c, a in self.ascii_to_action.items()
             ], dtype=bool)
 
-        elif cha.prompt:
-            prompt = cha.prompt['prompt']
-            match = rx_prompt_getobj_options.match(cha.prompt['tail'])
-
-            if rx_prompt_what_direction.search(prompt):
-                mask = self._directions_only.copy()
-
-            elif match is not None:  # prompt with [...] options
+        elif cha.in_yn_function:
+            match = rx_prompt_options.search(cha.prompt['tail'])
+            if match is not None:  # prompt with [...] options
                 # [getobj()](./nle/src/invent.c#L1416-1829) prompts always
                 #  have a list of options in the tail
                 # fetch letters and produce a mask
-                letters = decompactify(match.group('options') or b'', b'\033')
+                letters = decompactify(match.group('options'), b'\033')
                 mask = np.array([
-                    c not in letters for c, a in
-                    self.ascii_to_action.items()
+                    c not in letters for c, a in self.ascii_to_action.items()
                 ], dtype=bool)
 
+            elif rx_prompt_what_direction.search(cha.prompt['full']):
+                mask = self._directions_only.copy()
+
             else:
-                # free-form prompt allow all well-behaving chars, ESC and CR
-                mask = self._printable_only.copy()
+                raise RuntimeError
+
+        elif cha.in_getlin:
+            # free-form prompt allow all well-behaving chars, ESC and CR
+            mask = self._printable_only.copy()
 
         else:
             # we're in proper gameplay mode, only allow only certain actions

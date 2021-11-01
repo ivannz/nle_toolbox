@@ -6,8 +6,13 @@ from itertools import chain
 from collections import namedtuple
 
 
-rx_menu_is_overlay = re.compile(
+# a pattern to capture features of a modal in-game screen
+rx_modal_signature = re.compile(
     rb"""
+    (?P<signature>
+        # a rare kind of menu, which is actually a message log
+        (?P<has_more>--more--)
+    |
     \(
         (
             # either we get a short single-page overlay menu
@@ -18,7 +23,8 @@ rx_menu_is_overlay = re.compile(
             \s+ of \s+
             (?P<tot>\d+)
         )
-    \)\s*$
+    \)
+    )\s*$
     """,
     re.VERBOSE | re.IGNORECASE | re.MULTILINE | re.ASCII,
 )
@@ -31,7 +37,7 @@ rx_menu_item = re.compile(
         # character for unselected and selected items, respectively.
         (?P<letter>[a-z])
         \s+[\-\+]\s+
-        |
+    |
         # An non-interactive menu item starts with whitespace
         \s+
     )
@@ -43,7 +49,7 @@ rx_menu_item = re.compile(
 
 rx_is_prompt = re.compile(
     rb"""
-    ^(?P<prompt>
+    ^(?P<full>(?P<prompt>
         (
             # messages beginning with a hash are considered prompts,
             #  since the game expects input of an extended command
@@ -55,7 +61,7 @@ rx_is_prompt = re.compile(
         )
     )
     \s*
-    (?P<tail>.*)?
+    (?P<tail>.*)?)
     """,
     re.VERBOSE | re.IGNORECASE | re.ASCII,
 )
@@ -106,60 +112,116 @@ rx_prompt_getobj_options = re.compile(
 )
 
 
-GUIRawMenu = namedtuple('GUIRawMenu', 'n_pages,n_page,is_overlay,data')
+GUIModalWindow = namedtuple(
+    'GUIModalWindow', 'is_message,n_row,data,n_pages,n_page'
+)
 
-GUIMenu = namedtuple('GUIMenu', 'n_pages_left,title,items,letters')
 
+def extract_modal_window(obs):
+    """Detect the type of the modal "window" (overlay or full screen),
+    the number of pages if any, and extract its raw content.
 
-def menu_extract(lines):
-    """Detect the type of the menu (overlay or full screen), the number
-    of pages, and extract its raw content.
+    Details
+    -------
+    In rare circumstances, e.g.  `D,\\015E- something\\015:` dropping all
+    items on a tile, then writing something on that tile, and finally reading,
+    the game screen is captured by a modal message log. It looks identical to
+    an overlay one-page menu except it terminates with a `--More--`  signature,
+    and not `(end)`. Unlike menus, an overlaid message log may have an unknown
+    number of pages left, which means that we need to keep consuming them until
+    no modal window with `--More--` is displayed and prepend the collected data
+    to the message, since `more` indicates more 'messages'. At the same time,
+    menus always either hint or explicitly display pagination info.
+
+    I suspect that there are no paginated message logs, and if a log is too
+    large, then it just spawns many modal windows.
+
+    The least number of item we can drop and still summon such a log seems to
+    be `two`. Since each item is reported as one message in the top line, this
+    means that a log is created whenever there are at least two simultaneous
+    message (not a chain of messages due to elapsed game time).
+
+    seeds = 12301533412141513004, 11519511065143048485
+    commands: '@Dg\\015de\\015 E- something\\015:' -- a log with two messages
+    commands: '@D,\\015E- something\\015:'         -- many messages
+
+    It seems that a message log's signature is never above the second row,
+    unlike multi-part message signature, which shows most often on the first
+    line, and rearely on the second one.
+
+    This logic is based more on empirical data about the GUI of ascii NetHack,
+    rather than founded on deep code analysis. The routine `display_nhwindow`
+    (aliased `windowprocs.win_display_nhwindow`) is responsible for displaying
+    modal (blocking) windows and seems to behave differently between ports.
+
+    Although specific to the architecture of the NLE (nethack interfaces with
+    `win/rl` window procs which hook into win/tty emulator, and yield control
+    back to python space), it appears that menu signatures (pagination and
+    parenthesized `end`) and message log signature (--More--) are generated
+    in `process_menu_window` on lines
+        [L2007-2013](./nle/win/tty/wintty.c#L1844-2213)
+    (and created in [tty_end_menu](./nle/win/tty/wintty.c#L2975-3090) in order
+    to get the number of columns). The key variable, `cw->morestr`, is
+    displayed at the bottom of an nh-window and defaults to
+        [defmorestr](./nle/win/tty/wintty.c#L153).
+    Procs such as [look_here#L3525](`/nle/src/o_init.c#L3378-3551) and
+        [doclassdisco#L639](`/nle/src/o_init.c#L492-659),
+    create message logs by calling `display_nhwindow`, which invokes
+    either `process_menu_window` or `process_text_window`, the latter asking
+    for [dmore](./nle/win/tty/wintty.c#L1698-1717), which most likely has
+    `defmorestr` in `cw->morestr`.
     """
-    col, row, match = 80, 0, None
+    lines = obs['tty_chars'].view('S80')[:, 0]
 
-    # detect menu box
-    matches = map(rx_menu_is_overlay.search, lines)
-    for rr, m in enumerate(matches):
+    # detect the lower left corner of the modal box by looking for a signature
+    col, row, match = 80, 0, None
+    for rr, m in enumerate(map(rx_modal_signature.search, lines)):
         if m is None:
             continue
 
-        beg, end = m.span()
+        # we're ok with the leftmost signature match
+        beg, _ = m.span()
         if beg <= col:
             col, row, match = beg, rr, m
 
-    # extract the menu and the pagination
     if match is None:
-        return None
+        # we couldn't find any signature
+        return lines, None
 
-    is_overlay = False
-    content = tuple([ll[col:].rstrip() for ll in lines[:row]])
+    # get the pagination info and the menu contents, leaving out the signature
     n_page, n_pages = match.group('cur', 'tot')
-    if n_pages is None:
-        n_page, n_pages, is_overlay = 1, 1, True
-
-    return GUIRawMenu(
-        int(n_pages),
-        int(n_page),
-        is_overlay,
+    content = tuple([ll[col:].rstrip() for ll in lines[:row]])
+    return lines, GUIModalWindow(
+        # let the rx do the detection for the `is_message` flag
+        match.group('has_more') is not None,
+        # we need the row number to tell a multi-part message form a log
+        row,
+        # the lines from the modal box, including empty ones
         content,
+        # the total number of pages in a multi-page or overlay menus
+        int(n_pages or 1),
+        # the current page of the menu
+        int(n_page or 1),
     )
 
 
-def menu_parse(obs):
+GUIMenuPage = namedtuple('GUIMenuPage', 'n_pages_left,title,items,letters')
+
+
+def parse_menu_page(page):
     """Extract raw data from a menu and enumerate all items, that can
     be interacted with.
     """
     # Assume a menu is on the screen. Detect which one (single,
     # multi), (letters if interactive) and extract its content.
-    menu = menu_extract(obs['tty_chars'].view('S80')[:, 0])
-    if menu is None:
+    if page is None:
         return None
-    # XXX to make parsing more robust, `.decode('ascii')` was dropped,
-    #  see `fetch_message()`
 
     # extract menu items
+    # XXX to make parsing more robust, `.decode('ascii')` was dropped,
+    #  see `fetch_message()`
     title, items, letters = b'', [], {}
-    for entry in menu.data:
+    for entry in page.data:
         m = rx_menu_item.match(entry)
         if m is not None:
             lt, it = m.group('letter', 'item')
@@ -168,47 +230,89 @@ def menu_parse(obs):
                 letters[lt] = it
 
         # the title of the menu is the first non-empty row of its first page
-        elif entry and not title and menu.n_page == 1:
+        elif entry and not title and page.n_page == 1:
             title = entry
 
     # return the parsed menu
-    return GUIMenu(
+    return GUIMenuPage(
         # number of additional pages
-        menu.n_pages - menu.n_page,
+        page.n_pages - page.n_page,
         # the title of the menu (empty if not the first page)
         title,
-        # the line-by-line content of the menu
+        # the line-by-line content of the menu's page
         items,
         # which items can be interacted with
         letters,
     )
 
 
-def fetch_message(obs, *, top=False):
+def join_menu_pages(pages, *, menu=None):
+    """Join the menu pages with into the current menu."""
+    if not pages:
+        return {}
+
+    if menu is None:
+        menu = {}
+
+    # get the first non-empty title
+    title = next(filter(bool, (p.title for p in pages)), None)
+    # XXX This might not be the real title though, since the first page
+    #  that we're parsing here might actually be some intermediate one in
+    #  the current menu.
+
+    # combine the items from the pages collected so far
+    items = tuple([it for page in pages for it in page.items])
+    new_menu = dict(
+        title=title,
+        items=items,
+        n_pages_left=pages[-1].n_pages_left,
+        letters=pages[-1].letters,
+    )
+
+    # check if the current set of pages belongs to a menu which was interupted
+    #  by a prior interactible page
+    if menu and menu['n_pages_left'] > 0:
+        new_menu = dict(
+            # the title stays with us from the very first page
+            title=menu['title'],
+            # join the tuples of items
+            items=menu['items'] + new_menu['items'],
+            # update the page counter
+            n_pages_left=new_menu['n_pages_left'],
+            # new letters override the older irrelevant ones
+            letters=new_menu['letters'],
+        )
+
+    return new_menu
+
+
+def fetch_messages(obs, split=False, top=False):
+    """Fetch the messages from the observation's message buffer or screen.
+
+    Details
+    -------
+    It would be nice to use `.decode('ascii')` to aviod dealing with bytes
+    objects, especially un downtream message consumers and parsers. However
+    in the case of random exploration, which is a common use case, decoding
+    could fail with a `UnicodeDecodeError`, whever the the game ended up
+    in a user text prompt.
+
+    If instructed, the message is split by `\\x20\\x20`, because this is how
+        [`update_topl`](./nle/src/topl.c#L255-265)
+    separates multiple messages, that fit in one line.
+    """
     if top:
-        # padded with whitespace on the right
-        message = bytes(obs['tty_chars'][:2])
+        topl = obs['tty_chars'].view('S80')[:2, 0]
+        message = b' '.join(map(bytes.strip, topl))
+        if message.endswith(b'--More--'):
+            message = message[:-8].rstrip()
+
     else:
-        # has trailing zero bytes
         message = bytes(obs['message'].view('S256')[0])
+        message = message.rstrip()
 
-    # XXX we might potentially want to split the message by `\x20\x20`,
-    #  because [`update_topl`](./nle/src/topl.c#L255-265) separates multiple
-    #  messages, that fin in one line with `  `.
-
-    # It would be nice to use `.decode('ascii')` to aviod dealing with bytes
-    #  objects, especially un downtream message consumers and parsers. However
-    #  in the case of random exploration, which is a commun use case, decoding
-    #  could fail with a `UnicodeDecodeError`, whever the the game ended up
-    #  in a user text prompt.
-    return message.rstrip()  # .decode('ascii')
-
-
-def has_more_messages(obs):
-    # get the top line from tty-chars
-    # XXX `Misc(*obs['misc']).xwaitingforspace` reacts to menus as well,
-    #  but we want pure multi-part messages.
-    return b'--More--' in fetch_message(obs, top=True)
+    # message = message.decode('ascii')
+    return message.split(b'  ') if split else [message]
 
 
 class InteractiveWrapper(Wrapper):
@@ -258,90 +362,91 @@ class Chassis(InteractiveWrapper):
         is the list of all menu items, and 'letters' is a letter-keyed dict of
         items which can be interacted with.
 
-    in_menu : bool
-        A handy boolean flag that indicates if the game's gui is currently mid
-        menu with an interactible page. Typically the flag is False, because
-        it is set when 'letters' in .menu is non-empty.
-
     prompt : dict
         The current gui prompt. No prompt is empty, otherwise the key 'prompt'
         contains the query, and 'tail' -- the available options or the current
         reply.
+
+    in_yn_function : bool
+        The flag reported by the NLE, which indicates whether the game's gui
+        layer is expecting a choice in a yes/no or multiple-option question.
+
+    in_getlin : bool
+        An indicator of the game's expecting a free-form text input from the
+        user. Collected from the 'misc' fields of the most recent observation.
+
+    xwaitingforspace : bool
+        This flag is se if the game is expecting the user to acknowledge some
+        message or interact with a menu. May be included with the yn-flag.
+
+    in_menu : bool
+        A boolean flag that indicates if the game's gui is currently mid menu
+        with an interactible page. Typically the flag is False, because it is
+        set when 'letters' in `.menu` is non-empty.
     """
-    def __init__(self, env, *, top=False, space=' '):
+    def __init__(self, env, *, split=True, space=' '):
         super().__init__(env)
-        self.top = top
+        self.split = split
 
         # let the user decide what is the space action's encoding
         self.space = space
 
-    def update(self, obs, rew=0., done=False, info=None):
-        # first we detect and parse menus, since messages cannot
-        # appear when they are active
-        tx = self.fetch_menus(obs, rew, done, info)
-        tx = self.fetch_messages(*tx)
+    def fetch_misc_flags(self, obs):
+        """Set atributes from the `misc` field of the received observation.
 
-        # passive checks and updates
-        self.update_prompt(*tx)
-        return tx
-
-    def update_prompt(self, obs, rew=0., done=False, info=None):
-        """Detect whether NetHack expects some input form a user, either text
-        or a response to a yes/no question.
+        Details
+        -------
+        The NLE provides 'misc' field in the observation data, which greatly
+        helps with detecting input-capturing gui screens. Whether the game's
+        gui layer is waiting for user input in `getlin()`
+            [rl_getlin](./nle/win/rl/winrl.cc#L1024-1032),
+        expecting an valid option in a `yn`-like or multiple choice question
+            [rl_yn_function](./nle/win/rl/winrl.cc#L1012-1022),
+        or expecting a `space` when reporting a chain of messages, or a some
+        kind of interaction in with a menu's page
+            [xwaitforspace](./nle/win/tty/getline.c#L218-249)
+        then the respective flags are set. For example, `xwaitforspace` is
+        called by
+            [more](./nle/win/tty/topl.c#L202-241)
+        and
+            [dmore](./nle/win/tty/wintty.c#L1698-1717)),
         """
-        self.prompt = {}
 
-        # We should detect prompts that do not expect a user input, but look
-        #  like ones according to `rx_is_prompt`. A smart way is to figure out
-        # if the game's gui is in a [getlin()](./nle/src/ .c#L ) or a `yn`-like
-        # function. obs[`misc`] greatly helps us here!
-        self.in_yn_function, self.in_getlin, \
+        self.in_yn_function, \
+            self.in_getlin, \
             self.xwaitingforspace = map(bool, obs['misc'])
 
-        # nothing to check if we've got no messages, however some messages are
-        #  fake prompts, so also try to avoid such cases by inspecting `misc`.
-        if self.messages and (self.in_yn_function or self.in_getlin):
-            # check for the prompt in the last message
-            *ignore, message = self.messages
-            match = rx_is_prompt.search(message)
-            if match is not None:
-                self.prompt = match.groupdict('')
-
-    def fetch_messages(self, obs, rew=0., done=False, info=None):
-        """Deal with top line messages
+    def update(self, obs, rew=0., done=False, info=None):
+        """Detect whether NetHack expects a text input form the user, a pick
+        in a yes/no or a mutliple choice question, a acknowledgement to forward
+        a multi-part message, or a interaction with a menu's page.
 
         Details
         -------
+        The recent action may have caused a chain of menus and messages.
+        We parse the game screen and interact with the nle until one of
+        the following states: expecting a text input, a letter choice either
+        in a top line yn-question or within an interactible page.
+
+        Dealing with top line messages and modal message logs
+        -----------------------------------------------------
         The game reports events, displays status or information in the top two
         lines of the screen. The NLE also provides raw data in the `message`
-        field of the observation. When NetHack generally announces in the top
-        line, however, if it wants to communicate a single message longer than
-        `80` characters, the game allows it to spill over to the second line,
-        appending a `--More--` suffix to it. The game does the same if it has
-        several short messages to announce. In both cases NetHack's gui expects
-        the user to confirm or dismiss each message by pressing Space, Enter
-        or Escape.
-        """
-        buffer = []
-        while has_more_messages(obs) and not done:
-            # inside this loop the message CANNOT be empty by design
-            buffer.append(fetch_message(obs, top=self.top))
-            obs, rew, done, info = self.env.step(self.space)  # send SPACE
+        field of the observation. NetHack generally announces in the top line,
+        however, if it wants to communicate a single message longer than `80`
+        characters, the NLE's win/tty layer allows a spill over to the second
+        line. If the game wants to announce several messages that collectively
+        do not fit the topl line, then its gui layer appends a `--More--`
+        suffix to the message. In both cases NetHack's gui expects the user to
+        acknowledge or dismiss each message by pressing Space, Enter or Escape.
 
-        # the final message may be empty so we сheck for it
-        message = fetch_message(obs, top=self.top)
-        if message:
-            buffer.append(message)
-        self.messages = tuple(buffer)
+        In rare circumstances the messages are announced on the screen in
+        an overlay modal (blocking) window. See `extract_modal_window`. Also,
+            [tty_message_menu](/nle/win/tty/wintty.c#L3135-3167)
+        actually makes mutli-part messages behave like one-item menus.
 
-        # XXX obs['message'] contains the last message
-        return obs, rew, done, info
-
-    def fetch_menus(self, obs, rew=0., done=False, info=None):
-        """Handle single and multi-page interactive and static menus.
-
-        Details
-        -------
+        Handling single and multi-page interactive and static menus
+        -----------------------------------------------------------
         There are two types of menus on NetHack: single paged and multipage.
         Single page menus popup in the middle of the terminal on top of the
         dungeon map (and are sort of `dirty`, meaning that they have arbitrary
@@ -356,61 +461,80 @@ class Chassis(InteractiveWrapper):
         was the last or the only one. The escape `\\0x1b` (`\\033`, 27, `^[`)
         immediately exits any menu.
         """
-        page = menu_parse(obs)
-        if page is not None:
-            # get the title from the first page. This might not be the real
-            #  title though, since the first page that we're parsing here
-            #  might actually be some intermediate page in the current menu.
-            title = page.title
 
-            # parse menus and collect all their data unless interactive
-            pages = []
-            while not page.letters and page.n_pages_left > 0:
-                pages.append(page)
+        self.in_menu = False
+        self.fetch_misc_flags(obs)
+
+        # quit immediately, if we've got an interactible page or we've left
+        #  the modal window input capturing seciton in `win/tty`.
+        # XXX swaitingforspace takes priority over other flags and reacts to
+        # menus as well as multi-part messages.
+        messages, pages = [], []
+        while (not (done or self.in_menu) and self.xwaitingforspace):
+            # see if we've got a modal window capturing the game screen. It may
+            # either be a top-line message with `--More--`, an overlay message
+            # log, a single-page overlay menu with `(end)`, or  a multi-page
+            # fullscreen menu with pagination info.
+            _, modal = extract_modal_window(obs)
+
+            # XXX we cannot have menu pages interleaved with messages, since
+            #  `tty_end_menu` creates multiple pages in `cw->plist`, yet only
+            #  a single `cw->morestr`.  (citation-needed)
+            if not modal.is_message:
+                pages.append(parse_menu_page(modal))
+                self.in_menu = bool(pages[-1].letters)
+
+            else:
+                # see if we've got a multi-part top-line message, or a full
+                #  blown log: if `n_row`, the bottom line of the modal window,
+                #  is less than two, then what we've got is a modal top-line.
+                if modal.n_row < 2:
+                    # the message is non-empty by design
+                    data = fetch_messages(obs, self.split)
+
+                else:
+                    data = modal.data
+
+                messages.extend(data)
+
+            # request the next screen, unless we're in an interactible page
+            if not self.in_menu:
+                # the current screen displays a multi-part message or a regular
+                # non-interactive menu page. If its the menu, then the page is
+                # either the last one, and we need to close the menu, or not,
+                # in which case we request the next page. If it is a message
+                # then we acknowledge it and ask for the next one.
                 obs, rew, done, info = self.env.step(self.space)  # send SPACE
-                page = menu_parse(obs)
+                self.fetch_misc_flags(obs)
 
-            # no pages until the current page have been interactive, and either
-            #  the current page is an interactive one, or the menu has run out
-            #  of pages and this is the last page
-            pages.append(page)
+        # We've got an alternative here: either the current page is interactibe
+        #  in which case `in_menu` set, or the currently there is nothing on
+        #  the screen which captures the user input, since the game has run out
+        #  of either menu pages or messages.
+        self.in_yn_function, self.in_getlin, \
+            self.xwaitingforspace = map(bool, obs['misc'])
 
-            # if the current page is non-interactive, then it must be the last
-            #  one. Send space to close the menu.
-            if not page.letters:
-                obs, rew, done, info = self.env.step(self.space)  # send SPACE
+        self.prompt = {}
+        if not self.in_menu:
+            # at least one message from the log, or a multi-part message spills
+            #  over as a single top-line message.
+            messages.extend(fetch_messages(obs, self.split))
 
-            # join the pages collected so far
-            new_menu = dict(
-                title=title,
-                n_pages_left=page.n_pages_left,
-                items=tuple([it for page in pages for it in page.items]),
-                letters=page.letters,
-            )
+            # We should avoid messages that do not expect a user input,
+            #  but look like prompts according to `rx_is_prompt`.
+            if self.in_yn_function or self.in_getlin:
+                message = messages.pop()
+                match = rx_is_prompt.search(message)
+                if match is not None:
+                    self.prompt = match.groupdict('')
 
-            # check if the current set of pages belong to a menu which was
-            #  interupted by an interactible page.
-            if self.menu and self.menu['n_pages_left'] > 0:
-                new_menu = dict(
-                    # the title stays with us from the very first page
-                    title=self.menu['title'],
-                    # update the page counter
-                    n_pages_left=new_menu['n_pages_left'],
-                    # join the lists of items
-                    items=self.menu['items'] + new_menu['items'],
-                    # new letters overrride the older irrelevant ones
-                    letters=new_menu['letters'],
-                )
-            self.menu = new_menu
+                else:
+                    raise RuntimeError(f'weird prompt `{message}`.')
 
-            # if we've got an interactive page the we are mid-menu, otherwise
-            #  the extra space sent above has closed the menu.
-            self.in_menu = bool(new_menu['letters'])
+        # leave out empty messages
+        self.messages = tuple(filter(bool, messages))
 
-        else:
-            self.menu = {}
-            self.in_menu = False
-
+        self.menu = join_menu_pages(pages, menu=getattr(self, 'menu', None))
         # XXX we'd better listen to special character action when
         #  dealing with interactive menus.
         return obs, rew, done, info

@@ -16,20 +16,7 @@ print(table)
 # ascii  # char    gym-id  class                   name
 4,       # \\x04   48      Command                 KICK
 20,      # \\x14   82      Command                 TELEPORT
-34,      # "       101     TextCharacters          QUOTE
-39,      # '       100     TextCharacters          APOS
 44,      # ,       61      Command                 PICKUP
-45,      # -       98      TextCharacters          MINUS
-48,      # 0       102     TextCharacters          NUM_0
-49,      # 1       103     TextCharacters          NUM_1
-50,      # 2       104     TextCharacters          NUM_2
-51,      # 3       105     TextCharacters          NUM_3
-52,      # 4       106     TextCharacters          NUM_4
-53,      # 5       107     TextCharacters          NUM_5
-54,      # 6       108     TextCharacters          NUM_6
-55,      # 7       109     TextCharacters          NUM_7
-56,      # 8       110     TextCharacters          NUM_8
-57,      # 9       111     TextCharacters          NUM_9
 58,      # :       51      Command                 LOOK
 65,      # A       81      Command                 TAKEOFFALL
 69,      # E       37      Command                 ENGRAVE
@@ -133,4 +120,19 @@ print(table)
 103,     # g       72      Command                 RUSH
 105,     # i       44      Command                 INVENTORY
 109,     # m       54      Command                 MOVE
+
+# used in certain prompts
+34,      # "       101     TextCharacters          QUOTE
+39,      # '       100     TextCharacters          APOS
+45,      # -       98      TextCharacters          MINUS
+48,      # 0       102     TextCharacters          NUM_0
+49,      # 1       103     TextCharacters          NUM_1
+50,      # 2       104     TextCharacters          NUM_2
+51,      # 3       105     TextCharacters          NUM_3
+52,      # 4       106     TextCharacters          NUM_4
+53,      # 5       107     TextCharacters          NUM_5
+54,      # 6       108     TextCharacters          NUM_6
+55,      # 7       109     TextCharacters          NUM_7
+56,      # 8       110     TextCharacters          NUM_8
+57,      # 9       111     TextCharacters          NUM_9
 """

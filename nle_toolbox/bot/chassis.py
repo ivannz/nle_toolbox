@@ -1,3 +1,7 @@
+"""The gui flag reconstruction, source code references and documentation are
+valid as of commit 82bba59dc45ac89844354a819c21e0808168760a
+"""
+
 import re
 import numpy as np
 from gym import Wrapper
@@ -518,14 +522,19 @@ class Chassis(InteractiveWrapper):
         #  in which case `in_menu` set, or the currently there is nothing on
         #  the screen which captures the user input, since the game has run out
         #  of either menu pages or messages.
-        self.in_yn_function, self.in_getlin, \
-            self.xwaitingforspace = map(bool, obs['misc'])
-
         self.prompt = {}
         if not self.in_menu:
             # at least one message from the log, or a multi-part message spills
             #  over as a single top-line message.
             messages.extend(fetch_messages(obs, self.split))
+
+            # `getlin` is not triggered when an extended command is being input
+            self.in_getlin = self.in_getlin or messages[-1].startswith(b'#')
+            # XXX This due to [doextcmd](./nle/src/cmd.c#L339-367) turning to
+            #  `.win_get_ext_cmd`, that in the NLE is ultimately mapped to
+            #  [NetHackRL::rl_get_ext_cmd()](./nle/win/rl/winrl.cc#L1034-1040).
+            #  Unlike [NetHackRL::rl_getlin](./nle/win/rl/winrl.cc#L1024-1032),
+            #  it does not affect `in_getlin` flag.
 
             # We should avoid messages that do not expect a user input,
             #  but look like prompts according to `rx_is_prompt`.

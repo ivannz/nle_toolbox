@@ -1,5 +1,7 @@
-"""The gui flag reconstruction, source code references and documentation are
-valid as of commit 82bba59dc45ac89844354a819c21e0808168760a
+"""GUI abstraction and state collection, regex patterns, source code
+references, discussion and documentation are valid as of commit
+    82bba59dc45ac89844354a819c21e0808168760a
+of the NLE's repo.
 """
 
 import re
@@ -159,9 +161,9 @@ def extract_modal_window(obs):
 
     It seems that a message log's signature is never above the second row,
     unlike multi-part message signature, which shows most often on the first
-    line, and rearely on the second one.
+    line, and rarely on the second one.
 
-    This logic is based more on empirical data about the GUI of ascii NetHack,
+    This logic is based more on empirical data about the GUI of ASCII NetHack,
     rather than founded on deep code analysis. The routine `display_nhwindow`
     (aliased `windowprocs.win_display_nhwindow`) is responsible for displaying
     modal (blocking) windows and seems to behave differently between ports.
@@ -176,8 +178,8 @@ def extract_modal_window(obs):
     to get the number of columns). The key variable, `cw->morestr`, is
     displayed at the bottom of an nh-window and defaults to
         [defmorestr](./nle/win/tty/wintty.c#L153).
-    Procs such as [look_here#L3525](`/nle/src/o_init.c#L3378-3551) and
-        [doclassdisco#L639](`/nle/src/o_init.c#L492-659),
+    Procs such as [look_here#L3525](`./nle/src/o_init.c#L3378-3551) and
+        [doclassdisco#L639](`./nle/src/o_init.c#L492-659),
     create message logs by calling `display_nhwindow`, which invokes
     either `process_menu_window` or `process_text_window`, the latter asking
     for [dmore](./nle/win/tty/wintty.c#L1698-1717), which most likely has
@@ -281,8 +283,8 @@ def join_menu_pages(pages, *, menu=None):
         letters=pages[-1].letters,
     )
 
-    # check if the current set of pages belongs to a menu which was interupted
-    #  by a prior interactible page
+    # check if the current set of pages belongs to a menu which was
+    #  interrupted by a prior interactible page
     if menu and menu['n_pages_left'] > 0:
         new_menu = dict(
             # the title stays with us from the very first page
@@ -303,10 +305,10 @@ def fetch_messages(obs, split=False, top=False):
 
     Details
     -------
-    It would be nice to use `.decode('ascii')` to aviod dealing with bytes
-    objects, especially un downtream message consumers and parsers. However
+    It would be nice to use `.decode('ascii')` to avoid dealing with `bytes`
+    objects, especially in downstream message consumers and parsers. However
     in the case of random exploration, which is a common use case, decoding
-    could fail with a `UnicodeDecodeError`, whever the the game ended up
+    could fail with a `UnicodeDecodeError`, whenever the the game ends up
     in a user text prompt.
 
     If instructed, the message is split by `\\x20\\x20`, because this is how
@@ -329,7 +331,7 @@ def fetch_messages(obs, split=False, top=False):
 
 class InteractiveWrapper(Wrapper):
     """The base interaction architecture is essentially a middleman, who passes
-    the action to the underlying env, but intercepts the resulting transition
+    the action to the underlying env and intercepts the resulting transition
     data. It also is allowed, but not obliged to interact with the env, while
     intercepting the observations.
     """
@@ -353,17 +355,17 @@ class InteractiveWrapper(Wrapper):
 
 
 class Chassis(InteractiveWrapper):
-    """Handle multi-part messages, yes-no-s, and other gui events, which
+    """Handle multi-part messages, yes-no-s, and other GUI events, which
     were not deliberately requested by downstream policies.
 
-    NetHack's gui is not as intricate as in other related games. We need to
+    NetHack's GUI is not as intricate as in other related games. We need to
     deal with menus, text prompts, messages and y/n questions.
 
     Attributes
     ----------
     messages : tuple of bytes
         This may be empty if no message was encountered, otherwise it contains
-        all pieces of multipart message that the game threw at us due to
+        all pieces of multi-part message that the game threw at us due to
         the last action.
 
     menu : dict
@@ -375,24 +377,25 @@ class Chassis(InteractiveWrapper):
         items which can be interacted with.
 
     prompt : dict
-        The current gui prompt. No prompt is empty, otherwise the key 'prompt'
+        The current GUI prompt. No prompt is empty, otherwise the key 'prompt'
         contains the query, and 'tail' -- the available options or the current
         reply.
 
     in_yn_function : bool
-        The flag reported by the NLE, which indicates whether the game's gui
+        The flag reported by the NLE, which indicates whether the game's GUI
         layer is expecting a choice in a yes/no or multiple-option question.
 
     in_getlin : bool
         An indicator of the game's expecting a free-form text input from the
-        user. Collected from the 'misc' fields of the most recent observation.
+        user. Collected from the 'misc' fields of the most recent observation,
+        or inferred from the most recent message.
 
     xwaitingforspace : bool
-        This flag is se if the game is expecting the user to acknowledge some
+        This flag is set if the game is expecting the user to acknowledge some
         message or interact with a menu. May be included with the yn-flag.
 
     in_menu : bool
-        A boolean flag that indicates if the game's gui is currently mid menu
+        A boolean flag that indicates if the game's GUI is currently mid menu
         with an interactible page. Typically the flag is False, because it is
         set when 'letters' in `.menu` is non-empty.
     """
@@ -409,19 +412,21 @@ class Chassis(InteractiveWrapper):
         Details
         -------
         The NLE provides 'misc' field in the observation data, which greatly
-        helps with detecting input-capturing gui screens. Whether the game's
-        gui layer is waiting for user input in `getlin()`
+        helps with detecting input-capturing GUI screens. Whether the game's
+        GUI layer is waiting for user input in `getlin()`
             [rl_getlin](./nle/win/rl/winrl.cc#L1024-1032),
         expecting an valid option in a `yn`-like or multiple choice question
             [rl_yn_function](./nle/win/rl/winrl.cc#L1012-1022),
-        or expecting a `space` when reporting a chain of messages, or a some
-        kind of interaction in with a menu's page
+        or expecting a `space` when reporting a chain of messages (multi-part),
+        or a some kind of interaction with a menu's page
             [xwaitforspace](./nle/win/tty/getline.c#L218-249)
         then the respective flags are set. For example, `xwaitforspace` is
         called by
             [more](./nle/win/tty/topl.c#L202-241)
         and
-            [dmore](./nle/win/tty/wintty.c#L1698-1717)),
+            [dmore](./nle/win/tty/wintty.c#L1698-1717)).
+        Note that not all user input capturing states are reflected in these
+        flags (find `doextcmd` in a comment inside `.update`).
         """
 
         self.in_yn_function, \
@@ -430,42 +435,46 @@ class Chassis(InteractiveWrapper):
 
     def update(self, obs, rew=0., done=False, info=None):
         """Detect whether NetHack expects a text input form the user, a pick
-        in a yes/no or a mutliple choice question, a acknowledgement to forward
-        a multi-part message, or a interaction with a menu's page.
+        in a yes/no or a multiple choice question, an acknowledgment of
+        a multi-part message, or an interaction with a menu's page.
 
         Details
         -------
-        The recent action may have caused a chain of menus and messages.
-        We parse the game screen and interact with the nle until one of
-        the following states: expecting a text input, a letter choice either
-        in a top line yn-question or within an interactible page.
+        The recent action may have caused a chain of menus and/or messages.
+        We parse the game screen and misc flags and interact with the NLE
+        until we land in one of the following states: expecting a text input or
+        waiting for a letter choice either in a top line yn-question or within
+        an interactible page.
 
-        Dealing with top line messages and modal message logs
-        -----------------------------------------------------
+        Dealing with top line and modal message logs
+        --------------------------------------------
         The game reports events, displays status or information in the top two
         lines of the screen. The NLE also provides raw data in the `message`
         field of the observation. NetHack generally announces in the top line,
         however, if it wants to communicate a single message longer than `80`
         characters, the NLE's win/tty layer allows a spill over to the second
         line. If the game wants to announce several messages that collectively
-        do not fit the topl line, then its gui layer appends a `--More--`
-        suffix to the message. In both cases NetHack's gui expects the user to
+        do not fit the top line, then its GUI layer appends a `--More--` suffix
+        to the message. In both cases NetHack's GUI expects the user to
         acknowledge or dismiss each message by pressing Space, Enter or Escape.
 
         In rare circumstances the messages are announced on the screen in
         an overlay modal (blocking) window. See `extract_modal_window`. Also,
-            [tty_message_menu](/nle/win/tty/wintty.c#L3135-3167)
-        actually makes mutli-part messages behave like one-item menus.
+            [tty_message_menu](./nle/win/tty/wintty.c#L3135-3167)
+        actually makes multi-part messages behave like one-item menus.
+
+        Message handling crucially depends on the TTY data and its correctness.
+        See `fixup_tty` in `.utils.env.render`.
 
         Handling single and multi-page interactive and static menus
         -----------------------------------------------------------
-        There are two types of menus on NetHack: single paged and multipage.
-        Single page menus popup in the middle of the terminal on top of the
+        There are two types of menus on NetHack: single paged and multi-page.
+        Single page menus pop-up in the middle of the terminal on top of the
         dungeon map (and are sort of `dirty`, meaning that they have arbitrary
         symbols around them), while multi-page menus take up the entire screen
-        after clearing it. Overlaid menu regions appear to be right justified,
+        after clearing it. Overlain menu regions appear to be right justified,
         while their contents' text is left-justified. All menus are modal, i.e.
-        capture the keyboard input until exited. Some menus are static, i.e.
+        capture the keyboard input until dismissed. Some menus are static, i.e.
         just display information, while other are interactive, allowing the
         player to select items with letters or punctuation. However, both kinds
         share two special control keys. The space `\\0x20` (`\\040`, 32,
@@ -478,16 +487,20 @@ class Chassis(InteractiveWrapper):
         self.fetch_misc_flags(obs)
 
         # quit immediately, if we've got an interactible page or we've left
-        #  the modal window input capturing seciton in `win/tty`.
-        # XXX swaitingforspace takes priority over other flags and reacts to
-        # menus as well as multi-part messages.
+        #  the modal window input capturing section in `win/tty`.
+        # XXX `xwaitingforspace` takes priority over other flags and reacts
+        #  to menus as well as multi-part messages.
         messages, pages = [], []
-        while (not (done or self.in_menu) and self.xwaitingforspace):
+        while not (done or self.in_menu) and self.xwaitingforspace:
             # see if we've got a modal window capturing the game screen. It may
             # either be a top-line message with `--More--`, an overlay message
             # log, a single-page overlay menu with `(end)`, or  a multi-page
-            # fullscreen menu with pagination info.
-            _, modal = extract_modal_window(obs)
+            # full screen menu with pagination info.
+            screen, modal = extract_modal_window(obs)
+            if modal is None:
+                raise ValueError(
+                    f'Unrecognized screen `{screen}` while waiting for space.'
+                )
 
             # In rare cases, e.g. drinking a potion of enlightenment, the game
             # may spawn a chain of messages interleaved with overlay menus.
@@ -518,15 +531,15 @@ class Chassis(InteractiveWrapper):
                 obs, rew, done, info = self.env.step(self.space)  # send SPACE
                 self.fetch_misc_flags(obs)
 
-        # We've got an alternative here: either the current page is interactibe
-        #  in which case `in_menu` set, or the currently there is nothing on
-        #  the screen which captures the user input, since the game has run out
-        #  of either menu pages or messages.
+        # We've got an alternative here: either the current page is interactible
+        #  in which case `in_menu` is set, or currently nothing is capturing
+        #  the input, since the game has run out of menu pages or messages.
         self.prompt = {}
         if not self.in_menu:
             # at least one message from the log, or a multi-part message spills
             #  over as a single top-line message.
             messages.extend(fetch_messages(obs, self.split))
+            # XXX we should use the unsplit message when detecting the prompt
 
             # `getlin` is not triggered when an extended command is being input
             self.in_getlin = self.in_getlin or messages[-1].startswith(b'#')
@@ -545,7 +558,9 @@ class Chassis(InteractiveWrapper):
                     self.prompt = match.groupdict('')
 
                 else:
-                    raise RuntimeError(f'weird prompt `{message}`.')
+                    raise ValueError(
+                        f'Weird prompt `{message}` while expecting user input.'
+                    )
 
         # leave out empty messages
         self.messages = tuple(filter(bool, messages))
@@ -607,17 +622,17 @@ class ActionMasker(InteractiveWrapper):
         15,      # \\x0f   59      Command                 OVERVIEW
         18,      # \\x12   68      Command                 REDRAW
 
-        # we let the chassis hande mores, escs and spaces
+        # we let the chassis hande mores, ESCs and spaces
         13,      # \\r     19      MiscAction              MORE
         27,      # \\x1b   36      Command                 ESC
         32,      # \\x20   99      TextCharacters          SPACE
 
-        # we get attrs from the bls (altough it migh be useful to know
-        #  our diety, alignment and mission)
+        # we get attribs from the BLS (although it might be useful to know
+        #  our deity, alignment and mission)
         24,      # \\x18   25      Command                 ATTRIBUTES
         # extended commands are handled as composite actions
         35,      # #       20      Command                 EXTCMD
-        # we know our gold from bls
+        # we know our gold from the BLS
         36,      # $       112     TextCharacters          DOLLAR
         38,      # &       92      Command                 WHATDOES
         42,      # *       76      Command                 SEEALL
@@ -675,12 +690,12 @@ class ActionMasker(InteractiveWrapper):
         # we need a reference to the underlying chassis wrapper
         self.chassis = get_wrapper(env, Chassis)
 
-        # either way let's keep our own copy of ascii to action id mapping
+        # either way let's keep our own copy of the ascii to action id mapping
         self.ascii_to_action = {
             int(a): j for j, a in enumerate(self.unwrapped._actions)
         }
 
-        # pre-compute common masks
+        # precompute common masks
         self._allowed_actions = np.array([
             c in self._prohibited for c, a in self.ascii_to_action.items()
         ], dtype=bool)

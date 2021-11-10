@@ -498,6 +498,10 @@ class Chassis(InteractiveWrapper):
         #  to menus as well as multi-part messages.
         messages, pages = [], []
         while not (done or self.in_menu) and self.xwaitingforspace:
+            # the topline message is a zero-terminated string, so we trivially
+            #  test if it is empty
+            is_message_empty = obs['message'][0] == 0
+
             # see if we've got a modal window capturing the game screen. It may
             # either be a top-line message with `--More--`, an overlay message
             # log, a single-page overlay menu with `(end)`, or  a multi-page
@@ -511,6 +515,7 @@ class Chassis(InteractiveWrapper):
             # In rare cases, e.g. drinking a potion of enlightenment, the game
             # may spawn a chain of messages interleaved with overlay menus.
             if not modal.is_message:
+                assert is_message_empty
                 pages.append(parse_menu_page(modal))
                 self.in_menu = bool(pages[-1].letters)
 
@@ -519,10 +524,12 @@ class Chassis(InteractiveWrapper):
                 #  blown log: if `n_row`, the bottom line of the modal window,
                 #  is less than two, then what we've got is a modal top-line.
                 if modal.n_row < 2:
+                    assert not is_message_empty
                     # the message is non-empty by design
                     data = fetch_messages(obs, self.split)
 
                 else:
+                    assert is_message_empty
                     data = modal.data
 
                 messages.extend(data)

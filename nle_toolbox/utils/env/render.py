@@ -36,7 +36,8 @@ def fixup_tty(
     # the message. For example, executing 'acy' in a seeded nethack with
     #     seed = 12604736832047991440, 12469632217503715839
     # causes the following message on the top line:
-    # ```Raising your wand of slow monster high above your head, you break it in two!```
+    #   """Raising your wand of slow monster high above your head,
+    #   you break it in two!"""
     # which fits on the top line, yet is a multi-part message.
     text = message.view('S256')[0]
     if not has_any_lf and len(text) > 72:
@@ -53,22 +54,35 @@ def fixup_tty(
         # properly wrap the text at 80
         text = message.view('S256')[0].decode('ascii')
         pieces = wrap(text + '--More--', 80, break_on_hyphens=False)
-        if len(pieces) != 2:
-            raise RuntimeError(f"Message `{text}` is too long.")
+        # XXX in the case when multiple egravings are appended to each other at
+        #  the same location the message may get so long as to span across up
+        #  to four top lines. This is why the check for the number of pieces
+        #  has been removed.
 
         # recreate tty-chars by patching the relevant regions
         new_tty_chars, new_tty_colors = np.copy(tty_chars), np.copy(tty_colors)
 
-        # fix the game's 21x79 viewport [1:22, :79], multiline messages may
-        #  encroach on the top line of the viewport.
+        # fix the game's 21x79 viewport [1:22, :79], multi-line messages may
+        #  encroach on the top lines of the viewport.
+        # XXX The game's map area in `tty_chars` may get `dirty` from long
+        #  messages, because it is not redrawn, unless the game receives
+        #  `\\x12` REDRAW command. The first two lines are redrawn in `topl`,
+        # but the garbage split onto the thrid and fourth lines is not flushed.
         new_tty_chars[1:22, :79] = chars
         new_tty_colors[1:22, :79] = colors
+
+        # reset the last column
+        new_tty_chars[:22, 79:] = 32
+        new_tty_colors[:22, 79:] = 0
 
         # patch the top two lines. We may assume the colors are correct, since
         #  the original tty_chars had at least three top lines affected.
         vw_new_tty_chars = new_tty_chars.view('S80')
         for r, line in enumerate(pieces):
             vw_new_tty_chars[r] = bytes(f'{line:<80s}', encoding='ascii')
+
+            # use black for whitespace
+            new_tty_colors[r] = np.where(new_tty_chars[r] == 32, 0, 7)
 
         # leave the bottom line stats line intact
         pass

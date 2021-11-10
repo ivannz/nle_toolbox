@@ -497,42 +497,42 @@ class Chassis(InteractiveWrapper):
         # XXX `xwaitingforspace` takes priority over other flags and reacts
         #  to menus as well as multi-part messages.
         messages, pages = [], []
-        while not (done or self.in_menu) and self.xwaitingforspace:
-            # the topline message is a zero-terminated string, so we trivially
-            #  test if it is empty
-            is_message_empty = obs['message'][0] == 0
 
+        # In rare cases, e.g. drinking a potion of enlightenment, the game
+        # may spawn a chain of messages interleaved with overlay menus.
+        while not (done or self.in_menu) and self.xwaitingforspace:
             # see if we've got a modal window capturing the game screen. It may
-            # either be a top-line message with `--More--`, an overlay message
-            # log, a single-page overlay menu with `(end)`, or  a multi-page
-            # full screen menu with pagination info.
+            #  either be a top-line message or an overlay log with `--More--`,
+            #  a single-page overlay menu with `(end)`, or a full screen
+            #  multi-page menu with pagination info at the bottom.
             screen, modal = extract_modal_window(obs)
             if modal is None:
                 raise ValueError(
                     f'Unrecognized screen `{screen}` while waiting for space.'
                 )
 
-            # In rare cases, e.g. drinking a potion of enlightenment, the game
-            # may spawn a chain of messages interleaved with overlay menus.
-            if not modal.is_message:
-                assert is_message_empty
-                pages.append(parse_menu_page(modal))
-                self.in_menu = bool(pages[-1].letters)
+            # the topline message is a zero-terminated ascii string, so we
+            #  can trivially test if it is empty.
+            is_topl_msg_nonempty = obs['message'][0] != 0
+            # XXX In fact [the docs](./nle/doc/window.doc#L46-48) state that
+            #  menu/message are mutually exculsive, and forbid using `putstr`
+            #  after [start_menu](./nle/doc/window.doc#L306-310).
+
+            # see if we've got a multi-part top-line message, or a message log:
+            #  a topline message appears both in `message` and on the screen,
+            #  while the log, being a modal window of type NHW_MENU, shows up
+            #  only on the screen.
+            self.in_menu = False
+            if is_topl_msg_nonempty:
+                messages.extend(fetch_messages(obs, self.split))
+
+            elif modal.is_message:
+                messages.extend(modal.data)
 
             else:
-                # see if we've got a multi-part top-line message, or a full
-                #  blown log: if `n_row`, the bottom line of the modal window,
-                #  is less than two, then what we've got is a modal top-line.
-                if modal.n_row < 2:
-                    assert not is_message_empty
-                    # the message is non-empty by design
-                    data = fetch_messages(obs, self.split)
-
-                else:
-                    assert is_message_empty
-                    data = modal.data
-
-                messages.extend(data)
+                # The detected modal window is a menu
+                pages.append(parse_menu_page(modal))
+                self.in_menu = bool(pages[-1].letters)
 
             # request the next screen, unless we're in an interactible page
             if not self.in_menu:

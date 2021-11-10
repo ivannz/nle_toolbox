@@ -525,6 +525,10 @@ class Chassis(InteractiveWrapper):
             self.in_menu = False
             if is_topl_msg_nonempty:
                 messages.extend(fetch_messages(obs, self.split))
+                if not modal.is_message:
+                    raise ValueError(
+                        f'Non-empty message `{messages}` in a menu `{screen}`.'
+                    )
 
             elif modal.is_message:
                 messages.extend(modal.data)

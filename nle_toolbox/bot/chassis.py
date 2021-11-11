@@ -660,6 +660,8 @@ class ActionMasker(InteractiveWrapper):
         64,      # @       26      Command                 AUTOPICKUP
         67,      # C       27      Command                 CALL
         68,      # D       34      Command                 DROPTYPE
+        # we use engrave in composite commands only
+        69,      # E       37      Command                 ENGRAVE
         71,      # G       73      Command                 RUSH2
         73,      # I       45      Command                 INVENTTYPE
         77,      # M       55      Command                 MOVEFAR

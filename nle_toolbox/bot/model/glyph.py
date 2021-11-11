@@ -52,7 +52,7 @@ class GlyphEmbedding(torch.nn.Module):
         )
 
     def forward(self, glyphs):
-        grp, ent = torch.unbind(self.gl_lookup[glyphs], dim=-1)
+        grp, ent = torch.unbind(self.gl_lookup[glyphs.long()], dim=-1)
         return torch.cat([self.entity(ent), self.group(grp)], dim=-1)
 
 

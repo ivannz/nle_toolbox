@@ -1,11 +1,16 @@
 import torch
+
+from torch import Tensor
 from typing import Optional, Mapping, Any, Union, NamedTuple
+
 from torch.nn import Module, ModuleDict as BaseModuleDict
+from torch.nn import Linear, LSTM, GRU, RNNBase
+from torch.nn import ParameterList, Parameter
 
 
 # copied from rlplay
 def onehotbits(
-    input: torch.Tensor,
+    input: Tensor,
     n_bits: int = 63,
     dtype: torch.dtype = torch.float,
 ):
@@ -23,7 +28,7 @@ def onehotbits(
     return x.to(dtype)
 
 
-class OneHotBits(torch.nn.Module):
+class OneHotBits(Module):
     """Bitfield one-hot encoder."""
     def __init__(
         self,
@@ -36,7 +41,7 @@ class OneHotBits(torch.nn.Module):
 
     def forward(
         self,
-        input: torch.Tensor,
+        input: Tensor,
     ):
         return onehotbits(input, n_bits=self.n_bits, dtype=self.dtype)
 
@@ -54,7 +59,7 @@ class ModuleDict(BaseModuleDict):
     def forward(
         self,
         input: Union[Mapping[str, Any], NamedTuple],
-    ):
+    ) -> Union[Mapping[str, Tensor], Tensor]:
         # namedtupels are almost like frozen dicts
         if isinstance(input, tuple) and hasattr(type(input), '_fields'):
             input = input._asdict()
@@ -147,3 +152,81 @@ def bselect(tensor, *index, dim):
 
     # tensor[..., *index, ...]
     return out.reshape(*lead, *tail)
+
+
+class LinearSplitter(Linear):
+    """A linear layer splitting its result into a dict of tensors."""
+
+    def __init__(
+        self,
+        in_features: int,
+        out_features: Mapping[str, int],
+        bias: bool = True,
+    ) -> None:
+        n_out = sum(out_features.values())
+        super().__init__(in_features, n_out, bias=bias)
+
+        self.names, self.sizes = zip(*out_features.items())
+
+    def forward(
+        self,
+        input: Tensor,
+    ) -> Mapping[str, Tensor]:
+        # apply the linear transformation
+        out = super().forward(input)
+
+        # then split the outputs along the last dim and give them names
+        return dict(zip(self.names, out.split(self.sizes, dim=-1)))
+
+    def extra_repr(self) -> str:
+        splits = dict(zip(self.names, self.sizes))
+
+        text = "in_features={}, out_features={}, bias={}"
+        return text.format(self.in_features, splits, self.bias is not None)
+
+
+def hx_shape(self):
+    """Get the batch-broadcastible shape of the recurrent state.
+
+    Complaint
+    ---------
+    Torch devs should've made this into a recurrent nn.Module's method.
+    """
+    if not isinstance(self, (RNNBase, GRU, LSTM)):
+        return None
+
+    n_hidden_states = self.num_layers * (2 if self.bidirectional else 1)
+
+    # order matters due to possible subclassing!
+    if isinstance(self, GRU):
+        # copied almost verbatim from `torch.nn.GRU.forward`
+        return torch.Size((n_hidden_states, 1, self.hidden_size))
+
+    elif isinstance(self, LSTM):
+        # copied almost verbatim from `torch.nn.LSTM.forward`
+        return (
+            torch.Size((
+                n_hidden_states,
+                1,
+                self.proj_size if self.proj_size > 0 else self.hidden_size,
+            )),
+            torch.Size((n_hidden_states, 1, self.hidden_size)),
+        )
+
+    elif isinstance(self, RNNBase):
+        # copied almost verbatim from `torch.nn.RNNBase.forward`
+        return torch.Size((n_hidden_states, 1, self.hidden_size))
+
+    # raise TypeError
+
+
+def hx_broadcast(h0, n_batch):
+    """Broadcast the initial state h0 to a batch of size `n_batch`."""
+
+    if isinstance(h0, ParameterList):
+        return tuple([h.repeat(1, n_batch, 1) for h in h0])
+
+    elif isinstance(h0, Parameter):
+        return h0.repeat(1, n_batch, 1)
+
+    return ()

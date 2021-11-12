@@ -12,6 +12,7 @@ from nle.nethack import (
 
 from einops import rearrange
 
+from ...utils.nn import bselect
 from ...utils.env.defs import glyphlut
 from ...utils.env.defs import MAX_ENTITY, glyph_group
 
@@ -84,25 +85,20 @@ class GlyphFeatures(torch.nn.Module):
         n_features = gl_padded.shape[4:]
         s_seq, s_batch, s_rows, s_cols, *s_features = gl_padded.stride()
 
-        # use stride trix to dimshiffle and unfold into sliding local windows
-        gl_folded = gl_padded.as_strided(
-            # flatten T x B, fold R x C into 2d windows in dims after F
-            (n_seq * n_batch, n_rows, n_cols, *n_features, k+1+k, k+1+k),
-            # when mul-ing dims in shape use the lowest stride
-            (s_batch, s_rows, s_cols, *s_features, s_rows, s_cols),
-        )
-
         # extract vicinities around the row-col coordinates, specified in bls
         bls = obs['blstats']
-        idx = torch.stack([
-            torch.arange(n_seq * n_batch),
-            bls[..., NLE_BL_Y].flatten(),
-            bls[..., NLE_BL_X].flatten(),
-        ], dim=0).T
-        gl_vicinity = torch.stack([
-            gl_folded[j, r, c] for j, r, c in idx
-        ], dim=0).reshape(n_seq, n_batch, *gl_folded.shape[3:])
-        # XXX there has to be a better way to pick over dims (0, 1, 2)!
+        gl_vicinity = bselect(
+            # stride trix to dimshiffle and unfold into sliding local windows
+            gl_padded.as_strided(
+                # flatten T x B, fold R x C into 2d windows in dims after F
+                (n_seq,  n_batch, n_rows, n_cols, *n_features, k+1+k, k+1+k),
+                # when mul-ing dims in shape use the lowest stride
+                (s_seq, s_batch, s_rows, s_cols, *s_features, s_rows, s_cols),
+            ),
+            bls[..., NLE_BL_Y],
+            bls[..., NLE_BL_X],
+            dim=2,
+        )
 
         # now permute the embedded glyphs to T x B x *F x R x C
         gl_permuted = rearrange(gl_padded, 'T B R C ... -> T B ... R C')

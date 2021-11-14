@@ -33,7 +33,7 @@ class GlyphEmbedding(torch.nn.Module):
         # glyph's entity encoder
         self.entity = torch.nn.Embedding(
             MAX_ENTITY + 1,
-            int(4 * embedding_dim // 5),
+            int(4 * embedding_dim // 5),  # XXX why do we use this ratio?
             padding_idx=MAX_ENTITY,
             max_norm=1.,
             norm_type=2.,

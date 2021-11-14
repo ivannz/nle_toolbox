@@ -157,10 +157,22 @@ def bselect(tensor, *index, dim):
 class LinearSplitter(Linear):
     """A linear layer splitting its result into a dict of tensors."""
 
+    def __new__(
+        cls,
+        in_features: int,
+        out_features: Union[int, Mapping[str, int]],
+        bias: bool = True,
+    ):
+        # regress back to Linear if `out_features` is unstructured
+        if isinstance(out_features, int):
+            return Linear(in_features, out_features, bias=bias)
+
+        return object.__new__(cls)
+
     def __init__(
         self,
         in_features: int,
-        out_features: Mapping[str, int],
+        out_features: Union[int, Mapping[str, int]],
         bias: bool = True,
     ) -> None:
         n_out = sum(out_features.values())
@@ -222,6 +234,9 @@ def hx_shape(self):
 
 def hx_broadcast(h0, n_batch):
     """Broadcast the initial state h0 to a batch of size `n_batch`."""
+    # XXX this procedure could be replaced by
+    #   `plyr.suply(torch.tile, h0, dims=(1, n_batch, 1))`
+    # but then we need to preprocess the inputs into `dict` or `list`.
 
     if isinstance(h0, ParameterList):
         return tuple([h.repeat(1, n_batch, 1) for h in h0])

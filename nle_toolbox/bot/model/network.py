@@ -4,7 +4,6 @@ from torch import nn
 from torch import Tensor
 from typing import Optional, Any, List, Tuple, Mapping, Union
 
-
 from copy import deepcopy
 from rlplay.engine.utils import plyr
 
@@ -250,6 +249,9 @@ class Network(nn.Module):
 
         # the critic's value, halting logit, raw action scores, etc
         self.head = NetworkHead(**recipe['head'])
+
+    def reset(self, hx, at):
+        return self.core.reset(hx, at=at)
 
     def forward(
         self,

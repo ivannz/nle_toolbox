@@ -11,8 +11,25 @@ def multinomial(v):
     return base_multinomial(v.detach().softmax(dim=-1))
 
 
-def postproc(obs, hx, *, val, hlt, **heads):
+def postproc(hx, *, mask=None, val, hlt, **heads):
     r"""Post-process the output of the network to interface with `rlplay`.
+
+    Parameters
+    ----------
+    hx: Tensor, or container of Tensors
+        The recurrent state.
+
+    mask: optional Tensor, or container of Tensor
+        The mask of forbidden actions to apply to the action's prelogits.
+
+    val: Tensor
+        The critic's value estimate of the current observation.
+
+    hlt: Tensor
+        The logit of the halting flag (see details).
+
+    **heads: dict of Tensor
+        The action prelogits.
 
     Returns
     -------
@@ -23,7 +40,7 @@ def postproc(obs, hx, *, val, hlt, **heads):
         from a categorical distribution in the last dim and possibly masked.
 
     hx: Tensor or tuple of Tensors
-        The recurrent state is kep intact and passed as-is.
+        The recurrent state is kept intact and passed as-is.
 
     info: dict of Tensors
         The actor's info dict with differentialbe tensor data including halting
@@ -42,13 +59,10 @@ def postproc(obs, hx, *, val, hlt, **heads):
         = \mathbb{P}\bigl(\log \frac{U}{1-U} \leq z\bigr)
         \,. $$  % (this is a logisitc r.v.)
     """
-
-    # assume the observations comes from a ActionMasker wrapper
-    _, mask = obs
-
     # mask the forbidden actions according to the chassis's aux info
     masked = heads.copy()  # a shallow copy of the heads container
-    masked['micro'] = masked['micro'].masked_fill(mask, -float('inf'))
+    if mask is not None:
+        masked['micro'] = masked['micro'].masked_fill(mask, -float('inf'))
     # XXX masked_fill verifies that the mask data is binary {0, 1} and
     #  doesn't care about the exact integer dtype or bool. Does not work
     #  if the mask if a binary fp data though.
@@ -68,3 +82,32 @@ def postproc(obs, hx, *, val, hlt, **heads):
         plyr.suply(multinomial, masked),
     ), hx, dict(val=val.squeeze(-1), hlt=hlt.squeeze(-1), **heads)
     # XXX `hlt` and `val` in the dict are expected to be T x B
+
+
+class NeuralActorModule(BaseActorModule):
+    """Interface a module with rlplay."""
+    def __init__(self, module):
+        super().__init__()
+        self.module = module
+
+    def reset(self, hx, at):
+        reset = getattr(self.module, 'reset', super().reset)
+        return reset(hx, at)
+
+    def forward(self, obs, mask, *, fin=None, hx=None):
+        out, hx = self.module(obs, fin=fin, hx=hx)
+        return postproc(hx, mask=mask, **out)
+
+    @torch.no_grad()
+    def step(
+        self,
+        stepno,
+        obs,
+        act,
+        rew,
+        fin,
+        *,
+        hx=None,
+        virtual=False,
+    ):
+        return self(*obs, fin=fin, hx=hx)

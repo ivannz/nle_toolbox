@@ -6,7 +6,8 @@ of the NLE's repo.
 
 import re
 import numpy as np
-from gym import Wrapper
+
+from gym import spaces, Wrapper
 
 from itertools import chain
 from collections import namedtuple
@@ -717,20 +718,28 @@ class ActionMasker(InteractiveWrapper):
         # precompute common masks
         self._allowed_actions = np.array([
             c in self._prohibited for c, a in self.ascii_to_action.items()
-        ], dtype=bool)
+        ], dtype=np.int8)
 
         # printable text and controls
         self._printable_only = np.array([
             not (
                 (32 <= c < 128) or c in self._spc_esc_crlf
             ) for c, a in self.ascii_to_action.items()
-        ], dtype=bool)
+        ], dtype=np.int8)
 
         # directions and escapes
         self._directions_only = np.array([
             c not in self._directions
             for c, a in self.ascii_to_action.items()
-        ], dtype=bool)
+        ], dtype=np.int8)
+
+        # properly augment the observation space (assuming the wrapped env is
+        #  the NLE). the action space is unchanged.
+        self.observation_space = spaces.Tuple((
+            self.env.observation_space,
+            spaces.MultiBinary(len(self.ascii_to_action)),
+        ))
+        # XXX `MultiBinary` has `int8` dtype, which is not exactly `bool`.
 
     def update(self, obs, rew=0., done=False, info=None):
         # after all the possible menu/message interactions have been complete
@@ -746,7 +755,7 @@ class ActionMasker(InteractiveWrapper):
 
             mask = np.array([
                 c not in letters for c, a in self.ascii_to_action.items()
-            ], dtype=bool)
+            ], dtype=np.int8)
 
         elif cha.in_yn_function:
             match = rx_prompt_options.search(cha.prompt['tail'])
@@ -757,7 +766,7 @@ class ActionMasker(InteractiveWrapper):
                 letters = decompactify(match.group('options'), b'\033')
                 mask = np.array([
                     c not in letters for c, a in self.ascii_to_action.items()
-                ], dtype=bool)
+                ], dtype=np.int8)
 
             elif rx_prompt_what_direction.search(cha.prompt['full']):
                 mask = self._directions_only.copy()
@@ -775,6 +784,4 @@ class ActionMasker(InteractiveWrapper):
 
         # a numpy mask indicating actions, that SHOULD NOT be taken
         # i.e. masked or forbidden.
-        obs['chassis_mask'] = mask
-
-        return obs, rew, done, info
+        return (obs, mask), rew, done, info

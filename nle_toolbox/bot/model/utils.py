@@ -42,12 +42,16 @@ def postproc(obs, hx, *, val, hlt, **heads):
         = \mathbb{P}\bigl(\log \frac{U}{1-U} \leq z\bigr)
         \,. $$  % (this is a logisitc r.v.)
     """
+
+    # assume the observations comes from a ActionMasker wrapper
+    _, mask = obs
+
     # mask the forbidden actions according to the chassis's aux info
     masked = heads.copy()  # a shallow copy of the heads container
-    masked['micro'] = masked['micro'].masked_fill(
-        obs['chassis_mask'],  # XXX ooh another hardcode here
-        -float('inf'),
-    )
+    masked['micro'] = masked['micro'].masked_fill(mask, -float('inf'))
+    # XXX masked_fill verifies that the mask data is binary {0, 1} and
+    #  doesn't care about the exact integer dtype or bool. Does not work
+    #  if the mask if a binary fp data though.
 
     # generate logistic r.v variates to get the halting flag in the end
     tau = torch.empty_like(hlt).uniform_().logit_()

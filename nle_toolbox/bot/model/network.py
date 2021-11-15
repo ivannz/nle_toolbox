@@ -146,6 +146,42 @@ class NetworkCore(nn.Module):
             # XXX this may get overridden by the module's `.requires_grad_`
             self.h0 = h0.requires_grad_(learnable)
 
+    @torch.no_grad()
+    def reset(
+        self,
+        hx: Union[Tensor, Tuple[Tensor]],
+        at: int,
+    ) -> Union[Tensor, Tuple[Tensor]]:
+        """Non-differentiably reset the state at the specified batch element.
+        """
+        # no recurent state to copy from, keep `hx` intact
+        if isinstance(self.core, nn.Identity):
+            return hx
+
+        if isinstance(at, int):
+            at = slice(at, at+1) if at != -1 else slice(at, None)
+
+        elif not isinstance(at, slice):
+            raise TypeError(f'Unsupported index `{at}`.')
+
+        # `h0` is `n_states x 1 x *hidden` and `hx` has `n_batch` instead of 1`
+        h0 = self.h0
+        if isinstance(h0, nn.ParameterList):
+            h0 = tuple(h0)  # XXX this iterates over the ParList
+
+        elif not isinstance(h0, nn.Parameter):
+            raise TypeError(f'Unsupported initial state type `{self.h0}`.')
+        # XXX is there a way to avoid this clunkiness and repetition of 
+        #  `hx_broadcast`-s logic here?
+
+        # make a deep copy, then non-differentiably overwrite
+        #  with the inital recurrent state data
+        hx_ = plyr.suply(torch.Tensor.clone, hx)
+        plyr.suply(lambda x, u: x[:, at].copy_(u), hx_, h0)
+        # XXX lambda-ing is slow af, but we need to access the second dim.
+
+        return hx_
+
     def forward(
         self,
         input: Tensor,

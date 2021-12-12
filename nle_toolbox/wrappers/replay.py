@@ -18,7 +18,7 @@ class Replay(Wrapper):
 
     sticky : bool, default=False
         A flag indicating whether auto-generated seeds should be redrawn on
-        each env reset. If True, then once generated seed are permanent and
+        each env reset. If True, then once generated seed is permanent and
         reused on every reset.
 
     Attributes
@@ -36,7 +36,7 @@ class Replay(Wrapper):
     ----------
     We force-seed the main challenge task, since we are training an agent,
     and we also want to diagnose its failures and improve it on scenaria,
-    which had undesirable outcomes.
+    which had undesirable outcomes. Also, please, see docs in `.reset` below.
 
     Warning
     -------
@@ -113,6 +113,8 @@ class Replay(Wrapper):
         return self._pynethack
 
     def seed(self, seed=None):
+        """Sets the seed for NLE's random number generator."""
+
         # draw entropy from the system if seed is None
         self._seed_type = 'auto' if seed is None else 'manual'
 
@@ -128,11 +130,29 @@ class Replay(Wrapper):
 
         return core, disp
 
-    def reset(self, **kwargs):
+    def reset(self, seed=None):
+        """Reset the environment to an initial seeded state.
+
+        Details
+        -------
+        The logic of `.reset` in this particular wrapper VIOLATES the spirit of
+        the PRNG interplay and resetting in gym as of version `0.21`. Gym's API
+        mandates that the resets not affect the environment's random number
+        generator and ensure that the RANDOMNESS consumed by the env during
+        each episode is statistically INDEPENDENT between calls to `.reset`.
+
+        Instead, here we ENSURE that NLE's worldgen, monsters, effects and
+        loot, that are typically stochastically generated from the PRNG, are
+        instead produced DETERMINISTICALLY and are IDENTICAL between resets.
+        """
         # get the cached seed, or generate a new unpredictable one, unless
         #  seeds were set manually by a call to `.seed` with non None arg.
-        if not hasattr(self, '_seed') \
-           or (self._seed_type == 'auto' and not self.sticky):
+        if not hasattr(self, '_seed'):
+            # XXX if seed is None, then `_seed_type` becomes `auto`, and
+            #  later resets land on the next branch if `sticky` if False
+            self.seed(seed)
+
+        elif self._seed_type == 'auto' and not self.sticky:
             self.seed(None)
 
         # `set_initial_seeds` has effect only until the next reset, at which
@@ -143,9 +163,11 @@ class Replay(Wrapper):
         self._actions = []
 
         # now call the parent reset
-        return super().reset(**kwargs)
+        return self.env.reset()
 
     def step(self, act):
+        """Run one timestep of the environment's dynamics."""
+
         # record the action and step
         self._actions.append(act)
         return super().step(act)
@@ -173,10 +195,11 @@ class Replay(Wrapper):
             The action a_t taken in response to x_t.
 
         rew: float
-            The reward received for the (x_t, a_t) -->> x_{t+1} transition.
+            The reward r_{t+1} received for the (x_t, a_t) -->> x_{t+1}
+            transition.
 
         obs_: object
-            The next observation x_{t+1} due to taken a_t at x_t.
+            The next observation x_{t+1} due to taking a_t at x_t.
 
         info: dict
             The info dict associated with the t -->> t+1 transition.
@@ -189,11 +212,11 @@ class Replay(Wrapper):
         """
         self.seed(seed)
 
-        # XXX by design `.replay` yields at least one sars transition
+        # XXX by design `.replay` yields at least one SARS transition
         #  for a non-empty list of actions.
         obs, fin, j = self.reset(), False, 0
         if not actions:
-            # yield a semi-invalid sars if there are no actions to replay
+            # yield a semi-invalid SARS if there are no actions to replay
             yield None, None, float('nan'), obs, {}
             return []
 
@@ -202,7 +225,7 @@ class Replay(Wrapper):
             act = actions[j]
             obs_, rew, fin, info = self.step(act)
 
-            # yield SARS transitions
+            # yield a SARS transition
             yield obs, act, rew, obs_, info
             obs, j = obs_, j + 1
 
@@ -217,6 +240,7 @@ class Replay(Wrapper):
             return super().render(mode=mode)
 
         # get the necessary data, and fail gracefully if it is unavailable.
+        # XXX perhaps we should use `..utils.env.render` here
         obs, keys = self.env.last_observation, self.env._observation_keys
         try:
             tty_chars = obs[keys.index("tty_chars")]
@@ -252,14 +276,14 @@ class ReplayToFile(Replay):
         The wrapped NetHack Learning Environment.
 
     folder : str
-        The folder into which the interactive replays are dumped under random
-        filenames.
+        The folder, which is created if absent, into which the interactive
+        replays are dumped under random filenames.
 
     prefix : str, default=''
         The prefix of each replay dump.
 
     sticky : bool, default=False
-        Whetherto renew the auto-generated seeds from the system entropy pool
+        Whether to renew the auto-generated seeds from the system entropy pool
         on each `.reset`. This flag has any effect only when the seed have not
         been set but the user.
 
@@ -298,7 +322,7 @@ class ReplayToFile(Replay):
         self.folder, self.prefix = os.path.abspath(folder), prefix
         os.makedirs(self.folder, exist_ok=True)
 
-        self.save_on = events
+        self.triggers = frozenset(events)
 
     def save(self):
         """Save the current replay under a random name."""
@@ -316,7 +340,7 @@ class ReplayToFile(Replay):
         obs, rew, fin, info = super().step(act)
 
         # save on episode end
-        if fin and self.save_on['done']:
+        if fin and 'done' in self.triggers:
             self.save()
 
         return obs, rew, fin, info
@@ -324,13 +348,13 @@ class ReplayToFile(Replay):
     def reset(self, **kwargs):
         # if `_actions` are absent then we have not been reset yet and
         #  there is nothing to save.
-        if hasattr(self, '_actions') and self.save_on['reset']:
+        if hasattr(self, '_actions') and 'reset' in self.triggers:
             self.save()
 
         return super().reset(**kwargs)
 
     def close(self):
-        if self.save_on['close']:
+        if 'close' in self.triggers:
             self.save()
 
         super().close()

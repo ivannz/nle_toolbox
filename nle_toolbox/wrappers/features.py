@@ -1,6 +1,5 @@
 import numpy as np
-
-from gym import ObservationWrapper, ActionWrapper
+import gym
 
 from ..utils.env.obs import fold2d, BLStats
 from ..utils.env.render import fixup_tty
@@ -9,8 +8,30 @@ from ..utils.env.defs import special
 from nle.nethack import NLE_BL_STR25, NLE_BL_STR125
 
 
+# from gym import ObservationWrapper, ActionWrapper
+class ObservationWrapper(gym.ObservationWrapper):
+    """Fixup the somewhat heavy handed `.reset` patch in `ObservationWrapper`.
+    """
+    def reset(self, **kwargs):
+        return self.observation(self.env.reset(**kwargs))
+
+
+class ActionWrapper(gym.ActionWrapper):
+    """Fixup the somewhat heavy handed `.reset` patch in `ActionWrapper`.
+    """
+    def reset(self, **kwargs):
+        return self.env.reset(**kwargs)
+
+
 class NLEAtoN(ActionWrapper):
-    """Map ascii characters into NLE's actions."""
+    """Map ascii characters into NLE's actions.
+
+    Details
+    -------
+    Allowing the original ascii characters instead of the opaque action
+    integers enables the design and architecture building process simpler,
+    and more attached to the swathes of documentation on NetHack.
+    """
     from nle.nethack import ACTIONS
 
     def __init__(self, env):

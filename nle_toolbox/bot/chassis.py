@@ -626,6 +626,8 @@ def decompactify(text, defaults=b'\033'):
 
 
 class ActionMasker(InteractiveWrapper):
+    from nle.nethack import ACTIONS as _raw_nethack_actions
+
     # carriage return, line feed, space or escape
     _spc_esc_crlf = frozenset(map(ord, '\033\015\r\n '))
 
@@ -710,27 +712,28 @@ class ActionMasker(InteractiveWrapper):
         # we need a reference to the underlying chassis wrapper
         self.chassis = get_wrapper(env, Chassis)
 
-        # either way let's keep our own copy of the ascii to action id mapping
-        self.ascii_to_action = {
-            int(a): j for j, a in enumerate(self.unwrapped._actions)
-        }
+        # either way let's keep our own copy of the action-ascii pairing
+        #  XXX NLE may have different actions corresponding to the same ascii
+        self.ascii_to_action = [
+            (j, int(a)) for j, a in enumerate(self.unwrapped._actions)
+        ]
 
         # precompute common masks
         self._allowed_actions = np.array([
-            c in self._prohibited for c, a in self.ascii_to_action.items()
+            c in self._prohibited for a, c in self.ascii_to_action
         ], dtype=np.int8)
 
         # printable text and controls
         self._printable_only = np.array([
             not (
                 (32 <= c < 128) or c in self._spc_esc_crlf
-            ) for c, a in self.ascii_to_action.items()
+            ) for a, c in self.ascii_to_action
         ], dtype=np.int8)
 
         # directions and escapes
         self._directions_only = np.array([
             c not in self._directions
-            for c, a in self.ascii_to_action.items()
+            for a, c in self.ascii_to_action
         ], dtype=np.int8)
 
         # properly augment the observation space (assuming the wrapped env is
@@ -754,7 +757,7 @@ class ActionMasker(InteractiveWrapper):
             )
 
             mask = np.array([
-                c not in letters for c, a in self.ascii_to_action.items()
+                c not in letters for a, c in self.ascii_to_action
             ], dtype=np.int8)
 
         elif cha.in_yn_function:
@@ -765,7 +768,7 @@ class ActionMasker(InteractiveWrapper):
                 # fetch letters and produce a mask
                 letters = decompactify(match.group('options'), b'\033')
                 mask = np.array([
-                    c not in letters for c, a in self.ascii_to_action.items()
+                    c not in letters for a, c in self.ascii_to_action
                 ], dtype=np.int8)
 
             elif rx_prompt_what_direction.search(cha.prompt['full']):

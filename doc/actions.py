@@ -2,15 +2,26 @@ from nle.nethack import ACTIONS
 
 row = "{asc:<8},  # {esc:<8}{gid:<8}{cls:<24}{nom:16}\n"
 
-table = row.format(gid='gym-id', asc='# ascii', esc='char', cls='class', nom='name')
-
-atoc = {a: j for j, a in enumerate(ACTIONS)}
-for a in sorted(atoc, key=int):
-    gid, asc = atoc[a], int(a)
+table = row.format(
+    gid='gym-id',
+    asc='# ascii',
+    esc='char',
+    cls='class',
+    nom='name',
+)
+for j, a in sorted(enumerate(ACTIONS), key=lambda x: int(x[1])):
+    gid, asc = j, int(a)
     esc = str(chr(asc).encode('unicode-escape'))[2:-1]
-    table += row.format(gid=gid, asc=asc, esc=esc, cls=type(a).__name__, nom=a._name_)
+    table += row.format(
+        gid=gid,
+        asc=asc,
+        esc=esc,
+        cls=type(a).__name__,
+        nom=a._name_,
+    )
 
-print(table)
+info = """# gym-ids are subject to change depending on the NLE\n"""
+print(info + table)
 
 """
 # ascii  # char    gym-id  class                   name
@@ -90,6 +101,7 @@ print(table)
 32,      # \\x20   99      TextCharacters          SPACE
 38,      # &       92      Command                 WHATDOES
 43,      # +       97      TextCharacters          PLUS
+         #                 Command                 SEESPELLS
 64,      # @       26      Command                 AUTOPICKUP
 79,      # O       58      Command                 OPTIONS
 83,      # S       74      Command                 SAVE
@@ -105,6 +117,7 @@ print(table)
 24,      # \\x18   25      Command                 ATTRIBUTES
 35,      # #       20      Command                 EXTCMD
 36,      # $       112     TextCharacters          DOLLAR
+         #                 Command                 SEEGOLD
 42,      # *       76      Command                 SEEALL
 47,      # /       93      Command                 WHATIS
 59,      # ;       42      Command                 GLANCE
@@ -123,6 +136,7 @@ print(table)
 
 # used in certain prompts
 34,      # "       101     TextCharacters          QUOTE
+         #                 Command                 SEEAMULET
 39,      # '       100     TextCharacters          APOS
 45,      # -       98      TextCharacters          MINUS
 48,      # 0       102     TextCharacters          NUM_0

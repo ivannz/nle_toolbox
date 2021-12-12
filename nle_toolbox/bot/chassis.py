@@ -490,6 +490,19 @@ class Chassis(InteractiveWrapper):
         immediately exits any menu.
         """
 
+        # unless our last action was space, we are not guaranteed that the menu
+        #  screen has changed. For example in a multi-page inventory menu `i`,
+        #  the items appear to be interactible, when in fact they are not.
+        # This may confuses the current logic into thinking that the current
+        #  current unchanged page is the next page in the menue, and thus needs
+        #  to be appended to thhe current representation.
+        # TODO Assuming that the NetHack's GUI does not jump from within one
+        #  modal multi-page menu into another and back, update the logic of
+        #  `join_menu_pages` to pay attention to the current page. Specifically,
+        #  keep track is seen and unseen pages (and the line ranges asccoiated
+        #  with them).
+        pass
+
         self.in_menu = False
         self.fetch_misc_flags(obs)
 

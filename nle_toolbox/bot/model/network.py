@@ -187,6 +187,9 @@ class NetworkCore(nn.Module):
         fin: Optional[Tensor] = None,
         hx: Optional[Union[Tensor, Tuple[Tensor]]] = None,
     ) -> Tuple[Mapping[str, Tensor], Union[Tensor, Tuple[Tensor]]]:
+        # XXX this entire `.forward` could be factored into a dedicated
+        #  masked seq rnn runner (see `psychic-octo-spoon`)
+
         # run the core
         if isinstance(self.core, nn.Identity):
             return input, ()
@@ -196,12 +199,16 @@ class NetworkCore(nn.Module):
         n_seq, n_batch = input.shape[:2]
         h0 = hx_broadcast(self.h0, n_batch)
 
-        # in case `fin` is missing, use a faster branch
+        # in case `fin` is missing or all-false, use a faster branch
         hx = h0 if hx is None else hx  # init hx by aliasing h0
-        if fin is None:
+        if fin is None or not fin.any():
             return self.core(input, hx=hx)
 
-        # make sure the termination mask is numeric
+        # check the leading dims (seq x batch)
+        if fin.shape != input.shape[:2]:
+            raise ValueError(f'Dim mismatch {fin.shape} != {input.shape[:2]}')
+
+        # make sure the termination mask is numeric for lerping
         fin = fin.unsqueeze(-1).to(input)
 
         # loop along the `n_seq` dim, but in slices with fake T=1
@@ -209,7 +216,7 @@ class NetworkCore(nn.Module):
         for x, f in zip(input.unsqueeze(1), fin.unsqueeze(1)):
             # reset the hiddens by lerping with `fin`
             if hx is not h0:  # skip if hx has just been initted
-                # hx <<-- hx * (1 - f) + h0 * f
+                # hx <<-- hx * (1 - f) + h0 * f "==" h0 if f else hx
                 hx = plyr.suply(torch.lerp, hx, h0, weight=f)
 
             out, hx = self.core(x, hx=hx)

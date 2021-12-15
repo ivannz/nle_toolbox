@@ -4,8 +4,9 @@ import plyr
 from torch import Tensor
 from typing import Optional, Mapping, Any, Union, NamedTuple
 
+from torch.nn import init
 from torch.nn import Module, ModuleDict as BaseModuleDict
-from torch.nn import Linear, LSTM, GRU, RNNBase
+from torch.nn import Linear, LSTM, GRU, RNN, RNNBase
 from torch.nn import ParameterList, Parameter
 
 
@@ -19,7 +20,8 @@ def onehotbits(
     assert not input.dtype.is_floating_point
     assert 0 < n_bits < 64  # torch.int64 is signed, so 64-1 bits max
 
-    # n_bits = {torch.int64: 63, torch.int32: 31, torch.int16: 15, torch.int8 : 7}
+    # n_bits = {torch.int64: 63, torch.int32: 31,
+    #           torch.int16: 15, torch.int8 : 7}
 
     # get mask of set bits
     pow2 = torch.tensor([1 << j for j in range(n_bits)]).to(input.device)
@@ -196,6 +198,177 @@ class LinearSplitter(Linear):
 
         text = "in_features={}, out_features={}, bias={}"
         return text.format(self.in_features, splits, self.bias is not None)
+
+
+def trailing_mul(a, b=None, *, w, lead=1):
+    """Unsqueeze the trailing dims of `w` for broadcasted multiply.
+    """
+    # For a `: x B_1 x ... x B_m x ...` and w `B_1 x ... x B_m` we expand w
+    #  to `B_1 x ... x B_m x 1 x ... x 1` and then multiply it by `a`
+    trailing = (1,) * max(a.ndim - w.ndim - lead, 0)
+    return w.reshape(*w.shape, *trailing).mul(a)
+
+
+def trailing_lerp(a, b, *, w, lead=1):
+    """Unsqueeze the trailing dims of `w` for broadcasted linear interpolation.
+    """
+    # For a `: x B_1 x ... x B_m x ...` and w `B_1 x ... x B_m` we expand w
+    #  to `B_1 x ... x B_m x 1 x ... x 1` and then lerp `a` to `b` with it.
+    trailing = (1,) * max(a.ndim - w.ndim - lead, 0)
+    return a.lerp(b, w.reshape(*w.shape, *trailing))
+
+
+def masked_rnn(core, input, hx=None, *, reset=None, h0=None):
+    """Apply a rnn to the sequential input with restarts.
+
+    Parameters
+    ----------
+    core : torch.nn.Module
+        The recurrent core with `batch_first=False`, that accepts an tensor
+        `input` with leading sequence and batch dims (`T x B x ...`) and
+        the recurrent state `hx` (a `? x B x ...` tensor or container thereof).
+        The core must output two objects: the output tensor (`T x B x ...`) and
+        the updated state `hx` (`? x B x ...`). See `torch.nn.modules.rnn`.
+
+    input : torch.Tensor
+        The tensor of shape `T x B x ...` with a batch of input sequences.
+
+    hx : torch.Tensor or container of torch.Tensor
+        The recurrent state at the start of the given fragment of the input
+        sequence. Its tensors must have shape `? x B x ...`. If None, then
+        `hx` is set to `h0`.
+        See `torch.nn.modules.rnn`.
+
+    reset : torch.Tensor, dtype=bool
+        A boolean mask that flags the corresponding item in the input sequence
+        of batches as the START of new sub-sequence. This means that the state
+        `hx` should be RESET to its initial value BEFORE processing the item.
+        If `None`, it is assumed that the sequence never resets.
+
+    h0 : torch.Tensor or container of torch.Tensor
+        The initial recurrent state, used to jumpstart recurrent core at the
+        very BEGINNIG of the whole sequence. If None, then the initial state
+        is expected to be initialized to zeros by the core itself.
+
+    Returns
+    -------
+    output : torch.Tensor
+        The output sequence resulting from applying the core to the input
+        and the starting recurrent state (`hx` or `h0`).
+
+    hx : torch.Tensor or container of torch.Tensor
+        The final recurrent state after running through the input sequence.
+
+    Details
+    -------
+    Applies the core sequentially over the first dim of `input`,  diffably
+    resetting the runtime state `hx` to _zero_ or a supplied init `h0`,
+    according to the provided sequence restart indicator `reset`.
+    """
+    # `input` is `T x B x ...`, `reset` is `T x B`
+    # `hx` is `? x B x ...`, and `h0` is `? x 1 x ...`
+    n_seq, n_batch = input.shape[:2]
+
+    # `h0` could be None for the conventional auto-init with _zero_, or
+    #  a container of diffable tensors. We broadcast `h0` along the second
+    #  dim by concatenating it `n_batch` times with itself.
+    if h0 is not None:
+        # `h0 <<-- torch.cat([h0, h0, ..., h0], dim=1)`
+        h0 = plyr.tuply(torch.cat, *(h0,) * n_batch, dim=1)
+        # XXX We do not use .tile or .repeat, since they require their size
+        #  replication specs to be broadcastible from the trailing dims.
+        #  This would introduce an unnecessary dimensionality constraint on
+        #  the tensors of `hx` and `h0`. Consider `hx` with tensors that
+        #  have multidimensional spatial features, like L x B x H x W, where
+        #  L is the number of rnn layers, B is the batch, and (H, W) are dims
+        #  of a latent 2d state, e.g. spatial GRU's recurrent state.
+
+    # `h0` is the init runtime state, so we use it if `hx` hasn't been supplied
+    hx = h0 if hx is None else hx
+
+    # ignore absent or all-false masks
+    if reset is None or not reset.any():
+        return core(input, hx=hx)
+
+    # check the leading dims (seq x batch)
+    if reset.shape != input.shape[:2]:
+        raise ValueError(f'Dim mismatch {reset.shape} != {input.shape[:2]}')
+
+    # make sure the termination/reset mask is numeric for lerping or mul-ing
+    keep = (~reset).to(input)
+
+    # diffably reset either to zero, or to `h0'
+    outputs = []
+    if h0 is None:
+        # loop along the `n_seq` dim, but in slices with fake T=1
+        for x, m in zip(input.unsqueeze(1), keep):
+            if hx is not h0:  # skip if hx has just been initted
+                # `hx <<-- m * hx` is `zeros_like(hx) if reset else hx`
+                hx = plyr.suply(trailing_mul, hx, w=m)
+
+            out, hx = core(x, hx=hx)
+            outputs.append(out)
+
+    else:
+        for x, m in zip(input.unsqueeze(1), keep):
+            if hx is not h0:  # skip if hx has just been initted
+                # `hx <<-- (1 - m) * h0 + m * hx` is `h0 if reset else hx`
+                hx = plyr.suply(trailing_lerp, h0, hx, w=m)
+
+            out, hx = core(x, hx=hx)
+            outputs.append(out)
+
+    return torch.cat(outputs, dim=0), hx
+
+
+def rnn_reset_parameters(mod):
+    """Bias certain gates to open and make unitary hidden-to-hidden transforms.
+    """
+    if not isinstance(mod, RNNBase):
+        return
+
+    # although classes derived from RNNBase have the same parameter
+    #  structure, we still do some limited sanity checking
+    for nom, par in mod.named_parameters(recurse=False):
+        if nom.startswith('weight_hh_'):
+            # init each block as a random orthonormal matrix
+            for blk in par.unflatten(0, (-1, mod.hidden_size)):
+                init.orthogonal_(blk, gain=1.)
+
+        elif nom.startswith('bias_'):
+            bias = par.unflatten(0, (-1, mod.hidden_size))
+            # torch's RNN-s have redundant biases. We init b_{h*}
+            #  `bias_hh_l[k]` to zero and tweak the b_{i*} `bias_ih_l[k]`,
+            #  depending on the arch.
+            if nom.startswith('bias_hh_l'):
+                init.zeros_(bias)  # XXX GRU might need special care!!
+                continue
+
+            # RNNBase as of 2021-12 has two kinds of bias terms
+            if not nom.startswith('bias_ih_l'):
+                raise TypeError(f'Unrecognized bias term `{nom}` '
+                                f'in `{type(mod)}`.')
+
+            if isinstance(mod, LSTM):
+                # bias the forget gates towards open, so that initial
+                #  grads through the cell state `c_t` pass uninhibited
+                # XXX `nn.LSTM` docs say: bias is [b_ii, b_if, b_ig, b_io]
+                # XXX `\sigma(2) \approx 0.88` should be ok
+                init.constant_(bias[1], 2.)
+
+            elif isinstance(mod, GRU):
+                # slightly bias the update gates towards open
+                # XXX `nn.GRU` docs say: bias is [b_ir, b_iz, b_in]
+                # XXX `\sigma(.8) \approx 0.69` seems nice
+                init.constant_(bias[1], 0.8)
+
+            elif isinstance(mod, RNN):
+                # there isn't anything more we could do for Elman RNN, but make
+                #  its outputs initially wobble around zero.
+                init.zeros_(bias)
+
+            else:
+                raise TypeError(f'Unrecognized recurrent layer `{type(mod)}`.')
 
 
 def hx_shape(self):

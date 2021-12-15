@@ -1,11 +1,12 @@
 import torch
 from torch import nn
 
+import plyr
+
 from torch import Tensor
 from typing import Optional, Any, List, Tuple, Mapping, Union
 
 from copy import deepcopy
-from rlplay.engine.utils import plyr
 
 from .glyph import GlyphFeatures
 from .blstats import BLStatsEmbedding

@@ -1,7 +1,7 @@
 import torch
+import plyr
 
 from rlplay.engine import BaseActorModule
-from rlplay.engine.utils import plyr
 from rlplay.utils.common import multinomial as base_multinomial
 
 

@@ -286,7 +286,7 @@ def masked_rnn(core, input, hx=None, *, reset=None, h0=None):
     # `h0` is the init runtime state, so we use it if `hx` hasn't been supplied
     hx = h0 if hx is None else hx
 
-    # ignore absent or all-false masks
+    # ignore absent or all-false reset masks
     if reset is None or not reset.any():
         return core(input, hx=hx)
 
@@ -297,10 +297,12 @@ def masked_rnn(core, input, hx=None, *, reset=None, h0=None):
     # make sure the termination/reset mask is numeric for lerping or mul-ing
     keep = (~reset).to(input)
 
-    # diffably reset either to zero, or to `h0'
+    # loop along the `n_seq` dim, but in slices with fake T=1, diffably
+    #  resetting the state `hx` to zero, or to `h0' if `reset` tells us to
+    # XXX `hx is not h0` skips the update if hx has just been initted, because
+    #  in this case a reset flag is meaningless.
     outputs = []
     if h0 is None:
-        # loop along the `n_seq` dim, but in slices with fake T=1
         for x, m in zip(input.unsqueeze(1), keep):
             if hx is not h0:  # skip if hx has just been initted
                 # `hx <<-- m * hx` is `zeros_like(hx) if reset else hx`
@@ -311,7 +313,7 @@ def masked_rnn(core, input, hx=None, *, reset=None, h0=None):
 
     else:
         for x, m in zip(input.unsqueeze(1), keep):
-            if hx is not h0:  # skip if hx has just been initted
+            if hx is not h0:
                 # `hx <<-- (1 - m) * h0 + m * hx` is `h0 if reset else hx`
                 hx = plyr.suply(trailing_lerp, h0, hx, w=m)
 

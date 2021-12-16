@@ -12,6 +12,7 @@ from .glyph import GlyphFeatures
 from .blstats import BLStatsEmbedding
 
 from ...utils.nn import ModuleDict, LinearSplitter
+from ...utils.nn import masked_rnn
 from ...utils.nn import hx_shape, hx_broadcast
 
 
@@ -195,35 +196,13 @@ class NetworkCore(nn.Module):
         if isinstance(self.core, nn.Identity):
             return input, ()
 
-        # prepare the hiddens: we keep an explicit `h0`, in the case
-        # it is diff-able and learnable
-        n_seq, n_batch = input.shape[:2]
-        h0 = hx_broadcast(self.h0, n_batch)
+        # `h0` is `n_states x 1 x *hidden` and `hx` has `n_batch` instead of 1`
+        # XXX we keep an explicit `h0` in the case it is diffable and learnable
+        h0 = self.h0
+        if isinstance(h0, nn.ParameterList):
+            h0 = tuple(h0)  # XXX this iterates over the ParList
 
-        # in case `fin` is missing or all-false, use a faster branch
-        hx = h0 if hx is None else hx  # init hx by aliasing h0
-        if fin is None or not fin.any():
-            return self.core(input, hx=hx)
-
-        # check the leading dims (seq x batch)
-        if fin.shape != input.shape[:2]:
-            raise ValueError(f'Dim mismatch {fin.shape} != {input.shape[:2]}')
-
-        # make sure the termination mask is numeric for lerping
-        fin = fin.unsqueeze(-1).to(input)
-
-        # loop along the `n_seq` dim, but in slices with fake T=1
-        outputs = []
-        for x, f in zip(input.unsqueeze(1), fin.unsqueeze(1)):
-            # reset the hiddens by lerping with `fin`
-            if hx is not h0:  # skip if hx has just been initted
-                # hx <<-- hx * (1 - f) + h0 * f "==" h0 if f else hx
-                hx = plyr.suply(torch.lerp, hx, h0, weight=f)
-
-            out, hx = self.core(x, hx=hx)
-            outputs.append(out)
-
-        return torch.cat(outputs, dim=0), hx
+        return masked_rnn(self.core, input, hx, reset=fin, h0=h0)
 
 
 class NetworkHead(nn.Module):

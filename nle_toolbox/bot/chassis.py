@@ -18,7 +18,8 @@ rx_modal_signature = re.compile(
     rb"""
     (?P<signature>
         # a rare kind of menu, which is actually a message log
-        (?P<has_more>--more--)
+        #  we allow at most one white space before `more` signature
+        (?P<has_more>\s?--more--)
     |
     \(
         (
@@ -39,11 +40,13 @@ rx_modal_signature = re.compile(
 rx_menu_item = re.compile(
     rb"""
     ^(
-        # An interactable menu item begins with a letter and if
+        # An interactable menu item begins with a letter and is
         # followed by some whitespace and either a dash or a plus
         # character for unselected and selected items, respectively.
         (?P<letter>[a-z])
         \s+[\-\+]\s+
+        # XXX certain menus appear to be interactible, yet just list the letter
+        #  bindings, e.g. the inventory menu.
     |
         # An non-interactive menu item starts with whitespace
         \s+
@@ -134,7 +137,8 @@ rx_prompt_options = re.compile(
 
 
 GUIModalWindow = namedtuple(
-    'GUIModalWindow', 'is_message,n_row,data,n_pages,n_page'
+    'GUIModalWindow',
+    'is_message,n_row,data,n_pages,n_page',
 )
 
 
@@ -226,7 +230,10 @@ def extract_modal_window(obs):
     )
 
 
-GUIMenuPage = namedtuple('GUIMenuPage', 'n_pages_left,title,items,letters')
+GUIMenuPage = namedtuple(
+    'GUIMenuPage',
+    'n_page,n_pages,title,items,letters',
+)
 
 
 def parse_menu_page(page):
@@ -251,13 +258,14 @@ def parse_menu_page(page):
                 letters[lt] = it
 
         # the title of the menu is the first non-empty row of its first page
+        # FIXME this assumption fails quite often, though
         elif entry and not title and page.n_page == 1:
             title = entry
 
     # return the parsed menu
     return GUIMenuPage(
-        # number of additional pages
-        page.n_pages - page.n_page,
+        # the current page and the total number of pages
+        page.n_page, page.n_pages,
         # the title of the menu (empty if not the first page)
         title,
         # the line-by-line content of the menu's page
@@ -267,44 +275,100 @@ def parse_menu_page(page):
     )
 
 
+GUIMenu = namedtuple(
+    'GUIMenu',
+    'title,n_page,n_pages,content,letters',
+)
+
+
 def join_menu_pages(pages, *, menu=None):
-    """Join the menu pages with into the current menu."""
-    if not pages:
-        return {}
+    """Join the auto-collected menu pages with into the current menu.
 
-    if menu is None:
-        menu = {}
+    Parameters
+    ----------
+    pages : list of GUIMenuPage
+        A list of menu pages automatically collected by skipping with SPACE.
+        This means that the page numbers in them are CONTIGUOUS or RESTART at
+        page one.
 
-    # get the first non-empty title
-    title = next(filter(bool, (p.title for p in pages)), None)
-    # XXX This might not be the real title though, since the first page
-    #  that we're parsing here might actually be some intermediate one in
-    #  the current menu.
+    menu : GUIMenu or None
+        The menu state before the current collection of pages was acquired.
+        None if there was no menu.
 
-    # combine the items from the pages collected so far
-    items = tuple([it for page in pages for it in page.items])
-    new_menu = dict(
-        title=title,
-        items=items,
-        n_pages_left=pages[-1].n_pages_left,
-        letters=pages[-1].letters,
+    Returns
+    -------
+    menu : GUIMenu or None
+        The new menu.
+
+    Details
+    -------
+    We auto-skip the menu's pages consecutively until we either run out of them
+    or land on a page that appears to be interactible. In the former case there
+    is no menu capturing the screen, while in the latter the menu awaits user's
+    interactions, be it closing, navigating between the pages, or engaging with
+    the page's content. On our next call, if the interaction caused the menu to
+    close or auto-skip until closed, then we will not be joining anything.
+
+    Unless our last action was SPACE, we aren't guaranteed that the menu screen
+    has changed. For example in a multi-page inventory menu `i`, the items
+    appear to be interactible, when in fact they are not.
+
+    Otherwise, user's actions caused another streak of skippable pages until
+    either an interactible page of a menu close event. We treat this new
+    streak of pages as belonging to the same menu, which might rarely result
+    in several BACK-TO-BACK menus clumped into one. We tacitly assume that
+    menus DO NOT spawn at pages other than the FIRST.
+    """
+    assert pages
+
+    # Detect the last contiguous page sequence. we assume that auto-skipping
+    #  never stays on the same page, i.e. either closes, advances, or spawns
+    #  a new menu
+    j0 = 0
+    for j, pg in enumerate(pages):
+        # if the current page is the last one, then update the first position
+        if pg.n_page == pg.n_pages:
+            j0 = j + 1
+
+    if 0 < j0 < len(pages):
+        pages = pages[j0:]
+        menu = None
+
+    # Check that the auto-skipped pages are contiguous
+    page_span = frozenset([pg.n_page for pg in pages])
+    assert len(page_span) == len(pages)
+    assert frozenset(range(min(page_span), max(page_span) + 1)) <= page_span
+
+    # setup a representation of the span of menu pages
+    new = GUIMenu(
+        # get the first non-empty title (page order!)
+        # XXX This might not be the real title though, since the first page
+        #  that we're parsing here might actually be some intermediate one in
+        #  the current menu.
+        next(filter(bool, (pg.title for pg in pages)), None),
+        # the current page and the total number
+        pages[-1].n_page, pages[-1].n_pages,
+        # the page content
+        {pg.n_page: pg.items for pg in pages},
+        # cache the letters from the current page
+        pages[-1].letters,
     )
 
-    # check if the current set of pages belongs to a menu which was
-    #  interrupted by a prior interactible page
-    if menu and menu['n_pages_left'] > 0:
-        new_menu = dict(
-            # the title stays with us from the very first page
-            title=menu['title'],
-            # join the tuples of items
-            items=menu['items'] + new_menu['items'],
-            # update the page counter
-            n_pages_left=new_menu['n_pages_left'],
-            # new letters override the older irrelevant ones
-            letters=new_menu['letters'],
-        )
+    # no need to join menus if the current one was single-paged
+    if menu is None or menu.n_pages == 1:
+        return new
 
-    return new_menu
+    # update the multi-page menu
+    return GUIMenu(
+        # the title stays with us from the very first page
+        menu.title,
+        # the number of the page currently being displayed
+        new.n_page, menu.n_pages,
+        # update the current menu's pages with the skipped content
+        menu.content | new.content,  # {**menu.content, **new.content}
+        # new letters override the older irrelevant ones
+        new.letters,
+    )
 
 
 def fetch_messages(obs, split=False, top=False):
@@ -414,7 +478,7 @@ class Chassis(InteractiveWrapper):
         self.space = space
 
     def fetch_misc_flags(self, obs):
-        """Set atributes from the `misc` field of the received observation.
+        """Set attributes from the `misc` field of the received observation.
 
         Details
         -------
@@ -436,6 +500,7 @@ class Chassis(InteractiveWrapper):
         flags (find `doextcmd` in a comment inside `.update`).
         """
 
+        # we expect this to fail if the `obs['misc']` spec changes upstream
         self.in_yn_function, \
             self.in_getlin, \
             self.xwaitingforspace = map(bool, obs['misc'])
@@ -489,19 +554,6 @@ class Chassis(InteractiveWrapper):
         was the last or the only one. The escape `\\0x1b` (`\\033`, 27, `^[`)
         immediately exits any menu.
         """
-
-        # unless our last action was space, we are not guaranteed that the menu
-        #  screen has changed. For example in a multi-page inventory menu `i`,
-        #  the items appear to be interactible, when in fact they are not.
-        # This may confuses the current logic into thinking that the current
-        #  current unchanged page is the next page in the menue, and thus needs
-        #  to be appended to thhe current representation.
-        # TODO Assuming that the NetHack's GUI does not jump from within one
-        #  modal multi-page menu into another and back, update the logic of
-        #  `join_menu_pages` to pay attention to the current page. Specifically,
-        #  keep track is seen and unseen pages (and the line ranges asccoiated
-        #  with them).
-        pass
 
         self.in_menu = False
         self.fetch_misc_flags(obs)
@@ -596,7 +648,16 @@ class Chassis(InteractiveWrapper):
         # leave out empty messages
         self.messages = tuple(filter(bool, messages))
 
-        self.menu = join_menu_pages(pages, menu=getattr(self, 'menu', None))
+        # decide if the menus should be joined
+        if pages:
+            self.menu = join_menu_pages(
+                pages, menu=getattr(self, 'menu', None)
+            )
+
+        else:
+            # no new pages means no menu on screen
+            self.menu = None
+
         # XXX we'd better listen to special character action when
         #  dealing with interactive menus.
         return obs, rew, done, info
@@ -766,7 +827,7 @@ class ActionMasker(InteractiveWrapper):
         if cha.in_menu:  # or cha.xwaitingforspace
             # allow escape, space, and the letters
             letters = frozenset(
-                chain(self._spc_esc_crlf, map(ord, cha.menu['letters']))
+                chain(self._spc_esc_crlf, map(ord, cha.menu.letters))
             )
 
             mask = np.array([
@@ -788,6 +849,9 @@ class ActionMasker(InteractiveWrapper):
                 mask = self._directions_only.copy()
 
             else:
+                # XXX should not be reached by non-prohibited actions, e.g.
+                #  the prohibited WHATDOES command '&' yields 'What command?'
+                #  prompt, which ends up here.
                 raise RuntimeError
 
         elif cha.in_getlin:

@@ -14,7 +14,7 @@ from nle.nethack import (
 from .chassis import InteractiveWrapper, Chassis, get_wrapper
 
 from ..utils.env.defs import glyph_is, dt_glyph_ext, ext_glyphlut
-from ..utils.env.obs import fold2d
+from ..utils.env.obs import npy_fold2d
 
 
 dt_map = np.dtype([
@@ -67,7 +67,9 @@ class Level:
 
         # setup read-only view for adjacent tiles
         self.bg_vicinity, self.stg_vicinity, \
-            = fold2d(data, k=k, leading=1, writeable=False).view(np.recarray)
+            = npy_fold2d(
+                data, k=k, n_leading=1, writeable=False,
+            ).view(np.recarray)
 
         # sparse data structures with x-y keys (unbordered coords)
         # sparsely populated dict keyed by x-y containing arbitrary data, e.g.
@@ -146,7 +148,7 @@ class DungeonMapper(InteractiveWrapper):
         data = np.full((1 + rows + 1, 1 + cols + 1), MAX_GLYPH, dtype=int)
 
         self.vw_glyphs = data[1:-1, 1:-1]
-        self.vw_window = fold2d(data, k=1, leading=0, writeable=False)
+        self.vw_window = npy_fold2d(data, k=1, leading=0, writeable=False)
 
         # track the path through the dungeons
         self.trace = [(-1, -1)]

@@ -1,7 +1,7 @@
 import numpy as np
 import gym
 
-from ..utils.env.obs import fold2d, BLStats
+from ..utils.env.obs import npy_fold2d, BLStats
 from ..utils.env.render import fixup_tty
 from ..utils.env.defs import special
 
@@ -82,7 +82,9 @@ class NLEFeatures(ObservationWrapper):
 
         # create view for fas access
         self.vw_glyphs = glyphs[k:-k, k:-k]
-        self.vw_vicinity = fold2d(glyphs, k=k, leading=0, writeable=False)
+        self.vw_vicinity = npy_fold2d(
+            glyphs, k=k, n_leading=0, writeable=False,
+        )
 
     def observation(self, observation):
         # strength percentage is more detailed than `str` stat

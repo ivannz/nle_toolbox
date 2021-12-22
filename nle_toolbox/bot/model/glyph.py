@@ -52,8 +52,13 @@ class GlyphEmbedding(torch.nn.Module):
             sparse=False,
         )
 
+    def lookup(self, glyphs):
+        """Look up the group and entity indices for the given glyphs."""
+        return torch.unbind(self.gl_lookup[glyphs.long()], dim=-1)
+
     def forward(self, glyphs):
-        grp, ent = torch.unbind(self.gl_lookup[glyphs.long()], dim=-1)
+        """Embed the input glyphs."""
+        grp, ent = self.lookup(glyphs)
         return torch.cat([self.entity(ent), self.group(grp)], dim=-1)
 
 

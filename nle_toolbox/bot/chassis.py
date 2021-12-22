@@ -100,6 +100,16 @@ rx_prompt_what_direction = re.compile(
     re.VERBOSE | re.IGNORECASE | re.ASCII,
 )
 
+# regexp for those prompts, that had better accept printable characters only
+rx_prompt_printable_only = re.compile(
+    rb"""
+    what\s+
+    command
+    """,
+    re.VERBOSE | re.IGNORECASE | re.ASCII,
+)
+
+
 # the object selection ui is [getobj()](./nle/src/invent.c#L1416-1829). On
 # line [L1654](./nle/src/invent.c#L1654) it forms the query itself from the
 # `word` sz with the verb (eat, read, write, wield, sacrifice etc.) and on
@@ -834,6 +844,12 @@ class ActionMasker(InteractiveWrapper):
                 c not in letters for a, c in self.ascii_to_action
             ], dtype=np.int8)
 
+        elif cha.in_getlin:
+            # free-form prompt allow all well-behaving chars, ESC and CR
+            mask = self._printable_only.copy()
+            # XXX certain prompts, like `what command`, do not set `in_getlin`
+            #  flag, and instead raise `in_yn_function` for some reason.
+
         elif cha.in_yn_function:
             match = rx_prompt_options.search(cha.prompt['tail'])
             if match is not None:  # prompt with [...] options
@@ -848,15 +864,14 @@ class ActionMasker(InteractiveWrapper):
             elif rx_prompt_what_direction.search(cha.prompt['full']):
                 mask = self._directions_only.copy()
 
+            elif rx_prompt_printable_only.search(cha.prompt['full']):
+                mask = self._printable_only.copy()
+
             else:
                 # XXX should not be reached by non-prohibited actions, e.g.
                 #  the prohibited WHATDOES command '&' yields 'What command?'
                 #  prompt, which ends up here.
                 raise RuntimeError
-
-        elif cha.in_getlin:
-            # free-form prompt allow all well-behaving chars, ESC and CR
-            mask = self._printable_only.copy()
 
         else:
             # we're in proper gameplay mode, only allow only certain actions

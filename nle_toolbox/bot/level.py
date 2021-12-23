@@ -19,7 +19,7 @@ from ..utils.env.obs import npy_fold2d
 
 dt_map = np.dtype([
     # the coordinates' backreference
-    ('xy', np.dtype([('x', int), ('y', int)])),
+    ('rc', np.dtype([('r', int), ('c', int)])),
     # the glyph id
     ('glyph', int),
     # visitation counter
@@ -48,7 +48,7 @@ class Level:
 
         # fill with default values for the border
         data[:] = (
-            (-1, -1),    # invalid x-y coords
+            (-1, -1),    # invalid row-col coords
             MAX_GLYPH,   # invalid glyph
             0,           # was never visited
             0,           # never got updated
@@ -59,11 +59,11 @@ class Level:
             ext_glyphlut[MAX_GLYPH],  # extra info for the invalid gylph
         )
 
-        # fill in the x-y coordinate for backreference
+        # fill in the row-col coordinate for backreference
         tiles = self.bg_tiles, self.stg_tiles, \
             = data[:, k:-k, k:-k].view(np.recarray)
-        for x, y in np.ndindex(rows, cols):
-            tiles.xy[:, x, y] = x, y
+        for r, c in np.ndindex(rows, cols):
+            tiles.rc[:, r, c] = r, c
 
         # setup read-only view for adjacent tiles
         self.bg_vicinity, self.stg_vicinity, \
@@ -71,14 +71,14 @@ class Level:
                 data, k=k, n_leading=1, writeable=False,
             ).view(np.recarray)
 
-        # sparse data structures with x-y keys (unbordered coords)
-        # sparsely populated dict keyed by x-y containing arbitrary data, e.g.
-        # item piles, the monster population, special designations etc.
+        # sparse data structures with row-col keys (unbordered coords)
+        # sparsely populated dict keyed by row-col containing arbitrary data,
+        # e.g. item piles, the monster population, special designations etc.
         self.data = {}
         # XXX we do not use defdict here, since it spawns defaults on
         # read-access, which beats its utility
 
-        # the trace of the x-y coords from bls through the level
+        # the trace of the row-col coords from bls through the level
         self.trace = [(-1, -1)]
 
         # the total number of map updates so far

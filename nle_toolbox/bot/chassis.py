@@ -484,7 +484,7 @@ class Chassis(InteractiveWrapper):
         super().__init__(env)
         self.split = split
 
-        # let the user decide what is the space action's encoding
+        # let the user configure SPACE action id
         self.space = space
 
     def fetch_misc_flags(self, obs):
@@ -712,11 +712,15 @@ def decompactify(text, defaults=b'\033'):
 class ActionMasker(InteractiveWrapper):
     from nle.nethack import ACTIONS as _raw_nethack_actions
 
+    # carriage return, line feed or escape
+    _esc_crlf = frozenset(map(ord, '\033\015\r\n'))
+
     # carriage return, line feed, space or escape
-    _spc_esc_crlf = frozenset(map(ord, '\033\015\r\n '))
+    _spc_esc_crlf = frozenset(map(ord, ' ')) | _esc_crlf
 
     # cardinal directions, esc, cr, and lf
-    _directions = frozenset(map(ord, 'ykuh.ljbn\033\015\r\n'))
+    _directions = frozenset(map(ord, 'ykuh.ljbn'))
+    _directions_esc_crlf = _directions | _esc_crlf
 
     # the letters below are always forbidden for neural actors, because they
     #  either have no effect or are useless, given the data in obs, or outright
@@ -802,6 +806,15 @@ class ActionMasker(InteractiveWrapper):
             (j, int(a)) for j, a in enumerate(self.unwrapped._actions)
         ]
 
+        # cache the id of the most essential action -- ESCAPE
+        self.escape = next((
+            a for a, c in self.ascii_to_action if chr(c) == '\033'
+        ), None)
+        if self.escape is None:
+            raise RuntimeError(
+                f"NLE `{self.unwrapped}` does not have a bound ESCAPE action."
+            )
+
         # precompute common masks
         self._allowed_actions = np.array([
             c in self._prohibited for a, c in self.ascii_to_action
@@ -816,7 +829,7 @@ class ActionMasker(InteractiveWrapper):
 
         # directions and escapes
         self._directions_only = np.array([
-            c not in self._directions
+            c not in self._directions_esc_crlf
             for a, c in self.ascii_to_action
         ], dtype=np.int8)
 
@@ -827,6 +840,11 @@ class ActionMasker(InteractiveWrapper):
             spaces.MultiBinary(len(self.ascii_to_action)),
         ))
         # XXX `MultiBinary` has `int8` dtype, which is not exactly `bool`.
+
+        # cache the direction and self action ids
+        self.directions = {
+            chr(c): a for a, c in self.ascii_to_action if c in self._directions
+        }
 
     def update(self, obs, rew=0., done=False, info=None):
         # after all the possible menu/message interactions have been complete

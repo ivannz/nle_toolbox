@@ -128,13 +128,8 @@ class Level:
         # stage.info.is_interesting
 
 
-class DungeonMapper(InteractiveWrapper):
-    def __init__(self, env):
-        super().__init__(env)
-
-        # we need a reference to the underlying chassis wrapper
-        self.chassis = get_wrapper(env, Chassis)
-
+class DungeonMapper:
+    def __init__(self):
         # NetHack identifies the dungeons and levels with 'level_number' and
         #  'dungeon_number'. The 'depth' is computed from these values in
         #  [`depth`](./nle/src/dungeon.c#L1086-1084), and ultimately depends on
@@ -148,7 +143,7 @@ class DungeonMapper(InteractiveWrapper):
         data = np.full((1 + rows + 1, 1 + cols + 1), MAX_GLYPH, dtype=int)
 
         self.vw_glyphs = data[1:-1, 1:-1]
-        self.vw_window = npy_fold2d(data, k=1, leading=0, writeable=False)
+        self.vw_window = npy_fold2d(data, k=1, n_leading=0, writeable=False)
 
         # track the path through the dungeons
         self.trace = [(-1, -1)]
@@ -156,41 +151,30 @@ class DungeonMapper(InteractiveWrapper):
         # the current dungeon level
         self.level = None
 
-    def update(self, obs, rew=0., done=False, info=None):
-        # update level representation unless we're in a menu,
-        #  waiting for a prompt, or in the game over screen.
-        if not (self.chassis.in_menu or self.chassis.prompt or done):
-            bls = obs['blstats']
+    def update(self, obs):
+        # update the dungeon's internal buffers
+        np.copyto(self.vw_glyphs, obs['glyphs'], 'same_kind')
+        bls = obs['blstats']
 
-            # update the dungeon's internal buffers
-            np.copyto(self.vw_glyphs, obs['glyphs'], 'same_kind')
+        # we need to handle being swallowed separately
+        window = self.vw_window[bls[NLE_BL_Y], bls[NLE_BL_X]]
+        self.is_swallowed = any(map(glyph_is.swallow, window.flat))
+        # XXX when engulfed the game clears the glyphs, i.e. replaces
+        #  the map with `S_stone`, and draw the insides of the monster
+        #  around the current location of the player.
+        #    c.f. [`swallowed`](./nle/src/display.c#L1115-1179)
 
-            # we need to handle being swallowed separately
-            window = self.vw_window[bls[NLE_BL_Y], bls[NLE_BL_X]]
-            self.is_swallowed = any(map(glyph_is.swallow, window.flat))
-            # XXX when engulfed the game clears the glyphs, i.e. replaces
-            #  the map with `S_stone`, and draw the insides of the monster
-            #  around the current location of the player.
-            #    c.f. [`swallowed`](./nle/src/display.c#L1115-1179)
+        # update the trace through the dungeons
+        # XXX [`on_level`](./nle/src/dungeon.c#L1095-1102) compares levels
+        level = bls[NLE_BL_DNUM], bls[NLE_BL_DLEVEL]
+        if self.trace[-1] != level:
+            self.trace.append(level)
 
-            # determine the dungeon level
-            level = bls[NLE_BL_DNUM], bls[NLE_BL_DLEVEL]
+        # update the level, unless swallowed
+        if not self.is_swallowed:
+            if level not in self.maps:
+                self.maps[level] = Level(shape=DUNGEON_SHAPE, k=1)
 
-            # update the trace through the dungeons
-            # XXX [`on_level`](./nle/src/dungeon.c#L1095-1102) compares levels
-            if self.trace[-1] != level:
-                self.trace.append(level)
+            self.maps[level].update(obs)
 
-            # update the level, unless swallowed
-            if not self.is_swallowed:
-                if level not in self.maps:
-                    self.maps[level] = Level()
-
-                self.maps[level].update(obs)
-
-            else:
-                pass
-
-            self.level = self.maps.get(self.trace[-1])
-
-        return obs, rew, done, info
+        self.level = self.maps.get(self.trace[-1])

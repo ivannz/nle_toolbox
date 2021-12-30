@@ -2,13 +2,15 @@ import torch
 import plyr
 
 from rlplay.engine import BaseActorModule
-from rlplay.utils.common import multinomial as base_multinomial
+
+from ...utils.nn import multinomial as base_multinomial
 
 
-def multinomial(v):
-    """Sample a categoricla r.v. from the unnormalized logits in the last dim.
+def multinomial(v, dim=-1):
+    """Sample a categorical r.v. from the unnormalized logits in the given dim.
     """
-    return base_multinomial(v.detach().softmax(dim=-1))
+
+    return base_multinomial(v.detach().softmax(dim=dim), 1, dim).squeeze(dim)
 
 
 def postproc(hx, *, mask=None, val, hlt, **heads):

@@ -421,3 +421,46 @@ def hx_broadcast(h0, n_batch):
         return h0.repeat(1, n_batch, 1)
 
     return ()
+
+
+def multinomial(
+    input,
+    /,
+    num_samples=1,
+    dim=-1,
+    *,
+    replacement=False,
+    generator=None,
+    squeeze=True,
+):
+    """Draw `num_samples` random integers from the unnormalized multinomial
+    distribution, located in the specified `dim` of the `input` tensor.
+
+    Details
+    -------
+    Unlike, `torch.multinomial`, this version SUPPORTS multidimensional input,
+    but DOES NOT allow pre-allocated `out` storage.
+
+    The returned integer-valued tensor MIGHT NOT be contiguous in memory due
+    to dimension permutations.
+    """
+    # compute the split index for rolling the dims
+    dims = list(range(input.ndim))
+    _, dim = divmod(dim, len(dims))
+    pos = dim + 1
+
+    # roll proba dim to trailing position
+    per = input.permute(dims[pos:] + dims[:pos])
+
+    # sample the multinomial, placing the variates at the last dim
+    out = torch.multinomial(
+        per.flatten(0, -2),
+        num_samples,
+        replacement=replacement,
+        generator=generator,
+        out=None,
+    ).unflatten(0, per.shape[:-1])
+
+    # undo dim rolling and optionally squeeze the output
+    out = out.permute(dims[-pos:] + dims[:-pos])
+    return out.squeeze(dim) if squeeze else out

@@ -1,3 +1,4 @@
+import math
 import torch
 import plyr
 
@@ -323,54 +324,90 @@ def masked_rnn(core, input, hx=None, *, reset=None, h0=None):
     return torch.cat(outputs, dim=0), hx
 
 
-def rnn_reset_parameters(mod):
-    """Bias certain gates to open and make unitary hidden-to-hidden transforms.
-    """
+@torch.no_grad()
+def rnn_reset_bias(mod):
+    """Open certain gates by positively biasing them."""
     if not isinstance(mod, RNNBase):
         return
 
     # although classes derived from RNNBase have the same parameter
     #  structure, we still do some limited sanity checking
     for nom, par in mod.named_parameters(recurse=False):
-        if nom.startswith('weight_hh_'):
-            # init each block as a random orthonormal matrix
-            for blk in par.unflatten(0, (-1, mod.hidden_size)):
-                init.orthogonal_(blk, gain=1.)
+        if not nom.startswith('bias_'):
+            continue
 
-        elif nom.startswith('bias_'):
-            bias = par.unflatten(0, (-1, mod.hidden_size))
-            # torch's RNN-s have redundant biases. We init b_{h*}
-            #  `bias_hh_l[k]` to zero and tweak the b_{i*} `bias_ih_l[k]`,
-            #  depending on the arch.
-            if nom.startswith('bias_hh_l'):
-                init.zeros_(bias)  # XXX GRU might need special care!!
-                continue
+        bias = par.unflatten(0, (-1, mod.hidden_size))
+        # torch's RNN-s have redundant biases. We init b_{h*}
+        #  `bias_hh_l[k]` to zero and tweak the b_{i*} `bias_ih_l[k]`,
+        #  depending on the arch.
+        if nom.startswith('bias_hh_l'):
+            init.zeros_(bias)  # XXX GRU might need special care!!
+            continue
 
-            # RNNBase as of 2021-12 has two kinds of bias terms
-            if not nom.startswith('bias_ih_l'):
-                raise TypeError(f'Unrecognized bias term `{nom}` '
-                                f'in `{type(mod)}`.')
+        # RNNBase as of 2021-12 has two kinds of bias terms
+        if not nom.startswith('bias_ih_l'):
+            raise TypeError(f'Unrecognized bias term `{nom}` '
+                            f'in `{type(mod)}`.')
 
-            if isinstance(mod, LSTM):
-                # bias the forget gates towards open, so that initial
-                #  grads through the cell state `c_t` pass uninhibited
-                # XXX `nn.LSTM` docs say: bias is [b_ii, b_if, b_ig, b_io]
-                # XXX `\sigma(2) \approx 0.88` should be ok
-                init.constant_(bias[1], 2.)
+        if isinstance(mod, LSTM):
+            # bias the forget gates towards open, so that initial
+            #  grads through the cell state `c_t` pass uninhibited
+            # XXX `nn.LSTM` docs say: bias is [b_ii, b_if, b_ig, b_io]
+            # XXX `\sigma(2) \approx 0.88` should be ok
+            init.constant_(bias[1], 2.)
 
-            elif isinstance(mod, GRU):
-                # slightly bias the update gates towards open
-                # XXX `nn.GRU` docs say: bias is [b_ir, b_iz, b_in]
-                # XXX `\sigma(.8) \approx 0.69` seems nice
-                init.constant_(bias[1], 0.8)
+        elif isinstance(mod, GRU):
+            # slightly bias the update gates towards open
+            # XXX `nn.GRU` docs say: bias is [b_ir, b_iz, b_in]
+            # XXX `\sigma(.8) \approx 0.69` seems nice
+            init.constant_(bias[1], 0.8)
 
-            elif isinstance(mod, RNN):
-                # there isn't anything more we could do for Elman RNN, but make
-                #  its outputs initially wobble around zero.
-                init.zeros_(bias)
+        elif isinstance(mod, RNN):
+            # there isn't anything more we could do for Elman RNN, but make
+            #  its outputs initially wobble around zero.
+            init.zeros_(bias)
 
-            else:
-                raise TypeError(f'Unrecognized recurrent layer `{type(mod)}`.')
+        else:
+            raise TypeError(f'Unrecognized recurrent layer `{type(mod)}`.')
+
+
+@torch.no_grad()
+def rnn_reset_weight_hh_ortho(mod, *, gain=1.):
+    """Make unitary hidden-to-hidden transforms."""
+    # classes derived from RNNBase have the same parameter structure
+    if not isinstance(mod, RNNBase):
+        return
+
+    for nom, par in mod.named_parameters(recurse=False):
+        if not nom.startswith('weight_hh_'):
+            continue
+
+        # init each block as a random orthonormal matrix
+        for blk in par.unflatten(0, (-1, mod.hidden_size)):
+            init.orthogonal_(blk, gain=gain)
+
+
+@torch.no_grad()
+def rnn_reset_weight_hh_eye(mod, *, gain=1.):
+    """Make near-identity hidden-to-hidden transforms."""
+    # TODO figure out the correct fan-in and motivation
+    pass
+
+    # classes derived from RNNBase have the same parameter structure
+    if not isinstance(mod, RNNBase):
+        return
+
+    for nom, par in mod.named_parameters(recurse=False):
+        if not nom.startswith('weight_hh_'):
+            continue
+
+        # init each block as a random orthonormal matrix
+        for blk in par.unflatten(0, (-1, mod.hidden_size)):
+            # allow small leakage from the other hiddens
+            blk.normal_(0., gain / math.sqrt(mod.hidden_size))
+
+            # ..., while letting own value propagate unmodulated
+            blk.diagonal()[:] = 1.
 
 
 def hx_shape(self):

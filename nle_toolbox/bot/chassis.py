@@ -772,6 +772,8 @@ class ActionMasker(InteractiveWrapper):
         193,     # \\xc1   23      Command                 ANNOTATE
         195,     # \\xc3   31      Command                 CONDUCT
         225,     # \\xe1   22      Command                 ADJUST
+        # jumping is altogether very confusing
+        234,     # \\xea   47      Command                 JUMP
         # win by quitting!
         241,     # \\xf1   65      Command                 QUIT
         246,     # \\xf6   89      Command                 VERSION

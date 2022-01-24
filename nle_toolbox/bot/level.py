@@ -11,8 +11,6 @@ from nle.nethack import (
     MAX_GLYPH,
 )
 
-from .chassis import InteractiveWrapper, Chassis, get_wrapper
-
 from ..utils.env.defs import glyph_is, dt_glyph_ext, ext_glyphlut
 from ..utils.env.obs import npy_fold2d
 
@@ -72,10 +70,10 @@ class Level:
             ).view(np.recarray)
 
         # sparse data structures with row-col keys (unbordered coords)
-        # sparsely populated dict keyed by row-col containing arbitrary data,
+        # sparsely populated dict, keyed by row-col containing arbitrary data,
         # e.g. item piles, the monster population, special designations etc.
         self.data = {}
-        # XXX we do not use defdict here, since it spawns defaults on
+        # XXX we do not use defaultdict here, since it spawns defaults even on
         # read-access, which beats its utility
 
         # the trace of the row-col coords from bls through the level
@@ -118,7 +116,7 @@ class Level:
 
         # update bg only if the __staged background__ glyph is NOT the same
         #  as the current bg glyph. This way we permit a certain degree of
-        #  stickyness to bg.
+        #  stickyness to bg
         to_bg = (stage.glyph != self.bg_tiles.glyph) & stage.info.is_background
         self.bg_tiles[to_bg] = stage[to_bg]
 
@@ -160,7 +158,7 @@ class DungeonMapper:
         window = self.vw_window[bls[NLE_BL_Y], bls[NLE_BL_X]]
         self.is_swallowed = any(map(glyph_is.swallow, window.flat))
         # XXX when engulfed the game clears the glyphs, i.e. replaces
-        #  the map with `S_stone`, and draw the insides of the monster
+        #  the map with `S_stone`, and draws the insides of the monster
         #  around the current location of the player.
         #    c.f. [`swallowed`](./nle/src/display.c#L1115-1179)
 

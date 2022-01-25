@@ -1,4 +1,6 @@
 import torch
+import numpy as np
+
 import torch.nn.functional as F
 
 from nle.nethack import (
@@ -24,10 +26,10 @@ class GlyphEmbedding(torch.nn.Module):
 
         # glyph to group-entity lookup
         self.register_buffer(
-            'gl_lookup', torch.tensor([
+            'gl_lookup', torch.tensor(np.c_[
                 glyphlut.group,
                 glyphlut.entity,
-            ]).T.clone()
+            ]).clone()
         )
 
         # glyph's entity encoder

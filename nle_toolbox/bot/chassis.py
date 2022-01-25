@@ -417,11 +417,23 @@ class InteractiveWrapper(Wrapper):
     intercepting the observations.
     """
     def reset(self):
-        obs, rew, done, info = self.update(self.env.reset(), 0., False, None)
-        return obs
+        self.method_ = 'reset'
+        try:
+            obs, rew, done, info = self.update(
+                self.env.reset(), 0., False, None,
+            )
+            return obs
+
+        finally:
+            self.method_ = None
 
     def step(self, action):
-        return self.update(*self.env.step(action))
+        self.method_ = 'step'
+        try:
+            return self.update(*self.env.step(action))
+
+        finally:
+            self.method_ = None
 
     def update(self, obs, rew=0., done=False, info=None):
         """Perform the necessary updates and environment interactions based
@@ -726,9 +738,15 @@ class ActionMasker(InteractiveWrapper):
     #  either have no effect or are useless, given the data in obs, or outright
     #  dangerous.
     _prohibited = frozenset([
+        # XXX gym-ids are subject to change depending on the NLE
         # ascii  # char    gym-id  class                   name
         15,      # \\x0f   59      Command                 OVERVIEW
         18,      # \\x12   68      Command                 REDRAW
+        33,      # !       85      Command                 SHELL
+        246,     # \\xf6   89      Command                 VERSION
+
+        # win by quitting!
+        241,     # \\xf1   65      Command                 QUIT
 
         # we let the chassis hande mores, ESCs and spaces
         13,      # \\r     19      MiscAction              MORE
@@ -738,19 +756,38 @@ class ActionMasker(InteractiveWrapper):
         # we get attribs from the BLS (although it might be useful to know
         #  our deity, alignment and mission)
         24,      # \\x18   25      Command                 ATTRIBUTES
+
         # extended commands are handled as composite actions
         35,      # #       20      Command                 EXTCMD
+
+        # these shortcuts are present in `inv_*` fields of the observation
+        # XXX but they may be useful for grouping (as they report correct
+        #     letter binding).
+        34,      # "       77      Command                 SEEAMULET
+        40,      # (       82      Command                 SEETOOLS
+        41,      # )       84      Command                 SEEWEAPON
+        61,      # =       80      Command                 SEERINGS
+        91,      # [       78      Command                 SEEARMOR
+
         # we know our gold from the BLS
         36,      # $       112     TextCharacters          DOLLAR
+        36,      # $       79      Command                 SEEGOLD
+
+        # spells can be enumerateed from CAST command `Z`, and neural bots
+        #  do not need to ra0bind spell-key mappings
+        43,      # +       81      Command                 SEESPELLS
+        43,      # +       97      TextCharacters          PLUS
+
         38,      # &       92      Command                 WHATDOES
         42,      # *       76      Command                 SEEALL
-        43,      # +       97      TextCharacters          PLUS
         47,      # /       93      Command                 WHATIS
+
         # No need for farlook
         59,      # ;       42      Command                 GLANCE
         64,      # @       26      Command                 AUTOPICKUP
         67,      # C       27      Command                 CALL
         68,      # D       34      Command                 DROPTYPE
+
         # we use engrave in composite commands only
         69,      # E       37      Command                 ENGRAVE
         71,      # G       73      Command                 RUSH2
@@ -760,9 +797,11 @@ class ActionMasker(InteractiveWrapper):
         82,      # R       69      Command                 REMOVE
         83,      # S       74      Command                 SAVE
         86,      # V       43      Command                 HISTORY
-        92,      # \\\\    49      Command                 KNOWN
+        92,      # \       49      Command                 KNOWN
+
         # NetHack travels by landmarks, but consumes two actions `_:`
         95,      # _       85      Command                 TRAVEL
+
         96,      # `       50      Command                 KNOWNCLASS
         103,     # g       72      Command                 RUSH
         105,     # i       44      Command                 INVENTORY
@@ -772,11 +811,9 @@ class ActionMasker(InteractiveWrapper):
         193,     # \\xc1   23      Command                 ANNOTATE
         195,     # \\xc3   31      Command                 CONDUCT
         225,     # \\xe1   22      Command                 ADJUST
+
         # jumping is altogether very confusing
         234,     # \\xea   47      Command                 JUMP
-        # win by quitting!
-        241,     # \\xf1   65      Command                 QUIT
-        246,     # \\xf6   89      Command                 VERSION
 
         # as with others, the following commands are useful in special prompts
         34,      # "       101     TextCharacters          QUOTE
@@ -794,7 +831,82 @@ class ActionMasker(InteractiveWrapper):
         55,      # 7       109     TextCharacters          NUM_7
         56,      # 8       110     TextCharacters          NUM_8
         57,      # 9       111     TextCharacters          NUM_9
+
+        # special actions
+        233,     # \\xe9   46      Command                 INVOKE
+        239,     # \\xef   56      Command                 OFFER
+        240,     # \\xf0   62      Command                 PRAY
+
     ])
+
+    # The following actions, identified by their ASCII code, are the ones that
+    #  we allow to the neural agents in the general non-gui interaction mode (
+    #  except for prompt and menu letter interactions).
+    _allowed = frozenset([
+        # XXX gym-ids are subject to change depending on the NLE
+        # ascii ,  # char    gym-id  class                   name
+
+        # inventory management
+        65,      # A       89      Command                 TAKEOFFALL
+        44,      # ,       61      Command                 PICKUP
+        80,      # P       63      Command                 PUTON
+        84,      # T       88      Command                 TAKEOFF
+        87,      # W       99      Command                 WEAR
+        100,     # d       33      Command                 DROP
+        236,     # \\xec   52      Command                 LOOT
+
+        # scrolls are consumables, books aren't, but can become useless
+        114,     # r       67      Command                 READ
+        101,     # e       35      Command                 EAT
+        113,     # q       64      Command                 QUAFF
+
+        4,       # \\x04   48      Command                 KICK
+        20,      # \\x14   90      Command                 TELEPORT
+        58,      # :       51      Command                 LOOK
+        70,      # F       39      Command                 FIGHT
+        94,      # ^       83      Command                 SEETRAP
+        99,      # c       30      Command                 CLOSE
+        111,     # o       57      Command                 OPEN
+        245,     # \\xf5   96      Command                 UNTRAP
+        115,     # s       75      Command                 SEARCH
+
+        # weapon management dual wield, cycle, select and recharge
+        88,      # X       95      Command                 TWOWEAPON
+        120,     # x       87      Command                 SWAP
+        119,     # w       102     Command                 WIELD
+        81,      # Q       66      Command                 QUIVER
+
+
+        # fire readied ammunition from quiver
+        102,     # f       40      Command                 FIRE
+
+        # cast a spell from a book
+        90,      # Z       28      Command                 CAST
+
+        # use a wand from the inventory z*
+        122,     # z       104     Command                 ZAP
+
+        116,     # t       91      Command                 THROW
+        237,     # \\xed   53      Command                 MONSTER
+        244,     # \\xf4   94      Command                 TURN
+
+        # advneture mode actions
+        229,     # \\xe5   37      Command                 ENHANCE
+        97,      # a       24      Command                 APPLY
+        228,     # \\xe4   32      Command                 DIP
+        242,     # \\xf2   71      Command                 RUB
+        212,     # \\xd4   92      Command                 TIP
+        247,     # \\xf7   103     Command                 WIPE
+        210,     # \\xd2   70      Command                 RIDE
+        227,     # \\xe3   29      Command                 CHAT
+        230,     # \\xe6   41      Command                 FORCE
+        243,     # \\xf3   86      Command                 SIT
+        112,     # p       60      Command                 PAY
+
+    ])
+
+    # _raw_nethack_actions > _allowed + _prohibited, since compass directions
+    #  are automatically accounted for
 
     def __init__(self, env):
         super().__init__(env)

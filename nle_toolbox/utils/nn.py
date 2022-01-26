@@ -49,6 +49,9 @@ class OneHotBits(Module):
     ) -> Tensor:
         return onehotbits(input, n_bits=self.n_bits, dtype=self.dtype)
 
+    def extra_repr(self) -> str:
+        return "n_bits={n_bits}".format(**vars(self))
+
 
 class EquispacedEmbedding(Module):
     """One-hot encode the index of a real-valued feature within the specified
@@ -79,6 +82,12 @@ class EquispacedEmbedding(Module):
             limits[:1], breaks, limits[1:],
         ]))
 
+        self.start = start
+        self.end = end
+        self.steps = steps
+        self.scale = scale
+        self.base = base
+
     def forward(
         self,
         input: Tensor,
@@ -88,9 +97,22 @@ class EquispacedEmbedding(Module):
             self.breaks[:-1] <= x, x < self.breaks[1:],
         ).to(input)
 
+    def extra_repr(self) -> str:
+        fmt = "{start}, {end}, {steps}, scale={scale}"
+        if self.scale == 'log':
+            fmt += ", base={base}"
+
+        return fmt.format(**vars(self))
+
 
 class ModuleDict(BaseModuleDict):
-    """The ModuleDict, that applies itself to the input dicts."""
+    """The ModuleDict, that applies itself to the data in the input dict.
+
+    Details
+    -------
+    The keys/fields, that are NOT DECLARED at `__init__`, are silently IGNORED
+    and filtered out by `.forward`.
+    """
     def __init__(
         self,
         modules: Optional[Mapping[str, Module]] = None,

@@ -74,19 +74,19 @@ class EquispacedEmbedding(Module):
 
         super().__init__()
 
-        self.register_buffer('breaks', breaks)
+        limits = breaks.new_tensor([float('-inf'), float('+inf')])
+        self.register_buffer('breaks', torch.cat([
+            limits[:1], breaks, limits[1:],
+        ]))
 
     def forward(
         self,
         input: Tensor,
     ) -> Tensor:
         x = input.unsqueeze(-1)
-        b = self.breaks
-        return torch.cat([
-            x < b[:1],
-            torch.logical_and(b[:-1] <= x, x < b[1:]),
-            b[-1:] <= x,
-        ], dim=-1).to(input)
+        return torch.logical_and(
+            self.breaks[:-1] <= x, x < self.breaks[1:],
+        ).to(input)
 
 
 class ModuleDict(BaseModuleDict):

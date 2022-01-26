@@ -12,6 +12,7 @@ from gym import spaces, Wrapper
 from itertools import chain
 from collections import namedtuple
 
+from warnings import warn
 
 # a pattern to capture features of a modal in-game screen
 rx_modal_signature = re.compile(
@@ -580,6 +581,11 @@ class Chassis(InteractiveWrapper):
         self.in_menu = False
         self.fetch_misc_flags(obs)
 
+        # bypass the gui logic if the SPACE action is unavailable
+        if self.space is None:
+            self.prompt, self.messages, self.menu = {}, (), None
+            return obs, rew, done, info
+
         # quit immediately, if we've got an interactible page or we've left
         #  the modal window input capturing section in `win/tty`.
         # XXX `xwaitingforspace` takes priority over other flags and reacts
@@ -925,8 +931,9 @@ class ActionMasker(InteractiveWrapper):
             a for a, c in self.ascii_to_action if chr(c) == '\033'
         ), None)
         if self.escape is None:
-            raise RuntimeError(
-                f"NLE `{self.unwrapped}` does not have a bound ESCAPE action."
+            warn(
+                f"NLE `{self.unwrapped}` does not have a bound ESCAPE action.",
+                RuntimeWarning,
             )
 
         # precompute common masks

@@ -506,21 +506,6 @@ def hx_shape(self):
     # raise TypeError
 
 
-def hx_broadcast(h0, n_batch):
-    """Broadcast the initial state h0 to a batch of size `n_batch`."""
-    # XXX this procedure could be replaced by
-    #   `plyr.suply(torch.tile, h0, dims=(1, n_batch, 1))`
-    # but then we need to preprocess the inputs into `dict` or `list`.
-
-    if isinstance(h0, ParameterList):
-        return tuple([h.repeat(1, n_batch, 1) for h in h0])
-
-    elif isinstance(h0, Parameter):
-        return h0.repeat(1, n_batch, 1)
-
-    return ()
-
-
 def multinomial(
     input,
     /,

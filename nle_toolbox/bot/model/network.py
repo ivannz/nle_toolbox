@@ -13,7 +13,7 @@ from .blstats import BLStatsEmbedding
 
 from ...utils.nn import ModuleDict, LinearSplitter
 from ...utils.nn import masked_rnn
-from ...utils.nn import hx_shape, hx_broadcast
+from ...utils.nn import hx_shape
 
 
 class NetworkFeatures(nn.Module):
@@ -172,8 +172,6 @@ class NetworkCore(nn.Module):
 
         elif not isinstance(h0, nn.Parameter):
             raise TypeError(f'Unsupported initial state type `{self.h0}`.')
-        # XXX is there a way to avoid this clunkiness and repetition of 
-        #  `hx_broadcast`-s logic here?
 
         # make a deep copy, then non-differentiably overwrite
         #  with the inital recurrent state data

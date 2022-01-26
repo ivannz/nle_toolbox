@@ -8,7 +8,7 @@ from typing import Optional, Any, List, Tuple, Mapping, Union
 
 from copy import deepcopy
 
-from .glyph import GlyphFeatures
+from .glyph import LegacyGlyphFeatures
 from .blstats import BLStatsEmbedding
 
 from ...utils.nn import ModuleDict, LinearSplitter
@@ -27,7 +27,7 @@ class NetworkFeatures(nn.Module):
         super().__init__()
 
         # the embedders
-        self.glyphs = GlyphFeatures(**glyphs)
+        self.glyphs = LegacyGlyphFeatures(**glyphs)
         self.bls = BLStatsEmbedding(**bls)
 
         # build the feature network

@@ -16,7 +16,7 @@ def onehotbits(
     input: Tensor,
     n_bits: int = 63,
     dtype: torch.dtype = torch.float,
-):
+) -> Tensor:
     """Encode integers to fixed-width binary floating point vectors"""
     assert not input.dtype.is_floating_point
     assert 0 < n_bits < 64  # torch.int64 is signed, so 64-1 bits max
@@ -38,7 +38,7 @@ class OneHotBits(Module):
         self,
         n_bits: int = 63,
         dtype: torch.dtype = torch.float,
-    ):
+    ) -> None:
         assert 1 <= n_bits < 64
         super().__init__()
         self.n_bits, self.dtype = n_bits, dtype
@@ -46,7 +46,7 @@ class OneHotBits(Module):
     def forward(
         self,
         input: Tensor,
-    ):
+    ) -> Tensor:
         return onehotbits(input, n_bits=self.n_bits, dtype=self.dtype)
 
 

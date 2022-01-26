@@ -50,6 +50,45 @@ class OneHotBits(Module):
         return onehotbits(input, n_bits=self.n_bits, dtype=self.dtype)
 
 
+class EquispacedEmbedding(Module):
+    """One-hot encode the index of a real-valued feature within the specified
+    equispaced bins.
+    """
+    def __init__(
+        self,
+        start: float,
+        end: float,
+        steps: int,
+        *,
+        scale: str = 'lin',
+        base: float = 10.0,
+    ) -> None:
+        if scale == 'lin':
+            breaks = torch.linspace(start, end, steps)
+
+        elif scale == 'log':
+            breaks = torch.logspace(start, end, steps, base=base)
+
+        else:
+            raise ValueError(f"`scale` not in ['lin', 'log']. Got '{scale}'.")
+
+        super().__init__()
+
+        self.register_buffer('breaks', breaks)
+
+    def forward(
+        self,
+        input: Tensor,
+    ) -> Tensor:
+        x = input.unsqueeze(-1)
+        b = self.breaks
+        return torch.cat([
+            x < b[:1],
+            torch.logical_and(b[:-1] <= x, x < b[1:]),
+            b[-1:] <= x,
+        ], dim=-1).to(input)
+
+
 class ModuleDict(BaseModuleDict):
     """The ModuleDict, that applies itself to the input dicts."""
     def __init__(

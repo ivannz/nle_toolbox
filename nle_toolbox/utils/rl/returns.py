@@ -58,3 +58,91 @@ def pyt_ret_gae(rew, fin, val, *, gam, lam, rho=None):
         ret[-j-1].add_(rew[-j])
 
     return ret[:-1], gae[:-1]
+
+
+@torch.no_grad()
+def pyt_impala(
+    rew,
+    fin,
+    val,
+    rho,
+    *,
+    gam,
+    r_bar=float('+inf'),
+    c_bar=float('+inf'),
+):
+    r"""Compute the V-trace value estimates
+
+    Details
+    -------
+    The notation in this brief description deviates from
+
+        [Espeholt et al. (2018)](http://proceedings.mlr.press/v80/espeholt18a.html)
+
+    specifically we denote the log-likelihood ratio of target and behavior
+    policies by $
+        \rho_t = \log \pi(a_t \mid x_t) - \log \mu(a_t \mid x_t)
+    $, where $\mu$ is the behavior policy and $\pi$ is the target.
+
+    Now, recall that the td(0) residuals are given by
+    $$
+        \delta_t = r_{t+1} + \gamma v_{t+1} 1_{\neg d_{t+1}} - v_t
+        \,, $$
+
+    where $
+        v_t = V(\omega_t)
+    $ -- the state-value function associated with the behaviour policy $\mu$.
+
+        # \delta_s = 0 for all s \geq t if d_t = \top
+        # \hat{v}^n_s = 0 for all s \geq t if d_t = \top
+
+        \hat{v}^n_t
+            = v_t + \sum_{j=t}^{t+n-1} \gamma^{j-t}
+                       \delta_j \eta_j \prod_{p=t}^{j-1} c_p
+
+            = v_t + \gamma c_t \bigl( \hat{v}^n_{t+1} - v_{t+1} \bigr)
+                     + \eta_t \delta_t
+                     - \gamma^n
+                       \delta_{t+n} \eta_{t+n} \prod_{p=t}^{t+n-1} c_p
+
+        \hat{v}^\infty_t
+            = v_t + \eta_t \delta_t + \gamma c_t \bigl(
+                \hat{v}^\infty_{t+1} - v_{t+1} \bigr) 1_{\neg d_{t+1}}
+
+        where $
+            c_j = \min\{e^\rho_j, \bar{c} \}
+        $ and $
+            \eta_j = \min\{e^\rho_j, \bar{\rho} \}
+        $ , $$, and
+        $
+($n \to \infty$ limit)
+        Let $
+            \hat{a}_t := \hat{v}^\infty_{t+1} - v_{t+1}
+        $, then
+        \hat{a}_t
+            = \eta_t \delta_t
+            + \gamma c_t \hat{a}_{t+1} 1_{\neg d_{t+1}}
+    """
+
+    # add extra trailing unitary dims for broadcasting
+    fin_ = fin.reshape(fin.shape + (1,) * max(rew.ndim - fin.ndim, 0))
+    rho_ = rho.reshape_as(fin_)
+    # rho is the current/behavioural likelihood ratio for the taken action
+
+    # [O(T B F)] get the clipped importance-weighted td(0)-residuals
+    #     \delta_t = r_{t+1} + \gamma v_{t+1} - v_t
+    #     \rho_t = \min\{ \bar{\rho},  \frac{\pi_t(a_t)}{\mu_t(a_t)} \}
+    gam_ = rew.new_full(fin_.shape, gam).masked_fill_(fin_, 0.)
+    delta = torch.addcmul(rew, gam_, val[1:]).sub_(val[:-1])
+    delta.mul_(rho_.exp().clamp_(max=r_bar))  # NB extra copy by `.exp()`
+
+    adv = torch.zeros_like(val)
+
+    # c_t = \min\{ \bar{c},  \frac{\pi_t(a_t)}{\mu_t(a_t)} \}
+    see = rho_.exp().clamp_(max=c_bar).mul_(gam)  # premultiply by \gamma
+    for j in range(1, len(delta) + 1):
+        # A_t = \rho_t \delta_t + \gamma \c_t A_{t+1} 1_{\neg d_{t+1}}
+        torch.mul(adv[-j], see[-j], out=adv[-j-1]).masked_fill_(fin_[-j], 0.)
+        adv[-j-1].add_(delta[-j])
+
+    return adv[:-1] + val[:-1]

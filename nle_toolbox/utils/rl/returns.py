@@ -61,7 +61,7 @@ def pyt_ret_gae(rew, fin, val, *, gam, lam, rho=None):
 
 
 @torch.no_grad()
-def pyt_impala(
+def pyt_vtrace(
     rew,
     fin,
     val,

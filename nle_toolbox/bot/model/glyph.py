@@ -15,7 +15,7 @@ from nle.nethack import (
 
 from einops import rearrange
 
-from ...utils.nn import bselect
+from ...utils.nn import bselect, select
 from ...utils.env.defs import glyphlut
 from ...utils.env.defs import MAX_ENTITY, glyph_group
 
@@ -77,7 +77,11 @@ class GlyphEmbedding(torch.nn.Embedding):
         norm_type: float = 2.0,
         scale_grad_by_freq: bool = False,
         sparse: bool = False,
+        *,
+        method: str = 'built-in',
     ):
+        assert method in ('built-in', 'select', 'onehot')
+
         # glyph's entity encoder
         super().__init__(
             self.MAX_ENTITY + 1,
@@ -94,9 +98,29 @@ class GlyphEmbedding(torch.nn.Embedding):
             'lookup', torch.tensor(glyphlut.entity).clone(),
         )
 
+        self.method = method
+
     def forward(self, input: torch.Tensor):
         """Look up the entities of the given glyphs and embed them.
         """
+        # XXX if the true reason why embedding.backward slows down for higlhy
+        #  imbalanced token (glyph) distribution is the contention caused by
+        #  effectively serialized backward reduction, which is `add` in case
+        #  of `index scatter`, then whether we use `built-in` or `select`
+        #  method should not matter.
+        if self.method == 'select':
+            return select(self.weight, self.lookup[input.long()], 0)
+
+        if self.method == 'onehot':
+            # a one-hot tensor for matmulling with embedding matrix `.weight`
+            # XXX this has HUGE memory overhead!
+            index = self.lookup[input.long()]
+            onehot = self.weight.new_zeros(
+                input.shape + (self.num_embeddings,)
+            ).scatter_(-1, index.unsqueeze(-1), 1)
+
+            return onehot.matmul(self.weight)
+
         return super().forward(self.lookup[input.long()])
 
 

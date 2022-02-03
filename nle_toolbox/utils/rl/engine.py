@@ -61,17 +61,22 @@ class SerialVecEnv(gym.Env):
 
 # stripped down version or rlplay.engine
 Input = namedtuple('Input', 'obs,act,rew,fin')
-npyt = namedtuple('npyt', 'npy,pyt')
 # XXX note, `.act[t]` is $a_{t-1}$, but the other `*[t]` are $*_t$,
 #  e.g. `.rew[t]` is $r_t$, and `pol[t]` is `$\pi_t$.
 
+# A pair of host-resident numpy array and torch tensor with aliased data
+AliasedNPYT = namedtuple('AliasedNPYT', 'npy,pyt')
+# XXX converting array data between numpy and torch is zero-copy (on host)
+#  due to the __array__ protocol, i.e. both can alias each other's storage,
+#  meaning that updates of one are immediately reflected in the other.
+
 
 def prepare(env, rew=np.nan, fin=True):
+    # we rely on an underlying Vectorized Env to supply us with correct
+    #  product action space, observations, and a number of environments.
     assert isinstance(env, SerialVecEnv)
 
     # prepare the runtime context (coupled numpy-torch tensors)
-    # XXX converting array data between numpy and torch is zero-copy (on host)
-    #  due to the __array__ protocol, i.e. both can alias each other's storage
     npy = Input(
         env.reset(),
         env.action_space.sample(),
@@ -79,14 +84,14 @@ def prepare(env, rew=np.nan, fin=True):
         np.full(env.nenvs, fin, dtype=bool),
     )
 
-    # unsequeezing makes a writable view, which still maintains aliasing
+    # in-place unsequeeze produces a writable view, which preserves aliasing
     pyt = plyr.apply(torch.as_tensor, npy)
     plyr.apply(torch.Tensor.unsqueeze_, pyt, dim=0)
 
-    return npyt(npy, pyt)
+    return AliasedNPYT(npy, pyt)
 
 
-def step(env, agent, npy, pyt, hx):
+def step(env, agent, npyt, hx):
     r"""Perform the `t` -->> `t+1` env's transition under the agnet's policy.
 
     Details
@@ -119,9 +124,10 @@ def step(env, agent, npy, pyt, hx):
     ----
     This is not supposed to be used in multiprocessing.
     """
+    npy, pyt = npyt
 
     # (sys) clone to avoid graph diff-ability issues, because
-    #  `pyt` is updated INPLACE through storage-aliased `npy`.
+    #  `pyt` is updated IN-PLACE through storage-aliased `npy`.
     input = plyr.apply(torch.clone, pyt)
 
     # (agent) REACT x_t, a_{t-1}, h_t -->> v_t, \pi_t, h_{t+1}

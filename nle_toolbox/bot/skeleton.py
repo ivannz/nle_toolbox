@@ -2,7 +2,7 @@ from collections import deque
 
 from nle.nethack.actions import Command, MiscAction
 
-from ..utils.patterns import ObservationFlags
+from .patterns import ObservationFlags
 from ..utils.env.obs import BLStats, get_bytes
 
 

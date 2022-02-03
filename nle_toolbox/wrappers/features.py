@@ -1,7 +1,8 @@
 import numpy as np
 import gym
 
-from ..utils.env.obs import npy_fold2d, BLStats
+from ..utils.fold import npy_fold2d
+from ..utils.env.obs import BLStats
 from ..utils.env.render import fixup_tty
 from ..utils.env.defs import special
 

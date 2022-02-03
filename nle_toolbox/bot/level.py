@@ -12,7 +12,7 @@ from nle.nethack import (
 )
 
 from ..utils.env.defs import glyph_is, dt_glyph_ext, ext_glyphlut
-from ..utils.env.obs import npy_fold2d
+from ..utils.fold import npy_fold2d
 
 
 dt_map = np.dtype([

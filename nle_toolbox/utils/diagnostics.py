@@ -1,3 +1,5 @@
+"""Probably useful diagnostic tools.
+"""
 import numpy as np
 from time import monotonic_ns
 
@@ -66,20 +68,44 @@ def collect_seq_timings(module):
 
 
 def named_denormal_stats(module):
-    """Compute the number of denormals in the parametrs of the given module.
+    """Compute the number of denormal floats in the parameters of the module.
+
+    Details
+    -------
+    See [this question](https://stackoverflow.com/questions/36781881) and
+    [Performance Issues](https://en.wikipedia.org/wiki/Subnormal_number).
+    To summarize, CPU's FPU architectures pick fast pathways for normal
+    floats (those which have a non-zero `exp` IEEE754 field), but resort
+    to MUCH slower machine code when dealing with denormalized floats.
+
+    If during training on CPU the regularization or soft-sparsification induce
+    a large number of denormals, it cloud be remedied by calling
+
+        torch.set_flush_denormal(True)
+
+    before the loop. However, this makes the results of multiplications of
+    normal non-zero, but really tiny, floats to be replaced in hardware by
+    HARD zeros, which adversely impacts the overall numerical accuracy.
     """
 
-    # XXX `.frexp` returns exp and fraction to represent the given float.
+    # bit field sizes of the IEEE754 floating point format
+    info = {
+        torch.float16: (np.uint16, 10, 5),   # 1 + 5 + 10
+        torch.float32: (np.uint32, 23, 8),   # 1 + 8 + 23
+        torch.float64: (np.uint64, 52, 11),  # 1 + 11 + 52
+    }
+    # XXX `.frexp` returns exp and frac, which represent a given float as
+    # `(2**exp) * frac`, with frac normalized to (-1, +1). To this end it
+    # adjusts the exp value below the normalized fp range (one larger than
+    # the ranges given in [the wiki]().)
     # to use it for detecting denormals the returned exp should be compared
     # to the lowest normal exponent.
-    shifts = {
-        torch.float16: (np.uint16, 10, (1<<5) - 1),
-        torch.float32: (np.uint32, 23, (1<<8) - 1),
-        torch.float64: (np.uint64, 52, (1<<11) - 1),
-    }
+
     for name, par in module.named_parameters():
-        dtype, shift, mask = shifts[par.dtype]
-        # view as fp32 as `uint32` and extract the IEEE754 exponent bits
-        uint = np.asarray(par.detach()).view(dtype)
-        exp = (uint >> shift) & mask
+        dtype, n_frac, n_exp = info[par.dtype]
+        # view `float` as an `unsigned int` and fetch the exponent bits
+        # XXX makes an expensive copy, unless par is already on HOST (cpu).
+        uint = np.asarray(par.detach().cpu()).view(dtype)
+        exp = (uint >> n_frac) & ((1 << n_exp) - 1)
+
         yield name, ((exp == 0).sum(), par.numel())

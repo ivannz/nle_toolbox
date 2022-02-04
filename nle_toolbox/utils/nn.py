@@ -1,3 +1,16 @@
+"""A potpurri of helpful procedures, layers, embedders, and initializers.
+
+This module implements various helper procedures and layers for easier
+prototyping of deep networks operating on many-tensor inputs, and training
+of and inference with recurrent networks over sequential data with auxiliary
+masks, indicating if a pre-forward reset of the hidden recurrent runtime
+states to their initial values is in order.
+
+In addition, there are some routines here, that generalize their generic
+analogues from torch: a more multidim-friendly versions of `torch.multinomial`
+and `torch.index_select` (see `nn.select`), and a batched version of
+`torch.gather` (see `nn.bselect`).
+"""
 import math
 import torch
 import plyr
@@ -8,7 +21,6 @@ from typing import Optional, Mapping, Any, Union, NamedTuple
 from torch.nn import init
 from torch.nn import Module, ModuleDict as BaseModuleDict
 from torch.nn import Linear, LSTM, GRU, RNN, RNNBase
-from torch.nn import ParameterList, Parameter
 
 
 # copied from rlplay
@@ -17,7 +29,8 @@ def onehotbits(
     n_bits: int = 63,
     dtype: torch.dtype = torch.float,
 ) -> Tensor:
-    """Encode integers to fixed-width binary floating point vectors"""
+    """Encode integers to fixed-width binary floating point vectors.
+    """
     assert not input.dtype.is_floating_point
     assert 0 < n_bits < 64  # torch.int64 is signed, so 64-1 bits max
 
@@ -33,7 +46,8 @@ def onehotbits(
 
 
 class OneHotBits(Module):
-    """Bitfield one-hot encoder."""
+    """One-hot encoder of bit fields.
+    """
     def __init__(
         self,
         n_bits: int = 63,
@@ -95,7 +109,7 @@ class EquispacedEmbedding(Module):
         x = input.unsqueeze(-1)
         return torch.logical_and(
             self.breaks[:-1] <= x, x < self.breaks[1:],
-        ).to(input)
+        ).to(input)  # XXX to match input's dtype
 
     def extra_repr(self) -> str:
         fmt = "{start}, {end}, {steps}, scale={scale}"
@@ -110,8 +124,8 @@ class ModuleDict(BaseModuleDict):
 
     Details
     -------
-    The keys/fields, that are NOT DECLARED at `__init__`, are silently IGNORED
-    and filtered out by `.forward`.
+    The keys/fields, that are NOT DECLARED at `__init__`, are silently
+    IGNORED and filtered out by `.forward`.
     """
     def __init__(
         self,
@@ -125,7 +139,7 @@ class ModuleDict(BaseModuleDict):
         self,
         input: Union[Mapping[str, Any], NamedTuple],
     ) -> Union[Mapping[str, Tensor], Tensor]:
-        # namedtupels are almost like frozen dicts
+        # namedtuples are almost like frozen dicts
         if isinstance(input, tuple) and hasattr(type(input), '_fields'):
             input = input._asdict()
 
@@ -139,6 +153,9 @@ class ModuleDict(BaseModuleDict):
 
 def select(tensor, index, dim, *, at=None):
     """Unbatched select.
+
+    Returns a new tensor which indexes the `input` tensor along dimension
+    `dim` using the entries in `index` which is a `LongTensor`.
     """
     at = dim if at is None else at
 
@@ -160,6 +177,18 @@ def select(tensor, index, dim, *, at=None):
 def bselect(tensor, *index, dim):
     r"""Batched index select over a span of dims starting from `dim`.
 
+    Unlike `torch.gather` for an at least 4-D input with dim=2 and
+    index = (ix_0, ix_1, ix_2) tensor the output is specified by:
+
+        out[i, j, ...] = input[i, j, ix_0[i, j], ix_1[i, j], ix_2[i, j], ...]
+
+    where `i, j` (dim=2) are treated as batch dimension indices, and each
+    `ix_k` addresses the corresponding dimension `dim+k` in `input`.
+
+    `troch.garther` requires that the `index` have as many dims as the `input`,
+    so it cannot select, for example, patches in from a batch of images
+    at a batch of coordinates.
+
     Details
     -------
     Let $x$ be a tensor $
@@ -170,7 +199,7 @@ def bselect(tensor, *index, dim):
         \iota \in \bigl(
             \prod_{j=0}^{p-1} [d_{k+j}]
         \bigr)^{d_0 \times \cdots \times d_{k-1}}
-    $ for some $p\geq 1$ this procedure returns a tensor $
+    $ for some $p \geq 1$, this procedure returns a tensor $
         y \in \mathcal{X}^{
             d_0 \times \cdots \times d_{k-1}
             \times
@@ -204,7 +233,7 @@ def bselect(tensor, *index, dim):
     dims = tensor.shape[dim:dim + len(index)]
     tail = tensor.shape[dim + len(index):]
 
-    # ravel mutliindex using an empty tensor
+    # ravel multiindex using an empty tensor
     mock = tensor.new_empty(dims + (0,))
     idx = sum(j * s for j, s in zip(index, mock.stride()))
 
@@ -220,7 +249,15 @@ def bselect(tensor, *index, dim):
 
 
 class LinearSplitter(Linear):
-    """A linear layer splitting its result into a dict of tensors."""
+    """A linear layer splitting its result into a dict of tensors.
+
+    Details
+    -------
+    Operates much like `nn.Linear`, except this one accepts a non-nested
+    dict of ints in `out_features`, that specifies the number of outputs,
+    dedicated to each key. REGRESSES to `nn.Linear` in the case when
+    `out_features` is just an int.
+    """
 
     def __new__(
         cls,
@@ -273,15 +310,18 @@ def trailing_mul(a, b=None, *, w, lead=1):
 
 def trailing_lerp(a, b, *, w, lead=1):
     """Unsqueeze the trailing dims of `w` for broadcasted linear interpolation.
+
+    See `torch.lerp`: torch.lerp(a, b, w) = a.lerp(b, w) = (1 - w) * a + w * b
     """
     # For a `: x B_1 x ... x B_m x ...` and w `B_1 x ... x B_m` we expand w
     #  to `B_1 x ... x B_m x 1 x ... x 1` and then lerp `a` to `b` with it.
+    # XXX lerp(a, b, w) = a.lerp(b, w) = (1 - w) * a + w * b
     trailing = (1,) * max(a.ndim - w.ndim - lead, 0)
     return a.lerp(b, w.reshape(*w.shape, *trailing))
 
 
 def masked_rnn(core, input, hx=None, *, reset=None, h0=None):
-    """Apply a rnn to the sequential input with restarts.
+    """Apply a rnn layer stack to the sequential input with restarts.
 
     Parameters
     ----------
@@ -387,7 +427,8 @@ def masked_rnn(core, input, hx=None, *, reset=None, h0=None):
 
 @torch.no_grad()
 def rnn_reset_bias(mod):
-    """Open certain gates by positively biasing them."""
+    """Open certain rnn gates by positively biasing them.
+    """
     if not isinstance(mod, RNNBase):
         return
 

@@ -13,7 +13,7 @@ from .blstats import BLStatsEmbedding
 
 from ...utils.nn import ModuleDict, LinearSplitter
 from ...utils.nn import masked_rnn
-from ...utils.nn import hx_shape
+from ...utils.nn import rnn_hx_shape
 
 
 class NetworkFeatures(nn.Module):
@@ -131,7 +131,7 @@ class NetworkCore(nn.Module):
         # XXX implement and use Buffer(List|Dict) for non-learnable initial
         #  state vector.
         h0 = None
-        shape = hx_shape(self.core)
+        shape = rnn_hx_shape(self.core)
         if isinstance(shape, torch.Size):
             h0 = torch.nn.Parameter(torch.zeros(*shape))
 

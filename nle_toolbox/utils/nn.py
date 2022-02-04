@@ -471,15 +471,15 @@ def rnn_reset_weight_hh_eye(mod, *, gain=1.):
             blk.diagonal()[:] = 1.
 
 
-def hx_shape(self):
+def rnn_hx_shape(self):
     """Get the batch-broadcastible shape of the recurrent state.
 
     Complaint
     ---------
-    Torch devs should've made this into a recurrent nn.Module's method.
+    Torch devs should've made this into a recurrent module's method.
     """
     if not isinstance(self, (RNNBase, GRU, LSTM)):
-        return None
+        raise TypeError(f'Unrecognized recurrent layer `{type(self)}`.')
 
     n_hidden_states = self.num_layers * (2 if self.bidirectional else 1)
 
@@ -490,20 +490,18 @@ def hx_shape(self):
 
     elif isinstance(self, LSTM):
         # copied almost verbatim from `torch.nn.LSTM.forward`
+        real_hidden_size = self.proj_size if self.proj_size > 0 else self.hidden_size
+
         return (
-            torch.Size((
-                n_hidden_states,
-                1,
-                self.proj_size if self.proj_size > 0 else self.hidden_size,
-            )),
-            torch.Size((n_hidden_states, 1, self.hidden_size)),
+            torch.Size((n_hidden_states, 1, real_hidden_size)),  # h
+            torch.Size((n_hidden_states, 1, self.hidden_size)),  # c
         )
 
     elif isinstance(self, RNNBase):
         # copied almost verbatim from `torch.nn.RNNBase.forward`
         return torch.Size((n_hidden_states, 1, self.hidden_size))
 
-    # raise TypeError
+    # not reached
 
 
 def multinomial(

@@ -417,6 +417,10 @@ def masked_rnn(core, input, hx=None, *, reset=None, h0=None):
         for x, m in zip(input.unsqueeze(1), keep):
             if hx is not h0:
                 # `hx <<-- (1 - m) * h0 + m * hx` is `h0 if reset else hx`
+                # XXX `.lerp` can broadcast h0 across its batch dims. However
+                # on the first itretation, if the original `hx` is None and
+                # `h0` is not, the `hx` passed to `core()` must have correct
+                # batch dims, which is why we nevertheless use plyr-cat above.
                 hx = plyr.suply(trailing_lerp, h0, hx, w=m)
 
             out, hx = core(x, hx=hx)
@@ -439,9 +443,13 @@ def rnn_reset_bias(mod):
             continue
 
         bias = par.unflatten(0, (-1, mod.hidden_size))
-        # torch's RNN-s have redundant biases. We init b_{h*}
-        #  `bias_hh_l[k]` to zero and tweak the b_{i*} `bias_ih_l[k]`,
-        #  depending on the arch.
+        # torch's `nn.LSTM` and `nn.RNN` have redundant biases, but `nn.GRU`
+        # does not. In it the `ir-hr` and `iz-hz` bias pairs are redundant,
+        # but NOT the `in-hn` pair, since `hn` gets modulated by `r_t` when
+        # computing `n_t`.
+        #   See help(nn.GRU)
+        # Nevertheless, we init b_{h*} `bias_hh_l[k]` to zero and tweak
+        #  the initial b_{i*} `bias_ih_l[k]`, depending on the arch.
         if nom.startswith('bias_hh_l'):
             init.zeros_(bias)  # XXX GRU might need special care!!
             continue

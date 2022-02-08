@@ -12,17 +12,19 @@ from gym.vector.utils import batch_space
 
 
 class SerialVecEnv(gym.Env):
-    """A simple serial vectorized env."""
+    """A simple serial vectorized env.
+    """
 
     def __init__(self, factory, n_envs=1):
         self.envs = [factory() for _ in range(n_envs)]
 
-        # assume the facory produces consistent envs
+        # assume the factory produces consistent envs
         env = self.envs[0]
         self.observation_space = batch_space(env.observation_space, n_envs)
         self.action_space = batch_space(env.action_space, n_envs)
 
     def seed(self, seed):
+        # XXX does not work for envs, which use non-numpy or legacy PRNG
         seeds = []
         ss = np.random.SeedSequence(seed)
         for env, seed in zip(self.envs, ss.spawn(len(self.envs))):
@@ -42,12 +44,16 @@ class SerialVecEnv(gym.Env):
     def step(self, actions):
         result = []
         for j, env in enumerate(self.envs):
+            # `act` is a_t
             act = plyr.apply(plyr.getitem, actions, index=j)
+
+            # `obs` is x_{t+1}, `rew` is r_{t+1}, `fin` is True if terminal
+            # `nfo` is auxiliary dict, related to `t -->> t+1` transition
             obs, rew, fin, nfo = env.step(act)
             if fin:
                 obs = env.reset()
 
-            # `obs` is s_0 if `fin` else s_{t+1}, `rew` is r_{t+1}
+            # `obs` is x_0 if `fin` else x_{t+1}
             result.append((obs, rew, fin, nfo))
 
         obs_, rew_, fin_, nfo = zip(*result)
@@ -56,6 +62,9 @@ class SerialVecEnv(gym.Env):
 
     @property
     def nenvs(self):
+        return len(self.envs)
+
+    def __len__(self):
         return len(self.envs)
 
 
@@ -80,8 +89,8 @@ def prepare(env, rew=np.nan, fin=True):
     npy = Input(
         env.reset(),
         env.action_space.sample(),
-        np.full(env.nenvs, rew, dtype=np.float32),
-        np.full(env.nenvs, fin, dtype=bool),
+        np.full(len(env), rew, dtype=np.float32),
+        np.full(len(env), fin, dtype=bool),
     )
 
     # in-place unsequeeze produces a writable view, which preserves aliasing
@@ -96,29 +105,54 @@ def step(env, agent, npyt, hx):
 
     Details
     -------
-    Assuming the true unobserved state of the ENV is `\omega_t`,
-    the aliased `npy`-`pyt` contains the recent observation `x_t`,
-    action `a_{t-1}`, reward `r_t` and termination flag `d_t`,
-    and `hx` is `h_t` the current recurrent state of the agent,
-    this procedure does the agent's REACT step
+    Assume the env is currently at the _true unobserved state_ $\omega_t$ and
+    the `npyt` aliased context contains the recent $(x_t, a_{t-1}, r_t, d_t)$.
+    Letting `hx` be $h_t$ the recurrent, or _runtime_ state of the agent, this
+    procedure, first, does the agent's __REACT__ step
     $$
-        (x_t, a_{t-1}, r_t, d_t), h_t -->>  v_t, \pi_t, h_{t+1}
+        (x_t, a_{t-1}, r_t, d_t), h_t -->>  a_t, v_t, \pi_t, h_{t+1}
         \,, $$
 
-    then samples the action `a_t \sim \pi_t` and follows by the ENV step
+    where $a_t \sim \pi_t$, $v_t$ is the agent's state-value estimate, $\pi_t$
+    is its policy, and $h_{t+1}$ is its new runtime state, and then performs
+    the env's __ENV__ step
     $$
-        \omega_t, a_t -->> \omega_{t+1}, x_{t+1}, r^E_{t+1}, d_{t+1}
-        \,. $$
+        \omega_t, a_t -->> \omega_{t+1}, x_{t+1}, r_{t+1}, d_{t+1}
+        \,, $$
 
-    Returns the t-th step afterstate
+    where $\omega_{t+1}$ is the updated _true unobserved_ state of the env,
+    $d_{t+1}$ is the termination flag, $r_{t+1}$ is the reward due to the just
+    made transition, and $x_{t+1}$ is the newly emitted observation.
+
+    Returns the $t$-th step afterstate
     $$
         ((x_t, a_{t-1}, r_t, d_t), v_t, \pi_t), h_{t+1}
         \,, $$
 
-    and updates the aliased npy-pyt INPLACE to contain
+    updates the aliased `npyt` INPLACE to contain
     $$
         (x_{t+1}, a_t, r_{t+1}, d_{t+1})
-        \,. $$
+        \,, $$
+
+    and causes a side effect UPDATE in `env` by calling its `.step`.
+
+    Important
+    ---------
+    This procedure DEFINES the data synchronisation in the key and aux arrays,
+    which is ASSUMED and RELIED ON by all functions in this submodule, e.g.
+    by `pyt_polgrad()`.
+
+    Key arrays correspond to historical trajectory states (past and present):
+      * `obs` $x_t$ is the _present_ observation (at time $t$);
+      * `act` $a_{t-1}$ is the action, that _led_ to this observation;
+      * `rew` $r_t$ is the reward emitted _alongside_ $x_t$ for $a_{t-1}$;
+      * `fin` $d_t$ is indicates if the action terminated the episode;
+
+    Aux arrays contain data computed GIVEN the past and present historical
+    data, but BEFORE the future:
+      * `val` $v_t$ is the state-value estimate
+      * `pol` $\pi_t$ is the policy
+      * `hx` $h_{t+1}$ is the agent's runtime state
 
     Note
     ----
@@ -126,8 +160,8 @@ def step(env, agent, npyt, hx):
     """
     npy, pyt = npyt
 
-    # (sys) clone to avoid graph diff-ability issues, because
-    #  `pyt` is updated IN-PLACE through storage-aliased `npy`.
+    # (sys) clone to avoid graph diff-ability issues, because `pyt` is updated
+    #  INPLACE through storage-aliased `npy`
     input = plyr.apply(torch.clone, pyt)
 
     # (agent) REACT x_t, a_{t-1}, h_t -->> v_t, \pi_t, h_{t+1}
@@ -138,10 +172,10 @@ def step(env, agent, npyt, hx):
     plyr.apply(torch.Tensor.copy_, pyt.act, act_)
 
     # (env) STEP \omega_t, a_t -->> \omega_{t+1}, x_{t+1}, r^E_{t+1}, d_{t+1}
-    # XXX we assume the env performs auto-resetting steps
+    # XXX we assume the env performs auto-resetting steps (see `SerialVecEnv`)
     obs_, rew_, fin_, nfo_ = env.step(npy.act)
 
-    # (sys) update the rest of the npy/pyt running state
+    # (sys) update the rest of the `npy-pyt` aliased context
     plyr.apply(np.copyto, npy.obs, obs_)
     np.copyto(npy.rew, rew_)
     np.copyto(npy.fin, fin_)
@@ -155,6 +189,8 @@ def pyt_polgrad(logpol, act, adv):
 
     Details
     -------
+    This functions relies on its arguments having the correct synchronisation.
+
     The policy `logpol` is a `(T + 1) x B x ...` float tensor with NORMALIZED
     `\log \pi_t` logits, while the actions `act` is a long tensor `(T + 1) x B`
     containing the indices of the taken actions `a_{t-1}` (one step lag
@@ -172,6 +208,8 @@ def pyt_entropy(logpol):
     r"""Compute the entropy `- \sum_j \pi_{j t} \log \pi_{j t}` over
     the event dim.
     """
+    # `.kl_div` correctly handles -ve infinite logits (or zero probs), but
+    #  computes $\sum_j e^{\log p_j} \log p_j$, so we need to flip the sign.
     # XXX `.new_zeros(())` creates a scalar zero (yes, an EMPTY tuple)
     entropy = F.kl_div(
         logpol.new_zeros(()),
@@ -185,7 +223,8 @@ def pyt_entropy(logpol):
 
 
 def pyt_critic(val, ret):
-    r"""The critic loss in the A2C algo (and others)."""
+    r"""The critic loss in the A2C algo (and others).
+    """
     mse = F.mse_loss(
         val[:-1],
         ret,

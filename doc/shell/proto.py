@@ -2,7 +2,7 @@ from abc import ABCMeta, abstractmethod
 from inspect import isgeneratorfunction
 from random import choice
 
-from nle_toolbox.bot.genfun import is_suspended
+from nle_toolbox.bot.legacy.genfun import is_suspended
 
 
 class Loop(metaclass=ABCMeta):

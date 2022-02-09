@@ -9,8 +9,8 @@ from nle.nethack.actions import Command, MiscAction
 
 from collections import deque
 
+from .wrapper import ReplayToFile, Replay
 from ...bot.skeleton import Skeleton
-from ...wrappers.replay import ReplayToFile, Replay
 from ..env.obs import BLStats, uint8_to_str
 
 

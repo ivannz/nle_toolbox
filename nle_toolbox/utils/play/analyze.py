@@ -11,7 +11,7 @@ import nle
 from joblib import delayed, Parallel
 from hashlib import sha256
 
-from ...wrappers.replay import Replay
+from .wrapper import Replay
 from ..env.obs import BLStats
 
 

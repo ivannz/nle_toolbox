@@ -13,8 +13,8 @@ from time import sleep
 
 from signal import signal, getsignal, SIGINT
 
+from .wrapper import Replay
 from ..env.render import fixup_tty, render as render_obs
-from ...wrappers.replay import Replay
 from ...bot.genfun import yield_from_nested
 
 

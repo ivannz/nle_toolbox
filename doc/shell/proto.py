@@ -120,7 +120,7 @@ class Control(Loop):
 
 import gym
 import nle
-from nle_toolbox.wrappers.replay import Replay
+from nle_toolboxutils.play.wrapper import Replay
 
 ctrl = Control()
 

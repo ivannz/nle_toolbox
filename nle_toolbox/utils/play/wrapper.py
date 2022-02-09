@@ -4,8 +4,9 @@ import sys
 
 from gym import Wrapper
 
-from ..utils import seeding
-from ..utils.io import mkstemp
+from .. import seeding
+from ..io import mkstemp
+from ...__version__ import __version__
 
 
 class Replay(Wrapper):
@@ -43,7 +44,6 @@ class Replay(Wrapper):
     Consult with the docstring `seeding.set_seed` about the effects of
     re-seeding/reusing the same env instance multiple times.
     """
-    from ..__version__ import __version__
     _seed_type = 'auto'
 
     def __init__(self, env, *, sticky=False):
@@ -59,7 +59,7 @@ class Replay(Wrapper):
         from time import strftime
 
         return {
-            '__version__': self.__version__,
+            '__version__': __version__,
             '__dttm__': strftime('%Y%m%d-%H%M%S'),
             'seed': getattr(self, '_seed', None),
             'actions': getattr(self, '_actions', []),
@@ -88,7 +88,7 @@ class Replay(Wrapper):
         ver = Version(state_dict['__version__'])
 
         # maintain compatibility with older versions
-        if ver > Version(self.__version__):
+        if ver > Version(__version__):
             raise RuntimeError(f"Unsupported version `{ver}`.")
 
         # reseed and reset

@@ -6,7 +6,7 @@ import nle
 
 from random import choices
 
-from nle_toolbox.utils.play.wrapper import Replay
+from nle_toolbox.utils.replay import Replay
 
 
 def replay(env, actions, *, seed):

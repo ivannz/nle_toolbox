@@ -129,6 +129,7 @@ def render(
     rows, cols = tty_chars.shape
     tty_colors = tty_colors.view(np.uint8)
 
+    # position the cursor at (1, 4) with \033[<L>;<C>H
     ansi = '\033[1;1H\033[2J'
     for i in range(rows):
         for j in range(cols):
@@ -147,11 +148,12 @@ def render(
                     ansi += f'\033[38;5;{cl&0x7f:d}m{ch:c}'
 
                 else:
-                    # set 3-bit foreground color
+                    # set 3-bit foreground color \033[<bold?>;3<3-bit color>m
                     ansi += f'\033[{bool(cl&8):d};3{cl&7:d}m{ch:c}'
 
         ansi += '\n'
 
+    # reset the color back to normal, place the cursor
     ansi += f'\033[m\033[{1+r};{1+c}H'
 
     return ansi

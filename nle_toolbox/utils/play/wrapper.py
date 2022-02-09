@@ -232,40 +232,6 @@ class Replay(Wrapper):
         # StopIteration's `.value` always contains the returned value
         return actions[j:]
 
-    def render(self, mode='human', **kwargs):
-        """Custom human mode renderer for NLE."""
-
-        # override 'human' rendering only
-        if mode != 'human':
-            return super().render(mode=mode)
-
-        # get the necessary data, and fail gracefully if it is unavailable.
-        # XXX perhaps we should use `..utils.env.render` here
-        obs, keys = self.env.last_observation, self.env._observation_keys
-        try:
-            tty_chars = obs[keys.index("tty_chars")]
-            tty_colors = obs[keys.index("tty_colors")]
-
-        except ValueError:
-            return False
-
-        # render NetHack output line by line with ANSI escapes
-        ansi = ''
-        height, width = tty_chars.shape
-        for L in range(height):
-            # position the cursor at (L, 4) with \033[<L>;<C>H
-            ansi += f'\033[{L+4};4H'
-            for C in range(width):
-                # set fg color with \033[<bold?>;3<3-bit color>m
-                cl, ch = tty_colors[L, C], tty_chars[L, C]
-                ansi += f'\033[{bool(cl & 8):1d};3{cl & 7:1d}m{ch:c}'
-
-        # save/restore the original cursor, and reset the color back to normal
-        sys.stdout.write(f'\033[s{ansi}\033[u\033[m')
-        sys.stdout.flush()
-
-        return True
-
 
 class ReplayToFile(Replay):
     """The Replay wrapper, which saves on `.reset` and terminal `.step`.

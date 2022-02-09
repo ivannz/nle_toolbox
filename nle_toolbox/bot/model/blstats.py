@@ -4,7 +4,7 @@ import torch
 from ...utils.env.defs import hunger, condition
 from ...utils.env.defs import encumberance
 
-from ...utils.env.obs import BLStats
+from ...utils.env.defs import BLStats
 from ...utils.nn import OneHotBits
 
 

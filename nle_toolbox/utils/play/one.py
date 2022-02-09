@@ -11,7 +11,8 @@ from collections import deque
 
 from .wrapper import ReplayToFile, Replay
 from ...bot.skeleton import Skeleton
-from ..env.obs import BLStats, uint8_to_str
+from ..env.defs import BLStats
+from ..env.obs import uint8_to_str
 
 
 def render(env, obs):

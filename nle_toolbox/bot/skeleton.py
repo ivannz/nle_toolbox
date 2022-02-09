@@ -3,7 +3,8 @@ from collections import deque
 from nle.nethack.actions import Command, MiscAction
 
 from .patterns import ObservationFlags
-from ..utils.env.obs import BLStats, get_bytes
+from ..utils.env.defs import BLStats
+from ..utils.env.obs import get_bytes
 
 
 class Skeleton:

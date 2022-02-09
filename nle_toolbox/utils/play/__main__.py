@@ -41,6 +41,8 @@ class AutoNLEControls:
 
     def __init__(self, env, trace=()):
         self.trace, self.env = trace, env
+        self.is_freeplay = not bool(trace)
+
         self.ctoa = {a: j for j, a in enumerate(env.unwrapped._actions)}
         self.handler = None
 
@@ -48,7 +50,7 @@ class AutoNLEControls:
         # control the position in the replayed actions
         if isinstance(act, int):
             # integers are used for wraparound indexing
-            pos = len(self.trace) + act if act < 0 else act
+            pos = (len(self.trace) + 1) + act if act < 0 else act
 
         elif act in ' ,.<>':
             if act in ',<':
@@ -133,7 +135,7 @@ class AutoNLEControls:
         self.pos, self._dirty = 0, False
 
         # start in playback standby mode
-        self.playback = True
+        self.playback = not self.is_freeplay
         user_input = self.user_input()
 
         # reset the env
@@ -159,6 +161,10 @@ class AutoNLEControls:
 
             # input is `None` only when the prompt was interrupted by ctrl+C
             if ui is None:
+                # if we're in freeplay mode, then copy the taken actions
+                if not self.playback and self.is_freeplay:
+                    self.trace = self.env._actions[:]
+
                 # if the user has spoiled the env state by interacting with it
                 #  force reset it to the current playback position.
                 if self._dirty:
@@ -175,6 +181,10 @@ class AutoNLEControls:
 
                 # toggle game/playback control on zero byte
                 if not ui or 'play'.startswith(ui):
+                    # if we're in freeplay mode, then copy the taken actions
+                    if not self.playback and self.is_freeplay:
+                        self.trace = self.env._actions[:]
+
                     self.playback = not self.playback
                     self.debug = False
                     continue  # ignore the rest of the input on mode switch
@@ -264,21 +274,35 @@ def render(obs):
 def replay(filename, delay=0.06, debug=False, seed=None):
     breakpoint() if debug else None
 
-    state_dict = pickle.load(open(filename, 'rb'))
-
-    sys.stdout.write(
-        "\033[2J\033[0;0H replaying recording `{os.path.basename(filename)}`"
-        f" from `{state_dict['__dttm__']}`\nwith seeds {state_dict['seed']}."
-    )
-
-    # create the env and force the seed
+    # create the replayable env
     env = Replay(gym.make('NetHackChallenge-v0'))
-    env.seed(seed=state_dict['seed'])
+    # XXX in case we want to try out different scenaria see how a map is made
+    #  in `minihack.envs.fightcorridor.MiniHackFightCorridor`.
+    # from minihack.base import MiniHack
+    # from minihack.level_generator import LevelGenerator
+    # lvl_gen = LevelGenerator(map=..., lit=True)
+    # MiniHack._patch_nhdat(env.unwrapped, lvl_gen.get_des())
+
+    # the file does not exist, so we're in free play mode with
+    if not os.path.isfile(filename):
+        if seed is not None:
+            seed = tuple(seed)
+        seed, trace = seed, []
+
+    else:
+        state_dict = pickle.load(open(filename, 'rb'))
+        sys.stdout.write(
+            "\033[2J\033[0;0H replaying recording `{os.path.basename(filename)}`"
+            f" from `{state_dict['__dttm__']}`\nwith seeds {state_dict['seed']}."
+        )
+
+        seed, trace = state_dict['seed'], state_dict['actions']
 
     # the player and game controls
-    ctrl = AutoNLEControls(env, trace=state_dict['actions'])
+    env.seed(seed=seed)
 
     # start the interactive playthrough
+    ctrl = AutoNLEControls(env, trace=trace)
     while True:
         try:
             for obs in map(render, ctrl):
@@ -290,6 +314,10 @@ def replay(filename, delay=0.06, debug=False, seed=None):
         # an extra prompt to break out from the loop
         if input('restart? [yn] (n)') != 'y':
             break
+
+    if not os.path.isfile(filename):
+        # save into the specified `filename`
+        pickle.dump(env.state_dict(), open(filename, 'wb'))
 
 
 if __name__ == '__main__':
@@ -310,7 +338,13 @@ if __name__ == '__main__':
 
     parser.add_argument(
         '--seed', required=False, type=int, nargs=2,
-        help="the seed pair to use, when free playing to a file.")
+        help="the seed pair to use, when free playing to a file."
+             "\nValkyrie `--seed 14278027783296323177 11038440290352864458`"
+             "\nPriestess `--seed 5009195464289726085 12625175316870653325`"
+             "\nWizard `--seed 12604736832047991440 12469632217503715839`"
+             # ';j:' # a paragraph about a cat
+             # 'acy' # break a wand "of slow" and blow up
+    )
 
     parser.add_argument(
         '--debug', required=False, dest='debug', action='store_true',

@@ -1,11 +1,19 @@
 import numpy as np
 import gym
 
-from .defs import BLStats, special
+from collections import deque
+
 from .render import fixup_tty
 from ..fold import npy_fold2d
 
-from nle.nethack import NLE_BL_STR25, NLE_BL_STR125
+from nle.nethack import (
+    MAX_GLYPH,
+    NLE_BL_X,
+    NLE_BL_Y,
+    NLE_BL_STR25,
+    NLE_BL_STR125,
+    DUNGEON_SHAPE,
+)
 
 
 # from gym import ObservationWrapper, ActionWrapper
@@ -46,17 +54,9 @@ class NLEAtoN(ActionWrapper):
         return self.ctoa[action]
 
 
-class NLEPatches(ObservationWrapper):
+class NLEObservationPatches(ObservationWrapper):
     """Patch the tty character data."""
-    def __init__(self, env, *, copy=False):
-        super().__init__(env)
-        self.copy = copy
-
     def observation(self, observation):
-        # make a copy
-        if self.copy:
-            observation = {k: a.copy() for k, a in observation.items()}
-
         # apply tty rendering patches
         if 'tty_chars' in observation:
             # XXX assume we-ve got all `tty_*` stuff
@@ -65,53 +65,108 @@ class NLEPatches(ObservationWrapper):
         return observation
 
 
-class NLEFeatures(ObservationWrapper):
-    """Features for the neural controller."""
+class NLEFeatureExtractor(ObservationWrapper):
+    """Features for the neural controller.
+
+    Vicinity
+    --------
+    This is an ego-centric view of the specified radius (`k`) into the dungeon
+    map.
+
+    Strength
+    --------
+    The strength stat in NetHack, which is based on AD&D 2ed mechanics, comes
+    in two ints: strength and percentage strength. The latter is applicable to
+    **warrior classes** with **natural strength 18** only and denotes
+    `exceptional strength`, which confers extra chance-to-hit, increased
+    damage, and higher chance to force locks or doors.
+    """
     def __init__(self, env, *, k=3):
         super().__init__(env)
 
-        from nle.nethack import DUNGEON_SHAPE, MAX_GLYPH, NLE_INVENTORY_SIZE
+        # we extend the observation space
+        decl = self.observation_space['glyphs']
 
-        # create bordered glyph array
+        # allocate a bordered array for glyphs
         rows, cols = DUNGEON_SHAPE
         glyphs = self.glyphs = np.full((
             k + rows + k, k + cols + k,
-        ), MAX_GLYPH, dtype=int)  # silently promote from int16 to int64
+        ), MAX_GLYPH, dtype=decl.dtype)
 
-        self.inv_glyphs = np.full(NLE_INVENTORY_SIZE, MAX_GLYPH, dtype=int)
-
-        # create view for fas access
+        # create view for fast access
         self.vw_glyphs = glyphs[k:-k, k:-k]
         self.vw_vicinity = npy_fold2d(
-            glyphs, k=k, n_leading=0, writeable=False,
+            glyphs, k=k, n_leading=0, writeable=True,
+            # XXX torch does not like read-only views
+        )
+
+        # declare `vicinity` in the observation space
+        self.observation_space['vicinity'] = gym.spaces.Box(
+            0, MAX_GLYPH,
+            dtype=self.vw_vicinity.dtype,
+            shape=self.vw_vicinity.shape[2:],
         )
 
     def observation(self, observation):
+        # recv a new observation
+        blstats = observation['blstats'].copy()
+
+        # copy glyphs into the glyph area and then extract the vicinity at X, Y
+        np.copyto(self.vw_glyphs, observation['glyphs'], 'same_kind')
+        vicinity = self.vw_vicinity[blstats[NLE_BL_Y], blstats[NLE_BL_X]]
+
         # strength percentage is more detailed than `str` stat
         # XXX compare src/winrl.cc#L538 with src/attrib.c#L1072-1085
         #     e.g. src/dokick.c#L38 sums the transformed str with dex and con
-        blstats = observation['blstats']
         str, prc = blstats[NLE_BL_STR125], 0.
         if str >= 122:
             str = min(str - 100, 25)
 
         elif str >= 19:
             str, prc = divmod(19 + str / 50, 1)  # divmod-by-one :)
+
         blstats[NLE_BL_STR25] = int(str)
         blstats[NLE_BL_STR125] = int(prc * 100)  # original step .02, so ok
 
-        # recv new observation
-        bls = BLStats(*observation['blstats'])
-        np.copyto(self.vw_glyphs, observation['glyphs'], 'same_kind')
-        np.copyto(self.inv_glyphs, observation['inv_glyphs'], 'same_kind')
-
-        is_objpile = observation['specials'] & special.OBJPILE
-
-        observation.update(dict(
-            glyphs=self.vw_glyphs,
-            inv_glyphs=self.inv_glyphs,
-            blstats=bls,
-            vicinity=self.vw_vicinity[bls.y, bls.x],
-            is_objpile=is_objpile.astype(bool),
-        ))
+        # update the observation dict inplace
+        observation.update(dict(blstats=blstats, vicinity=vicinity.copy()))
         return observation
+
+
+class ObservationDictFilter(ObservationWrapper):
+    """Allow the specified fields in the observation dict.
+    """
+    def __init__(self, env, *keys):
+        super().__init__(env)
+        self.keys = frozenset(keys)
+
+        self.observation_space = gym.spaces.Dict(
+            self.observation(self.observation_space)
+        )
+
+    def observation(self, observation):
+        return {k: v for k, v in observation.items() if k in self.keys}
+
+
+class RecentHistory(gym.Wrapper):
+    """The base interaction architecture is essentially a middleman, who passes
+    the action to the underlying env and intercepts the resulting transition
+    data. It also is allowed, but not obliged to interact with the env, while
+    intercepting the observations.
+    """
+    def __new__(cls, env, *, n_recent=0, map=None):
+        if n_recent < 1:
+            return env
+        return object.__new__(cls)
+
+    def __init__(self, env, *, n_recent=0, map=None):
+        super().__init__(env)
+        self.recent = deque([], n_recent)
+        self.map = map if callable(map) else lambda x: x
+
+    def reset(self, seed=None):
+        return self.env.reset()
+
+    def step(self, action):
+        self.recent.append(self.map(action))
+        return self.env.step(action)

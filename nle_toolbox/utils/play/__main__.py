@@ -4,7 +4,6 @@ import sys
 from copy import deepcopy
 
 import pprint as pp
-from functools import wraps
 
 import gym
 import nle
@@ -13,9 +12,8 @@ from time import sleep
 
 from signal import signal, getsignal, SIGINT
 
-from .wrapper import Replay
+from .wrapper import Replay, ReplayToFile
 from ..env.render import fixup_tty, render as render_obs
-from ...bot.genfun import yield_from_nested
 
 
 def input(prompt=None, *, _input=__builtins__.input):
@@ -26,24 +24,25 @@ def input(prompt=None, *, _input=__builtins__.input):
     return _input('\033[29;0H\033[2K\r\033[39m\033[m' + str(prompt))
 
 
-def flush(l=30):
-    sys.stdout.write(f'\033[{l};0H\033[2K\r\033[J\033[37m')
+def flush(line=30):
+    sys.stdout.write(f'\033[{line};0H\033[2K\r\033[J\033[37m')
 
 
 class AutoNLEControls:
     """Controls
-    `#play` or `\\000` switch playback [A] and human [U] modes
+    `play` or `<ESC>`x3 to switch playback [A] and human control [U] modes
     `enter` repeat last input, `ctrl-c` resume/stops automatic replay
-    `ctrl-d` quit, `debug` toggle debug mode, `help` print this help.
+    `ctrl-d` quit, `debug` toggle debug mode, `help` print this help
 
-    Replay actions backward/forward by one `, .` by ten `< >` in playback mode
-    `signed integer` move to position from begining/end
+    Replay actions backward/forward by one `, .` by ten `< >` in playback
+    mode, `signed integer` moves to position from beginning/end.
     """
     playback, debug, handler, pos = True, False, None, 0
 
-    def __init__(self, env, trace=(), skip=False):
-        self.trace, self.env, self.skip = trace, env, skip
+    def __init__(self, env, trace=()):
+        self.trace, self.env = trace, env
         self.ctoa = {a: j for j, a in enumerate(env.unwrapped._actions)}
+        self.handler = None
 
     def step(self, act):
         # control the position in the replayed actions
@@ -63,9 +62,9 @@ class AutoNLEControls:
 
             pos = self.pos + delta
 
+        # unrecognized actions abort the playback altogether
         else:
-            # unrecognized actions abort the playback altogether
-            return None
+            raise ValueError
 
         self.pos = min(max(pos, 0), len(self.trace))
         for _, _, _, obs, _ in self.env.replay(
@@ -76,46 +75,33 @@ class AutoNLEControls:
 
         return obs
 
-    def prompt(self, extra=''):
-        # prompt for user input or a ctrl+c
-        try:
-            status = "A" if self.playback else "U"
-            status += "D" if self.debug else " "
-
-            return input(f"([{self.pos:5d} {status:2s}] {extra}) > ")
-
-        except KeyboardInterrupt:
-            # hook an interrupt handler so that we could stop playback on
-            #  the next `ctrl-C`
-            self.handler = getsignal(SIGINT)
-            signal(SIGINT, self.restore)
-
-    def restore(self, signalnum, frame):
-        # restore the original handler whatever it was
-        if self.handler is not None:
-            signal(SIGINT, self.handler)
-
-        self.handler = None
-
-    def run(self, obs):
-        self.pos, self._dirty, ui, history, hix = 0, False, None, [], 0
-        self.restore(None, None)
+    def user_input(self):
+        ui, history, hix = None, [], 0
         while True:
-            # input is None only in the case when the prompt was interrupted
-            uip = ui or ''  # previous user input
-            ui = self.prompt(f" {{{uip}}}" if uip else "")  # prev ui in braces
-            if ui is None:
-                # if the user has spoiled the env state by interacting with it
-                #  force reset it to the current playback position.
-                if self._dirty:
-                    self._dirty = False
-                    self.step(' ')
+            # force reset the standby flag
+            self.restore()
 
-                obs = yield self.play(obs)
+            # get the user control, while showing the previous user input
+            prev_ui = ui or ''
+            try:
+                status = 'A' if self.playback else 'U'
+                status += 'D' if self.debug else ' '
+                extra = f' {{{prev_ui}}}' if prev_ui else ''
+
+                # prompt for user input or intercept a ctrl+C
+                ui = input(f"([{self.pos:5d} {status:2s}] {extra}) > ")
+
+            except KeyboardInterrupt:
+                # hook an interrupt handler so that we could stop playback on
+                #  the next `ctrl-C`
+                self.handler = getsignal(SIGINT)
+                signal(SIGINT, self.restore)
+
+                yield None
                 continue
 
             # replace the user input with the one logged in the history
-            #  on up/down keys.
+            #  on up/down keys
             if ui.startswith(('\x1b[A', '\x1b[B')):
                 hix = hix + (-1 if ui == '\x1b[A' else +1)
                 hix = max(0, min(len(history) - 1, hix))
@@ -124,24 +110,78 @@ class AutoNLEControls:
 
             if ui and (not history or history[-1] != ui):
                 history.append(ui)
+
             hix = len(history) - 1
 
             # stick to the previous input if the current is empty
-            ui = ui or uip
-            if not ui:
+            ui = ui or prev_ui
+            if ui:
+                yield ui
+
+    def restore(self, signalnum=None, frame=None):
+        # restore the original handler whatever it was
+        if self.handler is not None:
+            signal(SIGINT, self.handler)
+
+        self.handler = None
+
+    @property
+    def standby(self):
+        return self.handler is None
+
+    def __iter__(self):
+        self.pos, self._dirty = 0, False
+
+        # start in playback standby mode
+        self.playback = True
+        user_input = self.user_input()
+
+        # reset the env
+        obs = self.env.reset()
+        yield obs
+
+        while True:
+            # auto play until interrupted or exhausted the trace
+            while self.playback and not self.standby and (
+                self.pos < len(self.trace)
+            ):
+                obs, rew, fin, nfo = self.env.step(self.trace[self.pos])
+                self.pos += 1
+
+                # yield `obs` to the caller to update the tty
+                yield obs
+
+            # ensure the ctrl+C handler is reset if we stopped
+            self.restore()
+
+            # get the user control
+            ui = next(user_input)
+
+            # input is `None` only when the prompt was interrupted by ctrl+C
+            if ui is None:
+                # if the user has spoiled the env state by interacting with it
+                #  force reset it to the current playback position.
+                if self._dirty:
+                    obs = self.step(' ')
+                    self._dirty = False
+
+                self.playback = True
                 continue
 
-            # toggle game/playback control on zero byte
-            if ui.startswith('#play') or ui == '\000':
-                self.playback = not self.playback
-                self.debug = self.debug and self.playback
-                continue  # ignore the rest of the input on mode switch
+            # special commands are prefixed with double-escape in control mode
+            if self.playback or ui.startswith('\033\033\033'):
+                if ui.startswith('\033\033\033'):
+                    ui = ui[3:]
 
-            if self.playback:
-                # special mode toggles
-                if 'debug'.startswith(ui):
+                # toggle game/playback control on zero byte
+                if not ui or 'play'.startswith(ui):
+                    self.playback = not self.playback
+                    self.debug = False
+                    continue  # ignore the rest of the input on mode switch
+
+                # debug mode toggle
+                elif 'debug'.startswith(ui):
                     self.debug = not self.debug
-                    obs_ = deepcopy(obs)  # make a deep copy, just in case
                     continue
 
                 # display a helpful message
@@ -151,134 +191,101 @@ class AutoNLEControls:
                     continue
 
                 # clear screen
+                elif 'seed'.startswith(ui):
+                    flush(30)
+                    print(self.env._seed)
+                    continue
+
+                # clear screen
                 elif 'clear'.startswith(ui):
                     flush(1)
-                    yield None  # just update the tty
+                    yield obs
                     continue
 
-            elif ui.startswith('\033\033'):
-                # prefix special commands with double-escape in user mode
-                ui = ui[2:]
+                # nothing to handle: fall through to the actual logic
+                pass
 
-                if ui == 'debug':
-                    self.playback = self.debug = True
-                    obs_ = deepcopy(obs)  # make a deep copy, just in case
-                    continue
+            # debug mode with `eval` in both playback and control modes
+            if self.debug:
+                flush(30)
+                try:
+                    # XXX very dangerous!!!
+                    pp.pprint(eval(ui, {}, deepcopy(obs)))
 
-            # player control mode
+                except SyntaxError:
+                    # disable debug mode on any syntax error, e.g. escape
+                    self.debug = False
+
+                except Exception as e:
+                    print(str(e), type(e))
+
+                continue
+
+            # if we're in playback mode then, first, try to interpret the input
+            #  as the index in the trace
             if self.playback:
-                # debug mode with `eval`
-                if self.debug:
-                    flush(30)
-                    try:
-                        pp.pprint(eval(ui, {}, obs_))  # XXX very dangerous!!!
+                try:
+                    obs = self.step(int(ui))
+                    yield obs
+                    continue
 
-                    except SyntaxError:
-                        # disable debug mode on any syntax error, e.g. escape
-                        self.debug = False
+                except ValueError:
+                    pass
 
-                    except Exception as e:
-                        print(str(e), type(e))
-                        pp.pprint(obs_.keys())
-
-                # internal playback control
-                else:
-                    try:
-                        obs = self.step(int(ui))
-                        if obs is None:
-                            return
-
-                        yield None
-                        continue
-
-                    except ValueError:
-                        pass
-
-                    for c in bytes(ui, 'utf8').decode('unicode-escape'):
-                        # abort on invalid command
+            # the user might have potentially spoiled the state
+            self._dirty = not self.playback
+            for c in bytes(ui, 'utf8').decode('unicode-escape'):
+                try:
+                    # playback controls
+                    if self.playback:
                         obs = self.step(c)
-                        if obs is None:
-                            return
 
-                        # yield a `None` action to the caller to update the tty
-                        yield None
+                    # game control
+                    else:
+                        obs, rew, fin, nfo = self.env.step(self.ctoa[ord(c)])
 
-            # external control of the nle (in the caller)
-            else:
-                for c in bytes(ui, 'utf8').decode('unicode-escape'):
-                    # the user might have potentially spoiled the state
-                    self._dirty = True
-                    try:
-                        # yield the action from the user input and them gobble
-                        #  the potential more messages
-                        obs = yield self.ctoa[ord(c)]
-                        if self.skip:
-                            obs = yield self.skip_mores(obs)
+                    yield obs
 
-                    except KeyError:
-                        if input('Invalid action. abort? [yn] (y)') != 'n':
-                            return
-                        break
+                except (KeyError, ValueError):
+                    # abort on invalid command
+                    if input('Invalid command. abort? [yn] (y)') != 'n':
+                        return
 
-    @property
-    def is_auto(self):
-        return self.handler is not None
-
-    def play(self, obs):
-        while self.is_auto and self.pos < len(self.trace):
-            yield self.trace[self.pos]
-            self.pos += 1
-
-    def skip_mores(self, obs):
-        while b'--More--' in bytes(obs['tty_chars']):
-            obs = yield self.ctoa[0o15]  # hit ENTER (can use ESC 0o33)
+                    break
 
 
 def render(obs):
-    sys.stdout.write(render_obs(**fixup_tty(**obs)))
-    sys.stdout.flush()
-    return True
+    if obs is not None:
+        sys.stdout.write(render_obs(**fixup_tty(**obs)))
+        sys.stdout.flush()
+        return obs
 
 
-def replay(filename, delay=0.06, debug=False, skip=False):
+def replay(filename, delay=0.06, debug=False, seed=None):
     breakpoint() if debug else None
 
     state_dict = pickle.load(open(filename, 'rb'))
 
     sys.stdout.write(
-        '\033[2J\033[0;0H'
-        f"replaying recording `{os.path.basename(filename)}` "
-        f"from `{state_dict['__dttm__']}`\n"
-        f"with seeds {state_dict['seed']}."
+        "\033[2J\033[0;0H replaying recording `{os.path.basename(filename)}`"
+        f" from `{state_dict['__dttm__']}`\nwith seeds {state_dict['seed']}."
     )
 
-    # create the env
+    # create the env and force the seed
     env = Replay(gym.make('NetHackChallenge-v0'))
-
-    # force the seed
     env.seed(seed=state_dict['seed'])
 
     # the player and game controls
-    ctrl = AutoNLEControls(env, trace=state_dict['actions'], skip=skip)
+    ctrl = AutoNLEControls(env, trace=state_dict['actions'])
 
     # start the interactive playthrough
     while True:
-        # obs mirrors obs_, unless it is the very first iteration!
-        obs_, fin = env.reset(), False
-        flow, obs = yield_from_nested(ctrl.run(obs_)), None
         try:
-            while render(obs_) and not fin:
-                act = flow.send(obs)
-                if act is not None:
-                    obs_, rew, fin, info = env.step(act)
-                    sleep(delay)
-                obs = obs_
+            for obs in map(render, ctrl):
+                sleep(delay)
 
         except EOFError:
             break
-
-        except StopIteration:
-            pass
 
         # an extra prompt to break out from the loop
         if input('restart? [yn] (n)') != 'y':
@@ -294,15 +301,20 @@ if __name__ == '__main__':
 
     parser.add_argument(
         'filename', type=str,
-        help='The stored replay data.')
+        help="The stored replay data. If the file does not exist, enter"
+             " freeplay mode, which records gameplay to the specified file.")
 
     parser.add_argument(
         '--delay', type=float, default=0.06, required=False, dest='delay',
-        help='Delay between steps during replay.')
+        help="Delay between steps during replay.")
+
+    parser.add_argument(
+        '--seed', required=False, type=int, nargs=2,
+        help="the seed pair to use, when free playing to a file.")
 
     parser.add_argument(
         '--debug', required=False, dest='debug', action='store_true',
-        help='Enter trace mode.')
+        help="Enter trace mode.")
 
     parser.set_defaults(delay=0.06, debug=False)
 

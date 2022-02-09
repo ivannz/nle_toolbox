@@ -23,7 +23,6 @@ if __name__ == '__main__':
             'nle_toolbox.utils.env',
             'nle_toolbox.utils.play',
             'nle_toolbox.utils.rl',
-            'nle_toolbox.wrappers',
             'nle_toolbox.bot',
             'nle_toolbox.bot.model',
         ],

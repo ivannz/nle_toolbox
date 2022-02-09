@@ -1,10 +1,9 @@
 import numpy as np
 import gym
 
-from ..utils.fold import npy_fold2d
-from ..utils.env.defs import BLStats
-from ..utils.env.render import fixup_tty
-from ..utils.env.defs import special
+from .defs import BLStats, special
+from .render import fixup_tty
+from ..fold import npy_fold2d
 
 from nle.nethack import NLE_BL_STR25, NLE_BL_STR125
 

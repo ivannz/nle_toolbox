@@ -38,13 +38,24 @@ rx_modal_signature = re.compile(
     re.VERBOSE | re.IGNORECASE | re.MULTILINE | re.ASCII,
 )
 
+# (20220210) one of the runs failed when skipping an interactible menu caused
+#  a second menu to appear (put in and take out from the backpack in one
+#  maneuvre). This was caused by incorrectly parsing the item letters by the rx
+#  which caused the Chassis to misdetect the first interactive menu, since
+#  on L644 the `.in_menu` flag is determined by non-emptiness of `.letters`.
+#  This confused the page collator logic.
+# seed = 5114808244567105441, 11072120331074183808
+#     'lTb'            # pick up coins, take off leather jacket
+#     'ahiU $bdefg '   # put the specified uncursed items into the sack
+#     'ahbb '          # try to take out coins
+#                      <<-- FAILS, unless we add \$ to letter
 rx_menu_item = re.compile(
     rb"""
     ^(
         # An interactable menu item begins with a letter and is
         # followed by some whitespace and either a dash or a plus
         # character for unselected and selected items, respectively.
-        (?P<letter>[a-z])
+        (?P<letter>[a-z\$\-])
         \s+[\-\+]\s+
         # XXX certain menus appear to be interactible, yet just list the letter
         #  bindings, e.g. the inventory menu.

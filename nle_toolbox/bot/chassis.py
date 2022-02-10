@@ -116,11 +116,20 @@ rx_prompt_what_direction = re.compile(
 rx_prompt_printable_only = re.compile(
     rb"""
     what\s+
-    command
+    (command|.*?look\s+for)
     """,
     re.VERBOSE | re.IGNORECASE | re.ASCII,
 )
-
+# 20220210 [use_crystal_ball](./nle/src/detect.c#L1094-1235) may ask
+#    `What do you look for?`
+# which accepts a printable symbol, SPACE or ESC. Before doing so it may
+# issue a message which looks like
+#    `may look for an object or monster symbol.`
+# We handle this non-standard prompt by forcing printable symbols.
+# seed = 16441573092876245173, 16704658793745847464
+#     'bbhjJjJjj,m'  # go to the crystal orb and pick it up
+#     'am'           # try to peer into it
+#                    # <<-- FALS with an unknown prompt
 
 # the object selection ui is [getobj()](./nle/src/invent.c#L1416-1829). On
 # line [L1654](./nle/src/invent.c#L1654) it forms the query itself from the
@@ -1021,7 +1030,7 @@ class ActionMasker(InteractiveWrapper):
                 # XXX should not be reached by non-prohibited actions, e.g.
                 #  the prohibited WHATDOES command '&' yields 'What command?'
                 #  prompt, which ends up here.
-                raise RuntimeError
+                raise RuntimeError(cha.prompt['full'])
 
         else:
             # we're in proper gameplay mode, only allow only certain actions

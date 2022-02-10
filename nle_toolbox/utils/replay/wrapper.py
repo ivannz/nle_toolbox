@@ -65,6 +65,11 @@ class Replay(Wrapper):
             'actions': getattr(self, '_actions', []),
         }
 
+    def dump(self, filename):
+        """A debug method to immediately dump the replay state.
+        """
+        pickle.dump(self.state_dict(), open(filename, 'wb'))
+
     def load_state_dict(self, state_dict, *, strict=True):
         """Load the state into NetHack.
 

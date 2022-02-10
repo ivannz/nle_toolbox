@@ -138,3 +138,88 @@ def pyt_vtrace(
         adv[-j-1].masked_fill_(fin_[-j], 0.).add_(delta[-j])
 
     return adv + val
+
+
+def pyt_q_targets(
+    rew,
+    fin,
+    qon,
+    qtg=None,
+    *,
+    gam,
+    double=True,
+):
+    r"""Compute the Double-DQN targets.
+
+    Details
+    -------
+    In Q-learning the action value function minimizes the TD-error
+    $$
+        r_{t+1} + \gamma \hat{v}_{t+1} 1_{\neg f_{t+1}}
+            - q_{\theta t}(a_t)
+        \,, $$
+
+    w.r.t. Q-network parameters $\theta$, with $
+        q_{\phi t}(\cdot)
+            = q((x_t, a_{t-1}, r_t, f_t, h_t), \cdot; \phi)
+    $. In classic Q-learning there is no target network and the next state
+    optimal value function is bootstrapped using the current Q-network:
+    $$
+        \hat{v}_t \approx \max_a q_{\theta t}(a)
+        \,. $$
+
+    The DQN method, proposed by
+
+        [Minh et al. (2013)](https://arxiv.org/abs/1312.5602),
+
+    uses a secondary Q-network to estimate the value of the next state:
+    $$
+        \hat{v}_t \approx \max_a q_{\theta^- t}(a)
+        \,, $$
+
+    where $\theta^-$ are frozen parameters of the target Q-network. The Double
+    DQN algorithm of
+
+        [van Hasselt et al. (2015)](https://arxiv.org/abs/1509.06461)
+
+    unravels the $\max$ operator as $
+        \max_k u_k
+            \equiv u_{\arg \max_k u_k}
+    $ and replaces the outer $u$ with the Q-values of the target net, while
+    the inner $u$ (inside the $\arg \max$) is computed with the Q-values of
+    the current Q-network. Specifically, the Double DQN value estimate is
+    $$
+        \hat{v}_t \approx q_{\theta^- t}(\hat{a}_t)
+        \,, $$
+
+    for $
+        \hat{a}_t = \arg \max_a q_{\theta t}(a)
+    $ being the action taken by the current Q-network $\theta$ at $x_t$.
+    """
+
+    # add extra trailing unitary dims for broadcasting
+    fin_ = fin.reshape(fin.shape + (1,) * max(rew.ndim - fin.ndim, 0))
+
+    # broadcast gamma coefficients over the logcal-not of the termination mask
+    gam_ = rew.new_full(fin_.shape, gam).masked_fill_(fin_, 0.)
+
+    # use $q_{\theta t}$ instead of $q_{\theta^- t}$ in Q-learning
+    if qtg is None:
+        qtg, double = qon, False
+
+    # get the value estimate from the q-factor
+    # `qon` is $q_{\theta t}$, and `qtg` is $q_{\theta^- t}$
+    if double:
+        # get $\hat{a}_t = \arg \max_a q_{\theta t}$
+        hat = qon.max(dim=-1).indices.unsqueeze(-1)
+
+        # get $\hat{v}_t = q_{\theta^- t}(\hat{a}_t)$
+        val = qtg.gather(-1, hat).squeeze(-1)
+
+    else:
+        # get $\hat{v}_t = \max_a q_{\theta^- t}(a)$
+        val = qtg.max(dim=-1).values
+
+    # get the td-targets $r_{t+1} + \gamma \hat{v}_{t+1} 1_{f_{t+1}}$
+    # here `rew` is $r_{t+1}$, `gam_` is \gamma 1_{\neg f_{t+1}}
+    return torch.addcmul(rew, gam_, val[1:])

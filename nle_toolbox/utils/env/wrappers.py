@@ -165,6 +165,7 @@ class RecentHistory(gym.Wrapper):
         self.map = map if callable(map) else lambda x: x
 
     def reset(self, seed=None):
+        self.recent.clear()
         return self.env.reset()
 
     def step(self, action):

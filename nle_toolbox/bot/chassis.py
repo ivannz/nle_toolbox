@@ -77,15 +77,22 @@ rx_is_prompt = re.compile(
             #  since the game expects input of an extended command
             \#
         |
+            # The guard in the Vault always asks for the name with a prompt
+            # ending with a dash
+            #  [invault()#L447](./nle/src/vault.c#L305-552).
+            # however sometimes their query also contains a question mark.
+            # This is why we prioritize this rx over the next one
+            .*-$
+        |
             # y/n, direction, object an monster naming, and other prompts,
             # always contain a question mark, e.g.
             #  [do_oname()](./nle/src/do_name.c#L1200-1280) for objects,
             #  [do_mname()](./nle/src/do_name.c#L1118-1196) for monster,
             #  [doengrave()](./nle/src/engrave.c#L1023) for engraving.
-            # However, unlike there do-s
+            # However, unlike these do-s,
             #  [docall()](./nle/src/do_name.c#L1467-1514)
             # presents the player with a prompt that ends in a colon.
-            [^\#][^\?:]+[\?:]
+            [^\#].+?[\?:]  # usually prompts come with options after `?`
         )
         \s*
         (?P<tail>.*)

@@ -53,20 +53,20 @@ class MultiHeadAttention(nn.Module):
         ]))
 
     def forward(self, x):
-        # qkv is x is `b n c`
+        # qkv is x is `B N C`, below S is `stack x 3`, and H -- # of heads
         que, key, val = rearrange(
-            self.qkv(x),
-            'b n (s h d) -> s b h n d',
-            s=3, h=self.num_attention_heads,
+            self.qkv(x), 'B N (S H D) -> S B H N D',
+            S=3, H=self.num_attention_heads,
         )
 
         # scaled attention
         #  $a_{j t s} = \frac{q_{j t}^\top k_{j s}}{\sqrt{d}}$
         #  $\alpha_{j t s} = \softmax(a_{j t s})_{s=1}^n$
         #  $y_{j t} = \sum_s \alpha_{j t s} v_{j s}$
+        # XXX `attn @ val -> out` gives [B H N N] @ [B H N D] -> [B H N D]
         dots = torch.matmul(que, key.transpose(-1, -2))
         attn = torch.softmax(dots.div(math.sqrt(self.head_size)), dim=-1)
-        out = rearrange(attn.matmul(val), 'b h n d -> b n (h d)')
+        out = rearrange(attn.matmul(val), 'B H N D -> B N (H D)')
 
         # reproject and dimshuffle
         return self.prj(out), attn

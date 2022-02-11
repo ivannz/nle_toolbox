@@ -815,6 +815,11 @@ class ActionMasker(InteractiveWrapper):
         42,      # *       76      Command                 SEEALL
         47,      # /       93      Command                 WHATIS
 
+        # The seetrap command simply shows the type of an adjacent trap and
+        #  does not `Find traps`. Detecting them is achieved by searching
+        #  around for a while with `[0-9]s` (see `SEARCH`).
+        94,      # ^       83      Command                 SEETRAP
+
         # No need for farlook
         59,      # ;       42      Command                 GLANCE
         64,      # @       26      Command                 AUTOPICKUP
@@ -897,7 +902,6 @@ class ActionMasker(InteractiveWrapper):
         20,      # \\x14   90      Command                 TELEPORT
         58,      # :       51      Command                 LOOK
         70,      # F       39      Command                 FIGHT
-        94,      # ^       83      Command                 SEETRAP
         99,      # c       30      Command                 CLOSE
         111,     # o       57      Command                 OPEN
         245,     # \\xf5   96      Command                 UNTRAP

@@ -180,7 +180,7 @@ def pyt_q_targets(
     where $\theta^-$ are frozen parameters of the target Q-network. The Double
     DQN algorithm of
 
-        [van Hasselt et al. (2015)](https://arxiv.org/abs/1509.06461)
+        [van Hasselt et al. (2015)](https://ojs.aaai.org/index.php/AAAI/article/view/10295)
 
     unravels the $\max$ operator as $
         \max_k u_k

@@ -3,7 +3,7 @@ from torch import nn
 
 from einops import repeat
 
-from .vit import TransformerLayer, pair
+from .vit import TransformerLayer
 
 
 class HiT(nn.Module):
@@ -12,7 +12,7 @@ class HiT(nn.Module):
     """
     def __init__(
         self,
-        size,
+        n_context,
         /,
         embedding_dim: int,
         num_attention_heads: int,
@@ -26,10 +26,8 @@ class HiT(nn.Module):
     ):
         super().__init__()
 
-        n_rows, n_cols = pair(size)
-
         self.posemb = nn.Parameter(torch.randn(
-            n_rows * n_cols + 3 * n_io + n_cls,
+            n_context + 3 * n_io + n_cls,
             embedding_dim
         ))
 
@@ -88,7 +86,7 @@ class HiT(nn.Module):
             x_cls, x_ioo, x_ctr, _, _ = torch.split(x, [
                 self.n_cls, self.n_io, self.n_io, self.n_io, n_len,
             ], dim=1)
-            hx = hx.lerp(x_ioo, x_ctr.sigmoid())
+            hx = hx.lerp(x_ioo.tanh(), x_ctr.sigmoid())
 
             out.append(x_cls.reshape(n_batch, -1))
 

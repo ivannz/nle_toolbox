@@ -987,10 +987,12 @@ class ActionMasker(InteractiveWrapper):
 
         # properly augment the observation space (assuming the wrapped env is
         #  the NLE). the action space is unchanged.
-        self.observation_space = spaces.Tuple((
-            self.env.observation_space,
-            spaces.MultiBinary(len(self.ascii_to_action)),
-        ))
+        if 'action_mask' in self.observation_space.keys():
+            raise RuntimeError(
+                f"`action_mask` is already declared by `{self.env}`."
+            )
+        space = spaces.MultiBinary(len(self.ascii_to_action))
+        self.observation_space['action_mask'] = space
         # XXX `MultiBinary` has `int8` dtype, which is not exactly `bool`.
 
         # cache the direction and self action ids
@@ -1049,4 +1051,5 @@ class ActionMasker(InteractiveWrapper):
 
         # a numpy mask indicating actions, that SHOULD NOT be taken
         # i.e. masked or forbidden.
-        return (obs, mask), rew, done, info
+        obs['action_mask'] = mask
+        return obs, rew, done, info

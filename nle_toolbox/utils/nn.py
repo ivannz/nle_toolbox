@@ -12,6 +12,8 @@ and `torch.index_select` (see `nn.select`), and a batched version of
 `torch.gather` (see `nn.bselect`).
 """
 import math
+import weakref
+
 import torch
 import plyr
 
@@ -21,6 +23,7 @@ from typing import Optional, Mapping, Any, Union, NamedTuple
 from torch.nn import init
 from torch.nn import Module, ModuleDict as BaseModuleDict
 from torch.nn import Linear, LSTM, GRU, RNN, RNNBase
+from torch.nn import Parameter, ParameterList
 
 
 # copied from rlplay
@@ -594,3 +597,69 @@ def multinomial(
     # undo dim rolling and optionally squeeze the output
     out = out.permute(dims[-pos:] + dims[:-pos])
     return out.squeeze(dim) if squeeze else out
+
+
+class ParameterContainer(Module):
+    """Module-compatible nested container of parameters.
+
+    Details
+    -------
+    Torch's stock `nn.ParameterList` or `nn.ParameterDict` duck-type list and
+    dict containers, respectively, by keeping and registering the contained
+    parameters directly in `._parameters` odict of `nn.Module`, which they are
+    subclasses. However, they do not provide full support for nested containers
+    of parameters.
+    """
+    def __new__(cls, parameters):
+        # regress to nn.Parameter if non-container
+        if isinstance(parameters, Parameter):
+            # keep a weak ref to self
+            if not hasattr(parameters, '_value'):
+                parameters._value = weakref.ref(parameters)
+
+            return parameters
+
+        return object.__new__(cls)
+
+    def __init__(self, parameters):
+        # We bypass nn.Module's parameter registration logic by regressing
+        # to `object`. Any device move or dtype change caused by nn.Module
+        # is made on parameters IN-PLACE, and thus is reflected in the original
+        # built-in containers, since they store data by reference.
+        object.__setattr__(self, '_value', lambda: parameters)
+        # XXX This does not create cyclic reference, and is just an alternative
+        # container of the parameters.
+
+        # Here we let nn.Module's smart __setattr__ to properly register
+        # parameters and containers thereof: if the item in the container is
+        # an `nn.Parameter`, then the __new__ of this class (above, called via
+        # `type(self)(it)`) will return it intact and nn.Module will register
+        # it in its `._parameters` odict. Otherwise, __new__ creates this class
+        # (a subclass of nn.Module), which is registered in `_modules` odict.
+        super().__init__()
+
+        if isinstance(parameters, tuple) and hasattr(parameters, '_fields'):
+            parameters = parameters._asdict()
+
+        if isinstance(parameters, (tuple, list)):
+            for j, it in enumerate(parameters):
+                setattr(self, str(j), type(self)(it))
+
+        elif isinstance(parameters, dict):
+            for k, it in parameters.items():
+                setattr(self, k, type(self)(it))
+
+        else:
+            raise TypeError(f'Unsupported `{type(parameters).__name__}`.')
+
+    def __getitem__(self, key):
+        # emulate container item access
+        return getattr(self, str(key))
+
+    def __setitem__(self, key, value):
+        raise IndexError(key)
+
+    def extra_repr(self):
+        # use ParameterList's extra_repr implementation
+        tmpstr = ParameterList.extra_repr(self)
+        return '\n'.join(map(str.strip, tmpstr.splitlines()))

@@ -89,7 +89,8 @@ def prepare(env, rew=np.nan, fin=True):
     npy = Input(
         env.reset(),
         env.action_space.sample(),
-        np.full(len(env), rew, dtype=np.float32),
+        # pre-filled arrays for potentially structured rewards
+        plyr.ragged(np.full, len(env), rew, dtype=np.float32),
         np.full(len(env), fin, dtype=bool),
     )
 
@@ -177,8 +178,8 @@ def step(env, agent, npyt, hx):
 
     # (sys) update the rest of the `npy-pyt` aliased context
     plyr.apply(np.copyto, npy.obs, obs_)
-    np.copyto(npy.rew, rew_)
-    np.copyto(npy.fin, fin_)
+    plyr.apply(np.copyto, npy.rew, rew_)  # XXX allow structured rewards
+    np.copyto(npy.fin, fin_)  # XXX must be a boolean scalar/vector
     # XXX we ignore the info dict `nfo_`
 
     return (input, val, pol), hx

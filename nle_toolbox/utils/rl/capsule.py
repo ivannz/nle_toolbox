@@ -70,8 +70,8 @@ def capsule(learner, n_fragment_length=20, f_h0_lerp=0.05):
             # (sys) update the rest of the `npy-pyt` aliased context
             # XXX we ignore the info dict `nfo_`, but can report it in fragment!
             suply(np.copyto, npy.obs, obs_)
-            np.copyto(npy.rew, rew_)
-            np.copyto(npy.fin, fin_)
+            suply(np.copyto, npy.rew, rew_)  # XXX allow structured rewards
+            np.copyto(npy.fin, fin_)  # XXX must be a boolean scalar/vector
 
             fragment.append((input, val, pol))
 
@@ -91,7 +91,7 @@ def capsule(learner, n_fragment_length=20, f_h0_lerp=0.05):
             if h0 is not None and f_h0_lerp > 0:
                 hx = plyr.apply(torch.lerp, hx, h0, weight=f_h0_lerp)
 
-        # (sys) repack data ((x_t, a_{t-1}, r^E_t, d_t), v_t, \pi_t)
+        # (sys) repack data ((x_t, a_{t-1}, r_t, d_t), v_t, \pi_t)
         # XXX note, `.act[t]` is $a_{t-1}$, but the other `*[t]` are $*_t$,
         #  e.g. `.rew[t]` is $r_t$, and `pol[t]` is `$\pi_t$
         input, val, pol = plyr.apply(torch.cat, *fragment, _star=False)

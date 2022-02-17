@@ -92,6 +92,7 @@ def prepare(env, rew=np.nan, fin=True):
         env.action_space.sample(),
         # pre-filled arrays for potentially structured rewards
         plyr.ragged(np.full, len(env), rew, dtype=np.float32),
+        # `fin` is an array and NEVER structured
         np.full(len(env), fin, dtype=bool),
     ))
 
@@ -112,12 +113,12 @@ def step(env, agent, npyt, hx):
     Letting `hx` be $h_t$ the recurrent, or _runtime_ state of the agent, this
     procedure, first, does the agent's __REACT__ step
     $$
-        (x_t, a_{t-1}, r_t, d_t), h_t -->>  a_t, v_t, \pi_t, h_{t+1}
+        (x_t, a_{t-1}, r_t, d_t), h_t -->>  a_t, y_t, h_{t+1}
         \,, $$
 
-    where $a_t \sim \pi_t$, $v_t$ is the agent's state-value estimate, $\pi_t$
-    is its policy, and $h_{t+1}$ is its new runtime state, and then performs
-    the env's __ENV__ step
+    where $a_t \sim \pi_t$, $y_t$ is its output (agent's state-value estimate
+    $v_t$ and policy $\pi_t$), and $h_{t+1}$ is its new runtime state, and then
+    performs the env's __ENV__ step
     $$
         \omega_t, a_t -->> \omega_{t+1}, x_{t+1}, r_{t+1}, d_{t+1}
         \,, $$
@@ -128,7 +129,7 @@ def step(env, agent, npyt, hx):
 
     Returns the $t$-th step afterstate
     $$
-        ((x_t, a_{t-1}, r_t, d_t), v_t, \pi_t), h_{t+1}
+        ((x_t, a_{t-1}, r_t, d_t), y_t), h_{t+1}
         \,, $$
 
     updates the aliased `npyt` INPLACE to contain
@@ -152,8 +153,7 @@ def step(env, agent, npyt, hx):
 
     Aux arrays contain data computed GIVEN the past and present historical
     data, but BEFORE the future:
-      * `val` $v_t$ is the state-value estimate
-      * `pol` $\pi_t$ is the policy
+      * `out` the state-value estimate $v_t$ and policy $\pi_t$
       * `hx` $h_{t+1}$ is the agent's runtime state
 
     Note
@@ -168,7 +168,7 @@ def step(env, agent, npyt, hx):
 
     # (agent) REACT x_t, a_{t-1}, h_t -->> v_t, \pi_t, h_{t+1}
     #  and sample `a_t \sim \pi_t`
-    act_, (val, pol), hx = agent(**input._asdict(), hx=hx)
+    act_, out, hx = agent(**input._asdict(), hx=hx)
 
     # (sys) update the action in `npy` through `pyt`
     plyr.apply(torch.Tensor.copy_, pyt.act, act_)
@@ -178,12 +178,13 @@ def step(env, agent, npyt, hx):
     obs_, rew_, fin_, nfo_ = env.step(npy.act)
 
     # (sys) update the rest of the `npy-pyt` aliased context
+    #      `fin` is an array and NEVER structured.
     plyr.apply(np.copyto, npy.obs, obs_)
     plyr.apply(np.copyto, npy.rew, rew_)  # XXX allow structured rewards
     np.copyto(npy.fin, fin_)  # XXX must be a boolean scalar/vector
-    # XXX we ignore the info dict `nfo_`
+    # XXX the info dict `nfo_` can be returned, but we IGNORE it
 
-    return (input, val, pol), hx
+    return (input, out), hx
 
 
 def pyt_polgrad(logpol, act, adv):

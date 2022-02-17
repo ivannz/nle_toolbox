@@ -25,12 +25,12 @@ def capsule(learner, n_fragment_length=20, f_h0_lerp=0.05):
 
     learner must be a callable object accepting kwargs
         `obs, act, rew, fin, hx`
-    returning `act, (val, pol), upd_hx` (diff-able), auto-initing `hx` if
-    necessary. Optionally the object could have the `.initial_hx` property for
-    the `hx` in the very first call.
+    returning `act, output, upd_hx` (diff-able), auto-initialising `hx` if
+    necessary. Optionally the object could have the `.initial_hx` property
+    for the `hx` in the very first call.
 
     It must also have a method `.learn`, which takes in `obs , act, rew, fin`
-    input (always non-diffable), `val, pol` (diff-able depending on the method)
+    input (always non-diffable), `output` (diff-able depending on the method)
     and `hx` (could be anything, depending on the arch of the learner) and
     updates the internal parameters (possibly including the value in
     `.initial_hx`).
@@ -56,9 +56,9 @@ def capsule(learner, n_fragment_length=20, f_h0_lerp=0.05):
             # (sys) clone for diff-ability, because `pyt` is updated in-place
             input = suply(torch.clone, pyt)
 
-            # REACT x_t, a_{t-1}, h_t -->> a_t, v_t, \pi_t, h_{t+1}
+            # REACT x_t, a_{t-1}, h_t -->> a_t, y_t, h_{t+1}
             #       with `a_t \sim \pi_t`
-            act_, (val, pol), hx = learner(**input._asdict(), hx=hx)
+            act_, out, hx = learner(**input._asdict(), hx=hx)
 
             # (sys) update the action in `npy` through `pyt`
             suply(torch.Tensor.copy_, pyt.act, act_)
@@ -73,13 +73,13 @@ def capsule(learner, n_fragment_length=20, f_h0_lerp=0.05):
             suply(np.copyto, npy.rew, rew_)  # XXX allow structured rewards
             np.copyto(npy.fin, fin_)  # XXX must be a boolean scalar/vector
 
-            fragment.append((input, val, pol))
+            fragment.append((input, out))
 
         # (sys) bootstrap the one-step value-to-go approximation, t=N
         # DO NOT yield action to the caller, nor update `npy-pyt`, nor `hx`!
         input = suply(torch.clone, pyt)
-        _, (val, pol), _ = learner(**input._asdict(), hx=hx)
-        fragment.append((input, val, pol))
+        _, out, _ = learner(**input._asdict(), hx=hx)
+        fragment.append((input, out))
 
         if hx is not None:
             # (sys) retain running state `hx`, but DO NOT backprop through it
@@ -91,11 +91,11 @@ def capsule(learner, n_fragment_length=20, f_h0_lerp=0.05):
             if h0 is not None and f_h0_lerp > 0:
                 hx = plyr.apply(torch.lerp, hx, h0, weight=f_h0_lerp)
 
-        # (sys) repack data ((x_t, a_{t-1}, r_t, d_t), v_t, \pi_t)
+        # (sys) repack data ((x_t, a_{t-1}, r_t, d_t), y_t)
         # XXX note, `.act[t]` is $a_{t-1}$, but the other `*[t]` are $*_t$,
-        #  e.g. `.rew[t]` is $r_t$, and `pol[t]` is `$\pi_t$
-        input, val, pol = plyr.apply(torch.cat, *fragment, _star=False)
+        #  e.g. `.rew[t]` is $r_t$, and `out[t]` is `$y_t$
+        input, out = plyr.apply(torch.cat, *fragment, _star=False)
         fragment.clear()
 
         # (sys) learn on the collected fragment with `.learn`
-        do_learn(input, val, pol, hx=hx_pre)
+        do_learn(input, out, hx=hx_pre)

@@ -86,13 +86,13 @@ def prepare(env, rew=np.nan, fin=True):
     assert isinstance(env, SerialVecEnv)
 
     # prepare the runtime context (coupled numpy-torch tensors)
-    npy = Input(
+    npy = plyr.apply(np.copy, Input(
         env.reset(),
         env.action_space.sample(),
         # pre-filled arrays for potentially structured rewards
         plyr.ragged(np.full, len(env), rew, dtype=np.float32),
         np.full(len(env), fin, dtype=bool),
-    )
+    ))
 
     # in-place unsequeeze produces a writable view, which preserves aliasing
     pyt = plyr.apply(torch.as_tensor, npy)

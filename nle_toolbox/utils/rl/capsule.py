@@ -41,7 +41,7 @@ def capsule(learner, n_fragment_length=20, f_h0_lerp=0.05):
 
     # (capsule) finish handshake and prepare the npyt state
     # XXX not need to create `AliasedNPYT`, since we live in a capsule!
-    npy = Input(*(yield None))  # expect obs, act, rew, fin
+    npy = suply(np.copy, Input(*(yield None)))  # expect obs, act, rew, fin
     pyt = suply(torch.as_tensor, npy)  # XXX `pyt` aliases `npy` (array proto.)
     suply(torch.Tensor.unsqueeze_, pyt, dim=0)  # fake seq dim
 

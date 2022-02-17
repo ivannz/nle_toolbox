@@ -20,7 +20,7 @@ def launch(capsule, initial):
     return capsule.send(initial)
 
 
-def capsule(learner, n_fragment_length=20, f_h0_lerp=0.05):
+def capsule(learner, n_fragment_length=20, f_h0_lerp=0.):
     """T-BPTT trajectory collector for capsuled RL. See docs `.engine.step`.
 
     learner must be a callable object accepting kwargs

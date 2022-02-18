@@ -57,7 +57,7 @@ class SerialVecEnv(gym.Env):
             result.append((obs, rew, fin, nfo))
 
         obs_, rew_, fin_, nfo_ = zip(*result)
-        nfo = plyr.apply(tuple, *nfo_, _star=False)
+        nfo = plyr.apply(plyr.AtomicTuple, *nfo_, _star=False)
         obs = plyr.apply(np.stack, *obs_, _star=False, axis=0)
         return obs, np.array(rew_), np.array(fin_), nfo
 

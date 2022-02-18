@@ -40,6 +40,7 @@ from nle.nethack import (
     NLE_BL_DNUM,
     NLE_BL_DLEVEL,
     NLE_BL_CONDITION,
+    NLE_BL_ALIGN,
 )
 
 
@@ -1031,6 +1032,7 @@ _, blstats_fields = zip(*sorted([
     (NLE_BL_DNUM,      'dungeon_number'),
     (NLE_BL_DLEVEL,    'level_number'),
     (NLE_BL_CONDITION, 'condition'),
+    (NLE_BL_ALIGN,     'alignment'),
 ]))
 
 

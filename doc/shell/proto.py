@@ -126,7 +126,7 @@ ctrl = Control()
 
 try:
     with Replay(gym.make('NetHackChallenge-v0')) as env:
-        ctoa = {a: j for j, a in enumerate(env.unwrapped._actions)}
+        ctoa = {a: j for j, a in enumerate(env.unwrapped.actions)}
 
         gi, obs, fin = ctrl(env.reset()), None, False
         while env.render('human') and not fin:

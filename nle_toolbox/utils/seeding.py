@@ -19,13 +19,19 @@ def pyroot(env):
     if isinstance(env, cNethack):
         return env
 
-    # get to the bottom of this
+    # descend through the wrappers of the `env`
     root = env
     try:
         while not isinstance(env, pyNethack):
             env = env.env
 
-        env = env._pynethack
+    except AttributeError:
+        pass
+
+    # get the underlying C-level nethack instance
+    root = env
+    try:
+        env = env.nethack._pynethack
 
     except AttributeError:
         pass

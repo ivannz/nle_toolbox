@@ -43,7 +43,7 @@ class AutoNLEControls:
         self.trace, self.env = trace, env
         self.is_freeplay = not bool(trace)
 
-        self.ctoa = {a: j for j, a in enumerate(env.unwrapped._actions)}
+        self.ctoa = {a: j for j, a in enumerate(env.unwrapped.actions)}
         self.handler = None
 
     def step(self, act):

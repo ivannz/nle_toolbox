@@ -47,7 +47,7 @@ class NLEAtoN(ActionWrapper):
         # XXX for `NetHackChallenge` we could rely on `ACTIONS`
         #  see ./nle/env/tasks.py#L52,328
         self.ctoa = {
-            chr(a): j for j, a in enumerate(self.unwrapped._actions)
+            chr(a): j for j, a in enumerate(self.unwrapped.actions)
         }
 
     def action(self, action):

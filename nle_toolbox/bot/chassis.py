@@ -954,7 +954,7 @@ class ActionMasker(InteractiveWrapper):
         # either way let's keep our own copy of the action-ascii pairing
         #  XXX NLE may have different actions corresponding to the same ascii
         self.ascii_to_action = [
-            (j, int(a)) for j, a in enumerate(self.unwrapped._actions)
+            (j, int(a)) for j, a in enumerate(self.unwrapped.actions)
         ]
 
         # cache the id of the most essential action -- ESCAPE

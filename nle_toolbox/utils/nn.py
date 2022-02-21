@@ -147,7 +147,7 @@ class ModuleDict(BaseModuleDict):
             input = input._asdict()
 
         # the same key order as the order of the declaration in  __init__
-        apply = {k: m(input[k]) for k, m in self.items()}
+        apply = {k: m(input[k]) for k, m in self.items() if m is not None}
         if self.dim is None:
             return apply
 

@@ -38,21 +38,23 @@ class GlyphEmbedding(nn.Module):
         return ent + grp
 
 
-class GlyphEgoCentricVicinityEmbedding(GlyphEmbedding):
+class EgoCentricEmbedding(nn.Module):
     """Ego-centric embedding for vicinities (centered symmetric glpyh views).
     """
     def __init__(self, embedding_dim):
-        super().__init__(embedding_dim)
+        super().__init__()
 
         # ego embedding offset
+        # TODO combine `NLE_BL_HD` (monster level) with ego-embedding?
         self.ego = nn.Parameter(torch.randn(1, 1, embedding_dim))
 
     def forward(self, vicinity):
-        # vicinity is `... x (k + 1 + k) x (k + 1 + k)`
-        assert vicinity.shape[-1] == vicinity.shape[-2]
-        k = vicinity.shape[-1] // 2
+        # vicinity is `... x (k + 1 + k) x (k + 1 + k) x F`
+        Hq, Hr = divmod(vicinity.shape[-3], 2)
+        Wq, Wr = divmod(vicinity.shape[-2], 2)
+        assert Hr == Wr == 1  # symmetric window
 
         # add ego at the centre of the vicinity
         # XXX  `.pad` pads dims from tail
-        glyphs = super().forward(vicinity.long())
-        return glyphs.add(F.pad(self.ego, (0, 0,) + (k, k,) * 2))
+        padding = (0, 0, Hq, Hq + Hr - 1, Wq, Wq + Wr - 1)
+        return vicinity.add(F.pad(self.ego, padding))

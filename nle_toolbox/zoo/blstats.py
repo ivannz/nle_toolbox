@@ -22,6 +22,36 @@ from nle.nethack import (
     NLE_BL_CAP,
 )
 
+# botl stats that were not accounted for.
+from nle.nethack import (
+    # player coords
+    NLE_BL_X,
+    NLE_BL_Y,
+
+    # in-game score and gold
+    NLE_BL_SCORE,
+    NLE_BL_GOLD,
+
+    # level and experience
+    NLE_BL_XP,
+    NLE_BL_EXP,
+
+    # in-game move number
+    NLE_BL_TIME,
+
+    # dungeon number, level, and the depth (derived from the fisrt two)
+    NLE_BL_DNUM,
+    NLE_BL_DLEVEL,
+    NLE_BL_DEPTH,
+
+    # 'monster_level' -- the level of the monster when polymorphed
+    #  [``](./nle/win/rl/winrl.cc#L552-553)
+    NLE_BL_HD,
+
+    # player's alignment
+    NLE_BL_ALIGN,
+)
+
 from ..utils.nn import OneHotBits, EquispacedEmbedding
 
 
@@ -73,14 +103,30 @@ class Encumberance(BaseEmbedding):
 class Condition(nn.Module):
     from ..utils.env.defs import condition
 
-    def __init__(self, embedding_dim: int) -> None:
+    def __init__(
+        self,
+        embedding_dim: int,
+        *,
+        nonlinearity: str = 'tanh',
+    ) -> None:
+        assert nonlinearity in ('tanh', 'relu')
         super().__init__()
 
+        # Ordinarily, embeddings do not need non-linearities, due to implicit
+        # one-hot encoding. However, here `condition` bottom line stat is
+        # a binary flag vector, which defaults to all-zeros, and thus might
+        # actually need one, unlike one-hot token embeddings.
         self.onehot = OneHotBits(self.condition.N_BITS)
-        self.linear = nn.Linear(self.condition.N_BITS, embedding_dim)
+        self.linear = nn.Linear(
+            self.condition.N_BITS,
+            embedding_dim,
+            bias=True,  # XXX needed for default all-zeros `condition`
+        )
+        self.nonlinearity = nn.Tanh() if nonlinearity == 'tanh' else nn.ReLU()
 
     def forward(self, blstats: torch.Tensor) -> torch.Tensor:
-        return self.linear(self.onehot(blstats[..., NLE_BL_CONDITION]))
+        x = self.onehot(blstats[..., NLE_BL_CONDITION])
+        return self.nonlinearity(self.linear(x))
 
 
 class ArmorClass(nn.Embedding):
@@ -113,38 +159,41 @@ class ArmorClass(nn.Embedding):
         return super().forward(self.lut[blstats[..., NLE_BL_AC]])
 
 
-class HP(EquispacedEmbedding):
+class HP(nn.Module):
     def __init__(self, embedding_dim: int, num_bins: int = 10) -> None:
-        super().__init__(0, 1, steps=num_bins - 1, scale='lin')
-        self.embedding = nn.Linear(num_bins, embedding_dim, bias=False)
+        super().__init__()
+        self.onehot = EquispacedEmbedding(0, 1, steps=num_bins - 1, scale='lin')
+        self.linear = nn.Linear(num_bins, embedding_dim, bias=False)
 
     def forward(self, blstats: torch.Tensor) -> torch.Tensor:
         hp = blstats[..., NLE_BL_HP] / blstats[..., NLE_BL_HPMAX]
-        return self.embedding(super().forward(torch.nan_to_num_(hp)))
+        return self.linear(self.onehot(torch.nan_to_num_(hp)))
 
 
-class MP(EquispacedEmbedding):
+class MP(nn.Module):
     def __init__(self, embedding_dim: int, num_bins: int = 10) -> None:
-        super().__init__(0, 1, steps=num_bins - 1, scale='lin')
-        self.embedding = nn.Linear(num_bins, embedding_dim, bias=False)
+        super().__init__()
+        self.onehot = EquispacedEmbedding(0, 1, steps=num_bins - 1, scale='lin')
+        self.linear = nn.Linear(num_bins, embedding_dim, bias=False)
 
     def forward(self, blstats: torch.Tensor) -> torch.Tensor:
         mp = blstats[..., NLE_BL_ENE] / blstats[..., NLE_BL_ENEMAX]
-        return self.embedding(super().forward(torch.nan_to_num_(mp)))
+        return self.linear(self.onehot(torch.nan_to_num_(mp)))
 
 
-class STR125(EquispacedEmbedding):
+class STR125(nn.Module):
     """blstats data must be preprocessed with `NLEFeatureExtractor` from
     `.utils.env.wrappers`
     """
     def __init__(self, embedding_dim: int, num_bins: int = 10) -> None:
-        super().__init__(0, 1, steps=num_bins - 1, scale='lin')
-        self.embedding = nn.Linear(num_bins, embedding_dim, bias=False)
+        super().__init__()
+        self.onehot = EquispacedEmbedding(0, 1, steps=num_bins - 1, scale='lin')
+        self.linear = nn.Linear(num_bins, embedding_dim, bias=False)
 
     def forward(self, blstats: torch.Tensor) -> torch.Tensor:
         # embedding (adjusted) percentage strength for warrior classes
         prc = blstats[..., NLE_BL_STR125].div(99)
-        return self.embedding(super().forward(prc))
+        return self.linear(self.onehot(prc))
 
 
 class STR(BaseStatEmbedding):

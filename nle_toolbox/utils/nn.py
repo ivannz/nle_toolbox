@@ -302,25 +302,27 @@ class LinearSplitter(Linear):
         return text.format(self.in_features, splits, self.bias is not None)
 
 
-def trailing_mul(a, b=None, *, w, lead=1):
+def trailing_mul(x1, x0=None, *, w, lead=1):
     """Unsqueeze the trailing dims of `w` for broadcasted multiply.
     """
-    # For a `: x B_1 x ... x B_m x ...` and w `B_1 x ... x B_m` we expand w
-    #  to `B_1 x ... x B_m x 1 x ... x 1` and then multiply it by `a`
-    trailing = (1,) * max(a.ndim - w.ndim - lead, 0)
-    return w.reshape(*w.shape, *trailing).mul(a)
+    # For x1 `: x B_1 x ... x B_m x ...` and w `B_1 x ... x B_m` we expand
+    #  `w` to `B_1 x ... x B_m x 1 x ... x 1` and then multiply it by `x1`
+    trailing = (1,) * max(x1.ndim - w.ndim - lead, 0)
+    return w.reshape(*w.shape, *trailing).mul(x1)
 
 
-def trailing_lerp(a, b, *, w, lead=1):
+def trailing_lerp(x1, x0=None, *, w, lead=1):
     """Unsqueeze the trailing dims of `w` for broadcasted linear interpolation.
 
-    See `torch.lerp`: torch.lerp(a, b, w) = a.lerp(b, w) = (1 - w) * a + w * b
+    See `torch.lerp`: torch.lerp(x0, x1, w) = (1 - w) * x0 + w * x1
     """
-    # For a `: x B_1 x ... x B_m x ...` and w `B_1 x ... x B_m` we expand w
-    #  to `B_1 x ... x B_m x 1 x ... x 1` and then lerp `a` to `b` with it.
-    # XXX lerp(a, b, w) = a.lerp(b, w) = (1 - w) * a + w * b
-    trailing = (1,) * max(a.ndim - w.ndim - lead, 0)
-    return a.lerp(b, w.reshape(*w.shape, *trailing))
+    # For x1 `: x B_1 x ... x B_m x ...` and w `B_1 x ... x B_m` we expand w
+    #  to `B_1 x ... x B_m x 1 x ... x 1` and then lerp `x0` to `x1` with it.
+    #  If `x0` is None, then assume it is zero tensor.
+    # XXX x0.lerp(x1, w) = lerp(x0, x1, w)
+    trailing = (1,) * max(x1.ndim - w.ndim - lead, 0)
+    x0 = x1.new_zeros(()) if x0 is None else x0
+    return x0.lerp(x1, w.reshape(*w.shape, *trailing))
 
 
 def masked_rnn(core, input, hx=None, *, reset=None, h0=None):
@@ -331,9 +333,16 @@ def masked_rnn(core, input, hx=None, *, reset=None, h0=None):
     core : torch.nn.Module
         The recurrent core with `batch_first=False`, that accepts an tensor
         `input` with leading sequence and batch dims (`T x B x ...`) and
-        the recurrent state `hx` (a `? x B x ...` tensor or container thereof).
+        the recurrent state `hx` (a `? x B x ...` tensor or container thereof
+        or `None`).
+
         The core must output two objects: the output tensor (`T x B x ...`) and
-        the updated state `hx` (`? x B x ...`). See `torch.nn.modules.rnn`.
+        the updated state `hx` (nested container of `? x B x ...` tensors or
+        `None`). If the core USES a recurrent state, then it MUST always return
+        a container. Otherwise, effectively non-recurrent cores MUST always
+        return `hx = None`, regardless of the input argument.
+
+        See `torch.nn.modules.rnn`.
 
     input : torch.Tensor
         The tensor of shape `T x B x ...` with a batch of input sequences.
@@ -352,7 +361,7 @@ def masked_rnn(core, input, hx=None, *, reset=None, h0=None):
 
     h0 : torch.Tensor or container of torch.Tensor
         The initial recurrent state, used to jumpstart recurrent core at the
-        very BEGINNIG of the whole sequence. If None, then the initial state
+        very BEGINNING of the whole sequence. If None, then the initial state
         is expected to be initialized to zeros by the core itself.
 
     Returns
@@ -366,9 +375,13 @@ def masked_rnn(core, input, hx=None, *, reset=None, h0=None):
 
     Details
     -------
-    Applies the core sequentially over the first dim of `input`,  diffably
+    Applies the core sequentially over the first dim of `input`, diffably
     resetting the runtime state `hx` to _zero_ or a supplied init `h0`,
     according to the provided sequence restart indicator `reset`.
+
+    If the core DOES NOT use a recurrent state, it is still expected to take
+    an `hx` keyword argument and return an update for `hx`, which in this case
+    MUST always be `None`.
     """
     # `input` is `T x B x ...`, `reset` is `T x B`
     # `hx` is `? x B x ...`, and `h0` is `? x 1 x ...`
@@ -399,7 +412,7 @@ def masked_rnn(core, input, hx=None, *, reset=None, h0=None):
     if reset.shape != input.shape[:2]:
         raise ValueError(f'Dim mismatch {reset.shape} != {input.shape[:2]}')
 
-    # make sure the termination/reset mask is numeric for lerping or mul-ing
+    # make sure the termination/reset mask is numeric for lerp-ing or mul-ing
     keep = (~reset).to(input)
 
     # loop along the `n_seq` dim, but in slices with fake T=1, diffably
@@ -409,7 +422,8 @@ def masked_rnn(core, input, hx=None, *, reset=None, h0=None):
     outputs = []
     if h0 is None:
         for x, m in zip(input.unsqueeze(1), keep):
-            if hx is not h0:  # skip if hx has just been initted
+            # skip if hx is unused or has just been initted
+            if hx is not None and hx is not h0:
                 # `hx <<-- m * hx` is `zeros_like(hx) if reset else hx`
                 hx = plyr.suply(trailing_mul, hx, w=m)
 
@@ -418,13 +432,13 @@ def masked_rnn(core, input, hx=None, *, reset=None, h0=None):
 
     else:
         for x, m in zip(input.unsqueeze(1), keep):
-            if hx is not h0:
+            if hx is not None and hx is not h0:
                 # `hx <<-- (1 - m) * h0 + m * hx` is `h0 if reset else hx`
                 # XXX `.lerp` can broadcast h0 across its batch dims. However
-                # on the first itretation, if the original `hx` is None and
+                # on the first iteration, if the original `hx` is None and
                 # `h0` is not, the `hx` passed to `core()` must have correct
                 # batch dims, which is why we nevertheless use plyr-cat above.
-                hx = plyr.suply(trailing_lerp, h0, hx, w=m)
+                hx = plyr.suply(trailing_lerp, hx, h0, w=m)
 
             out, hx = core(x, hx=hx)
             outputs.append(out)

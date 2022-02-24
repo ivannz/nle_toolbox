@@ -20,7 +20,7 @@ def launch(capsule, initial):
     return capsule.send(initial)
 
 
-def capsule(step, update, length, *, h0=None, alpha=0.):
+def capsule(step, update, length):
     """T-BPTT trajectory collector for capsuled RL. See docs `.engine.step`.
 
     Parameters
@@ -35,25 +35,19 @@ def capsule(step, update, length, *, h0=None, alpha=0.):
     update: callable
         A function that updates whatever internal parameters `step` depends on,
         and takes in `input` (always non-diffable `obs`, `act`, `rew`, `fin`),
-        `output` and `hx` (both possibly diff-able).
+        `output`, `hx` and `gx` (possibly diff-able). It returns an auxiliary
+        information dict and an update for `hx` (may be diff-able).
 
     length: int
         The length of trajectory fragments used for each truncated bptt grad
         update.
-
-    h0: nested tensors
-        The initial learnable runtime state `h0`.
-
-    alpha: float
-        The between-fragment blending coefficient, which allows some feedback
-        (learning) to `h0` from `hx` used in the collected fragment in T-BPTT.
     """
     if update is None and length >= 1 or update is not None and length < 1:
         raise ValueError('`update` can be None iff fragment `length` is zero.')
 
-    # (sys) let the learner properly init `hx`-s batch dims, since `h0` may
-    #  have unitary batch dims
-    gx = g0 = hx = None
+    # (sys) let the learner properly init `hx`-s batch dims
+    # XXX hx is current, gx is at the start of the fragment
+    gx = hx = None
 
     # (capsule) finish handshake and prepare the npyt state
     # XXX not need to create `AliasedNPYT`, since we live in a capsule!
@@ -95,7 +89,7 @@ def capsule(step, update, length, *, h0=None, alpha=0.):
         if len(fragment) < length:
             continue
 
-        # (sys) one-step lookahead $y_N$, e.g. value-to-go bootstrap.
+        # (sys) one-step look-ahead $y_N$, e.g. value-to-go bootstrap.
         # DO NOT yield action to the caller, nor update `npy-pyt`, nor `hx`!
         input = suply(torch.clone, pyt)
         _, output, _ = step(input, hx=hx)
@@ -107,37 +101,7 @@ def capsule(step, update, length, *, h0=None, alpha=0.):
         input, output = plyr.apply(torch.cat, *fragment, _star=False)
         fragment.clear()
 
-        # (sys) learn on the collected fragment with `.learn`
-        update(input, output, hx=gx)
-        # XXX the locally stored runtime state `hx` may become stale, due to
-        #  side effects of `update` on `step`-s underlying parametric model,
-        #  which both recurrently produces and consumes the runtime `hx`.
-
-        if hx is not None:
-            # (sys) recompute the runtime state `hx` after the update, but
-            #  using the proper part of the fragment (t=0..N-1), but DO NOT
-            #  backprop through it form the next fragment (truncated bptt)
-            # XXX `hx` is h_N from h_{t+1}, y_t = F(x_t, h_t; w), t=0..N-1.
-            # However it became stale due to the update, thus we need to get
-            # the updated `hx` h'_N from h'_{t+1}, y_t = F(x_t, h'_t; w').
-            # At, in the stationary `h0` t-bptt recurrence, the fragments begin
-            # with h_0 = h0 \eta + g_0 (1 - \eta), where g_0 is h_N from the
-            # previous fragment, unperturbed by `h0`.
-            with torch.no_grad():
-                # (sys) recompute the lerp-ed starting `hx` with the new `h0`
-                hx = g0
-                if g0 is not None and h0 is not None and alpha > 0:
-                    hx = plyr.apply(torch.lerp, hx, h0, weight=alpha)
-
-                # XXX if `gx` is None, then `step` auto-inits it to
-                #  the updated `h0`
-                _, _, hx = step(plyr.apply(lambda x: x[:-1], input), hx=hx)
-                g0 = hx
-
-            # (sys) pass some grad feedback from the next fragment into `h0`
-            #    `.lerp: hx <<-- (1 - w) * hx + w * h0` (broadcasts correctly).
-            if h0 is not None and alpha > 0:
-                hx = plyr.apply(torch.lerp, hx, h0, weight=alpha)
-
-        # (sys) save the recurrent state `hx` at the start of the next fragment
-        gx = hx
+        # (sys) do an update on the collected fragment and get the revised
+        # recurrent runtime state for the next fragment
+        _, gx = update(input, output, gx=gx, hx=hx)
+        hx = gx = hx if gx is None else gx

@@ -302,27 +302,14 @@ class LinearSplitter(Linear):
         return text.format(self.in_features, splits, self.bias is not None)
 
 
-def trailing_mul(x1, x0=None, *, w, lead=1):
-    """Unsqueeze the trailing dims of `w` for broadcasted multiply.
+def trailing_lerp(x0, x1, *, eta, leading=1):
+    """Unsqueeze the trailing dims of `eta` for linear interpolation.
+
+    See `torch.lerp`: torch.lerp(x0, x1, eta) = (1 - eta) * x0 + eta * x1
     """
-    # For x1 `: x B_1 x ... x B_m x ...` and w `B_1 x ... x B_m` we expand
-    #  `w` to `B_1 x ... x B_m x 1 x ... x 1` and then multiply it by `x1`
-    trailing = (1,) * max(x1.ndim - w.ndim - lead, 0)
-    return w.reshape(*w.shape, *trailing).mul(x1)
-
-
-def trailing_lerp(x1, x0=None, *, w, lead=1):
-    """Unsqueeze the trailing dims of `w` for broadcasted linear interpolation.
-
-    See `torch.lerp`: torch.lerp(x0, x1, w) = (1 - w) * x0 + w * x1
-    """
-    # For x1 `: x B_1 x ... x B_m x ...` and w `B_1 x ... x B_m` we expand w
-    #  to `B_1 x ... x B_m x 1 x ... x 1` and then lerp `x0` to `x1` with it.
-    #  If `x0` is None, then assume it is zero tensor.
-    # XXX x0.lerp(x1, w) = lerp(x0, x1, w)
-    trailing = (1,) * max(x1.ndim - w.ndim - lead, 0)
-    x0 = x1.new_zeros(()) if x0 is None else x0
-    return x0.lerp(x1, w.reshape(*w.shape, *trailing))
+    # XXX `x0.lerp(x1, eta) = lerp(x0, x1, eta)` broadcasts correctly
+    trailing = (1,) * max(x0.ndim - eta.ndim - leading, 0)
+    return x0.lerp(x1, eta.reshape(*eta.shape, *trailing))
 
 
 def masked_rnn(core, input, hx=None, *, reset=None, h0=None):
@@ -387,61 +374,57 @@ def masked_rnn(core, input, hx=None, *, reset=None, h0=None):
     # `hx` is `? x B x ...`, and `h0` is `? x 1 x ...`
     n_seq, n_batch = input.shape[:2]
 
-    # `h0` could be None for the conventional auto-init with _zero_, or
-    #  a container of diffable tensors. We broadcast `h0` along the second
-    #  dim by concatenating it `n_batch` times with itself.
-    if h0 is not None:
+    # Use the initial runtime state `h0`, repeated along the batch dim, if `hx`
+    # hasn't been supplied, since the `hx` passed to `core()` must have correct
+    # batch dims.
+    if h0 is not None and hx is None:
         # `h0 <<-- torch.cat([h0, h0, ..., h0], dim=1)`
-        h0 = plyr.tuply(torch.cat, *(h0,) * n_batch, dim=1)
-        # XXX We do not use .tile or .repeat, since they require their size
-        #  replication specs to be broadcastible from the trailing dims.
-        #  This would introduce an unnecessary dimensionality constraint on
-        #  the tensors of `hx` and `h0`. Consider `hx` with tensors that
-        #  have multidimensional spatial features, like L x B x H x W, where
-        #  L is the number of rnn layers, B is the batch, and (H, W) are dims
-        #  of a latent 2d state, e.g. spatial GRU's recurrent state.
-
-    # `h0` is the init runtime state, so we use it if `hx` hasn't been supplied
-    hx = h0 if hx is None else hx
+        # XXX we'd better check if the batch dim of h0 is unit...
+        hx = plyr.tuply(torch.cat, *(h0,) * n_batch, dim=1)
+        # XXX We do not use `.tile` or `.repeat`, because they require their
+        # replication specs to be broadcastible from the trailing dims, thereby
+        # constraining dimensionality of `hx` and `h0`.
 
     # ignore absent or all-false reset masks
-    if reset is None or not reset.any():
+    if reset is None or not reset.any() or n_seq < 1:
         return core(input, hx=hx)
 
     # check the leading dims (seq x batch)
     if reset.shape != input.shape[:2]:
         raise ValueError(f'Dim mismatch {reset.shape} != {input.shape[:2]}')
 
-    # make sure the termination/reset mask is numeric for lerp-ing or mul-ing
-    keep = (~reset).to(input)
+    # make sure the reset mask is numeric for lerp-ing
+    reset = reset.to(input)
+    if hx is not None:
+        # create `h0` as broadcastible scalar zeros from the existing `hx`
+        if h0 is None:
+            h0 = plyr.suply(lambda t: t.new_zeros(()), hx)
+        hx = plyr.apply(trailing_lerp, hx, h0, eta=reset[0])
 
-    # loop along the `n_seq` dim, but in slices with fake T=1, diffably
-    #  resetting the state `hx` to zero, or to `h0' if `reset` tells us to
-    # XXX `hx is not h0` skips the update if hx has just been initted, because
-    #  in this case a reset flag is meaningless.
-    outputs = []
+    # fast branch for one-element sequences, regardless of the returned `hx`
+    first, hx = core(input[:1], hx)
+    if n_seq == 1:
+        return first, hx
+
+    # fall back to non-resetting logic, if the first step returns `hx = None`
+    if hx is None:
+        # step through all the remaining input seq elements all at once,
+        # since there is no recurrent state to maintain and reset.
+        remaining, hx = core(input[1:], hx=hx)
+        return torch.cat((first, remaining), dim=0), hx
+
     if h0 is None:
-        for x, m in zip(input.unsqueeze(1), keep):
-            # skip if hx is unused or has just been initted
-            if hx is not None and hx is not h0:
-                # `hx <<-- m * hx` is `zeros_like(hx) if reset else hx`
-                hx = plyr.suply(trailing_mul, hx, w=m)
+        h0 = plyr.suply(lambda t: t.new_zeros(()), hx)
 
-            out, hx = core(x, hx=hx)
-            outputs.append(out)
-
-    else:
-        for x, m in zip(input.unsqueeze(1), keep):
-            if hx is not None and hx is not h0:
-                # `hx <<-- (1 - m) * h0 + m * hx` is `h0 if reset else hx`
-                # XXX `.lerp` can broadcast h0 across its batch dims. However
-                # on the first iteration, if the original `hx` is None and
-                # `h0` is not, the `hx` passed to `core()` must have correct
-                # batch dims, which is why we nevertheless use plyr-cat above.
-                hx = plyr.suply(trailing_lerp, hx, h0, w=m)
-
-            out, hx = core(x, hx=hx)
-            outputs.append(out)
+    # loop along `n_seq` dim in slices with fake T=1, diffably resetting
+    # `hx` to `h0' when `reset` tells us to by lerp-ing.
+    outputs = [first]
+    for x, f in zip(input.unsqueeze(1)[1:], reset[1:]):  # XXX does `.unbind`
+        # `hx <<-- (1 - r) * hx + r * h0` is `h0 if reset else hx`
+        # XXX `hx is not h0` is a bad design choice, since we could have been
+        # called with  hx = h0 != None.
+        out, hx = core(x, hx=plyr.apply(trailing_lerp, hx, h0, eta=f))
+        outputs.append(out)
 
     return torch.cat(outputs, dim=0), hx
 

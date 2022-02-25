@@ -104,4 +104,4 @@ def capsule(step, update, length):
         # (sys) do an update on the collected fragment and get the revised
         # recurrent runtime state for the next fragment
         _, gx = update(input, output, gx=gx, hx=hx)
-        hx = gx = hx if gx is None else gx
+        hx = gx = hx if gx is None else gx  # if None, set gx to hx

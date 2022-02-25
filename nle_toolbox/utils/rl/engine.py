@@ -187,6 +187,18 @@ def step(env, agent, npyt, hx):
     return (input, out), hx
 
 
+def pyt_logpact(logpol, act):
+    """Get log probability of the taken actions.
+
+    Details
+    -------
+    This functions relies on its arguments having the correct synchronisation
+    between `logpol` and `act`
+    """
+    # (sys) get \log\mu_t(a_t) from `logpol[t][act[t+1]])`, t=0..T-1
+    return logpol[:-1].gather(-1, act[1:].unsqueeze(-1)).squeeze_(-1)
+
+
 def pyt_polgrad(logpol, act, adv):
     r"""Compute the GAE policy gradient surrogate.
 
@@ -203,8 +215,7 @@ def pyt_polgrad(logpol, act, adv):
     """
     # the policy contains logits over the last (event) dims
     # \sum_j \sum_t A_{j t} \log \pi_{j t}(a_{j t})
-    logp = logpol[:-1].gather(-1, act[1:].unsqueeze(-1))
-    return logp.squeeze(-1).mul(adv).sum()
+    return pyt_logpact(logpol, act).mul(adv).sum()
 
 
 def pyt_entropy(logpol):

@@ -1,6 +1,26 @@
 import torch
 
 
+def trailing_broadcast(what, to):
+    """Add extra trailing unitary dims to `what` for broadcasting it to `to`.
+    """
+    return what.reshape(what.shape + (1,) * max(to.ndim - what.ndim, 0))
+
+
+def pyt_td_target(rew, fin, val, *, gam):
+    r"""Compute the TD(0) targets.
+
+    Details
+    -------
+    see `pyt_ret_gae` about synchronization of `rew`, `fin` and `val`.
+    `rew` is on element shorter than `val`!
+    """
+
+    fin_ = trailing_broadcast(fin, rew)
+    gam_ = rew.new_full(fin_.shape, gam).masked_fill_(fin_, 0.)
+    return torch.addcmul(rew, gam_, val[1:])
+
+
 def pyt_ret_gae(rew, fin, val, *, gam, lam, rho=None):
     r"""Compute the Generalized Advantage Estimates and the Returns.
 
@@ -18,10 +38,8 @@ def pyt_ret_gae(rew, fin, val, *, gam, lam, rho=None):
     current state $\omega_t$.
     """
 
-    # add extra trailing unitary dims for broadcasting
-    fin_ = fin.reshape(fin.shape + (1,) * max(rew.ndim - fin.ndim, 0))
-
     # broadcast gamma coefficients over the logcal-not of the termination mask
+    fin_ = trailing_broadcast(fin, rew)
     gam_ = rew.new_full(fin_.shape, gam).masked_fill_(fin_, 0.)
 
     # [O(T B F)] delta_t = r_{t+1} + \gamma 1_{T \leq t+1} v_{t+1} - v_t
@@ -60,7 +78,6 @@ def pyt_ret_gae(rew, fin, val, *, gam, lam, rho=None):
     return ret[:-1], gae[:-1]
 
 
-@torch.no_grad()
 def pyt_vtrace(
     rew,
     fin,
@@ -114,9 +131,9 @@ def pyt_vtrace(
     """
 
     # add extra trailing unitary dims for broadcasting
-    fin_ = fin.reshape(fin.shape + (1,) * max(rew.ndim - fin.ndim, 0))
+    # XXX rho is the current/behavioural likelihood ratio for the taken action
+    fin_ = trailing_broadcast(fin, rew)
     rho_ = rho.reshape_as(fin_)
-    # rho is the current/behavioural likelihood ratio for the taken action
 
     # [O(T B F)] get the clipped importance-weighted td(0)-residuals
     #     \delta_t = r_{t+1} + \gamma v_{t+1} - v_t
@@ -197,10 +214,8 @@ def pyt_q_targets(
     $ being the action taken by the current Q-network $\theta$ at $x_t$.
     """
 
-    # add extra trailing unitary dims for broadcasting
-    fin_ = fin.reshape(fin.shape + (1,) * max(rew.ndim - fin.ndim, 0))
-
     # broadcast gamma coefficients over the logcal-not of the termination mask
+    fin_ = trailing_broadcast(fin, rew)
     gam_ = rew.new_full(fin_.shape, gam).masked_fill_(fin_, 0.)
 
     # use $q_{\theta t}$ instead of $q_{\theta^- t}$ in Q-learning

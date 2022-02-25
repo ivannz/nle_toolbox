@@ -235,4 +235,4 @@ def pyt_critic(val, ret):
         reduction='none',
     ).sum(dim=-1)
 
-    return mse.sum()
+    return mse.sum() / 2

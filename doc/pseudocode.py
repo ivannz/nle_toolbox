@@ -12,6 +12,7 @@ def collate(fragment): pass  # return map(torch.stack, zip(*fragment))
 def gae_ret(rew, fin, val, *, gam, lam): pass  # GAE(gam, lam) and Returns(gam)
 def entropy(*, logits): pass  # - \sum_n e^l_{t n} l_{t n}, t=0..T-1
 def mse_loss(val, ret): pass  # (v_t - R_t)^2, t=0..T-1
+def no_grad(): pass  # disable autodiff within the `with`-scope
 
 
 # hyperparams
@@ -38,21 +39,22 @@ n_steps = 0
 while n_steps < n_total:
     # collect a fragment of length T
     fragment = []
+    gx = hx
     for t in range(T):  # t=0..T-1 (relative fragment time)
-        # ACT: (x_t, a_{t-1}, r_t, f_t), h_t -->> a_t, \log \pi_t, v_t, h_{t+1}
+        # ACT: (x_t, a_{t-1}, r_t, d_t), h_t -->> a_t, \log \pi_t, v_t, h_{t+1}
         if fin:
             hx = h0  # h0 if x_t is terminal else h_t
         (upd_act, pol, val), upd_hx = agent(obs, act, rew, fin, hx)
         # XXX agent should not use `act` and `rew` if fin == True
 
-        # save (x_t, a_{t-1}, r_t, f_t, \log \pi_t, v_t), but not h_t!
+        # save (x_t, a_{t-1}, r_t, d_t, \log \pi_t, v_t), but not h_t!
         # XXX the past recurrent states `hx` live in the heap until backprop
         fragment.append((obs, act, rew, fin, pol, val))
 
         # deferred hx and act updates
         act, hx = upd_act, upd_hx
 
-        # ENV: x_t, a_t -->> x_{t+1}, r_{t+1}, f_{t+1} (upd. obs, rew, fin)
+        # ENV: x_t, a_t -->> x_{t+1}, r_{t+1}, d_{t+1} (upd. obs, rew, fin)
         # XXX in our notation values with index `t` are CAUSAL PRECURSORS
         # to values with indices `t+1`, hence a_t is rewarded by r_{t+1}!
         obs, rew, fin, nfo = env.step(act)
@@ -65,25 +67,18 @@ while n_steps < n_total:
     (_, pol, val), _ = agent(obs, act, rew, fin, h0 if fin else hx)
     # DO NOT step through env or update `obs`, `act`, `rew`, `fin`, nor `hx`!
 
-    # save (x_T, a_{T-1}, r_T, f_T, \log \pi_T, v_T)
+    # save (x_T, a_{T-1}, r_T, d_T, \log \pi_T, v_T)
     fragment.append((obs, act, rew, fin, pol, val))
-    # XXX here `obs`, `act`, `rew`, `fin` and `hx` are x_T, a_{T-1}, r_T, f_T,
+    # XXX here `obs`, `act`, `rew`, `fin` and `hx` are x_T, a_{T-1}, r_T, d_T,
     # and h_T, respectively, which are used to start the next fragment.
     # The data in `obs`, `act`, `rew`, `fin` must be KEPT INTACT, however, to
     # implement T-BPTT, we DO MEDDLE with the "memory" `hx`!
 
-# >>>>>>>>>
-    # truncate BPTT, mix h_{T-1} with `h0` to get an h_0 for the next fragment
-    hx = hx.detach() * (1 - eta) + h0 * eta  # XXX can also `.lerp`
-    # XXX we let some grad feedback from the next fragment into `h0`, in order
-    # to learn a, sort of, "stationary" recurrent init.
-# <<<<<<<<<
-
-    # collate (x_t, a_{t-1}, r_t, f_t, \log \pi_t, v_t), t=0..T
+    # collate (x_t, a_{t-1}, r_t, d_t, \log \pi_t, v_t), t=0..T
     tobs, tact, trew, tfin, tpol, tval = collate(fragment)
     # XXX `tpol`, and `tval` are differentiable tensors, others aren't!
 
-    # GAE and returns from (r_t, f_t, v_t)_{t=0}^T (r_0 and f_0 are ignored,
+    # GAE and returns from (r_t, d_t, v_t)_{t=0}^T (r_0 and d_0 are ignored,
     # but v_0 is used to td-errors in GAE)
     gae, ret = gae_ret(trew, tfin, tval, gam=gam, lam=lam)
     # XXX R_t = r_{t+1} + \gamma R_{t+1}, R_{T-1} = r_T + \gamma v_T
@@ -105,3 +100,14 @@ while n_steps < n_total:
     optim.zero_grad()
     loss.backward()
     optim.step()
+
+# >>>>>>>>>
+    # update the stale state `hx` by doing a non-diffable pass from `gx`
+    with no_grad():
+        _, hx = agent(tobs, tact, trew, tfin, gx)
+
+    # truncate BPTT, mix h_{T-1} with `h0` to get an h_0 for the next fragment
+    hx = hx.detach() * (1 - eta) + h0 * eta  # XXX can also `.lerp`
+    # XXX we let some grad feedback from the next fragment into `h0`, in order
+    # to learn a, sort of, "stationary" recurrent init.
+# <<<<<<<<<

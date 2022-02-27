@@ -4,6 +4,7 @@ from plyr import suply
 import torch
 import numpy as np
 
+from copy import deepcopy
 from .engine import Input
 
 
@@ -47,7 +48,7 @@ def capsule(step, update, length):
 
     # (sys) let the learner properly init `hx`-s batch dims
     # XXX hx is current, gx is at the start of the fragment
-    gx = hx = None
+    gx = hx = None  # XXX hx is either None, or an object
 
     # (capsule) finish handshake and prepare the npyt state
     # XXX not need to create `AliasedNPYT`, since we live in a capsule!
@@ -60,9 +61,11 @@ def capsule(step, update, length):
     append = id if length < 1 else fragment.append  # `id` serves as a dummy
 
     # (sys) perpetual rollout
+    nfo_ = {}  # XXX the true initial info dict is empty
     while True:  # .learn()
         # (sys) clone for diff-ability, because `pyt` is updated in-place
         input = suply(torch.clone, pyt)
+        nfo = nfo_
 
         # REACT x_t, a_{t-1}, h_t -->> a_t, y_t, h_{t+1} with `a_t \sim \pi_t`
         #  XXX if the runtime state is irrelevant to `step`, then it returns
@@ -72,20 +75,25 @@ def capsule(step, update, length):
         # (sys) update the action in `npy` through `pyt`
         suply(torch.Tensor.copy_, pyt.act, act_)
 
-        # STEP \omega_t, a_t -->> \omega_{t+1}, x_{t+1}, r_{t+1}, d_{t+1}
-        #      with \omega_t being the unobservable complete state
+        # STEP
+        #   \omega_t, a_t -->> \omega_{t+1}, x_{t+1}, r_{t+1}, d_{t+1}, I_{t+1}
+        #   with \omega_t being the unobservable complete state
         obs_, rew_, fin_, nfo_ = yield npy.act
         # XXX adding a skip logic here is dumb: just don't .send anything into
         # this capsule!
 
         # (sys) update the rest of the `npy-pyt` aliased context
-        # XXX we ignore the info dict `nfo_`, but can report it in fragment!
         suply(np.copyto, npy.obs, obs_)
         suply(np.copyto, npy.rew, rew_)  # XXX allow structured rewards
         np.copyto(npy.fin, fin_)  # XXX must be a boolean scalar/vector
 
+        # (sys) we deepcopy the info dict `nfo_`, but report on the NEXT step
+        # XXX we ASSUME `nfo_` $I_{t+1}$ is a dict, but do not test it
+        nfo_ = deepcopy(nfo_)  # XXX deepcopy in case `nfo` reuses its buffers
+
         # (sys) collect a fragment of time `t` afterstates t=0..N-1
-        append((input, output))
+        # XXX `input` and `nfo` are SIMULTANEOUS, unlike `engine.step`!
+        append(((input, output), nfo or nfo_))
         if len(fragment) < length:
             continue
 
@@ -93,15 +101,18 @@ def capsule(step, update, length):
         # DO NOT yield action to the caller, nor update `npy-pyt`, nor `hx`!
         input = suply(torch.clone, pyt)
         _, output, _ = step(input, hx=hx)
-        append((input, output))
+        append(((input, output), nfo_))
 
         # (sys) repack data ((x_t, a_{t-1}, r_t, d_t), y_t), t=0..N
         # XXX note, `.act[t]` is $a_{t-1}$, but the other `*[t]` are $*_t$,
         #  e.g. `.rew[t]` is $r_t$, and `output[t]` is `$y_t$
-        input, output = plyr.apply(torch.cat, *fragment, _star=False)
+        # XXX `nfo` is the auxiliary data associated with each step in input
+        # is not collated, since the info dict is entirely env-dependent.
+        chunk, nfo = zip(*fragment)
+        input, output = plyr.apply(torch.cat, *chunk, _star=False)  # dim=0
         fragment.clear()
 
         # (sys) do an update on the collected fragment and get the revised
         # recurrent runtime state for the next fragment
-        _, gx = update(input, output, gx=gx, hx=hx)
+        _, gx = update(input, output, gx=gx, hx=hx, nfo=nfo)
         hx = gx = hx if gx is None else gx  # if None, set gx to hx

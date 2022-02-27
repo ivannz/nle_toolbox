@@ -5,6 +5,7 @@ import numpy as np
 
 from torch.nn import functional as F
 
+from copy import deepcopy
 from collections import namedtuple
 
 import gym
@@ -57,6 +58,9 @@ class SerialVecEnv(gym.Env):
             result.append((obs, rew, fin, nfo))
 
         obs_, rew_, fin_, nfo_ = zip(*result)
+        # MAYBE the info dict `nfo` should NOT be repacked (unlike other data),
+        #  since it may contain dynamic auxiliary diagnostic information it is
+        #  up to env's implementation.
         nfo = plyr.apply(plyr.AtomicTuple, *nfo_, _star=False)
         obs = plyr.apply(np.stack, *obs_, _star=False, axis=0)
         return obs, np.array(rew_), np.array(fin_), nfo
@@ -120,12 +124,13 @@ def step(env, agent, npyt, hx):
     $v_t$ and policy $\pi_t$), and $h_{t+1}$ is its new runtime state, and then
     performs the env's __ENV__ step
     $$
-        \omega_t, a_t -->> \omega_{t+1}, x_{t+1}, r_{t+1}, d_{t+1}
+        \omega_t, a_t -->> \omega_{t+1}, x_{t+1}, r_{t+1}, d_{t+1}, I_{t+1}
         \,, $$
 
     where $\omega_{t+1}$ is the updated _true unobserved_ state of the env,
     $d_{t+1}$ is the termination flag, $r_{t+1}$ is the reward due to the just
-    made transition, and $x_{t+1}$ is the newly emitted observation.
+    made transition, and $x_{t+1}$ is the newly emitted observation. $I_{t+1}$
+    is the info dict, which contains auxiliary data associated with the step.
 
     Returns the $t$-th step afterstate
     $$
@@ -156,6 +161,9 @@ def step(env, agent, npyt, hx):
       * `out` the state-value estimate $v_t$ and policy $\pi_t$
       * `hx` $h_{t+1}$ is the agent's runtime state
 
+    The only data that is in the FUTURE relative to everything else
+    is the info dict `nfo_` $I_{t+1}$, returned by the `.step`.
+
     Note
     ----
     This is not supposed to be used in multiprocessing.
@@ -182,9 +190,9 @@ def step(env, agent, npyt, hx):
     plyr.apply(np.copyto, npy.obs, obs_)
     plyr.apply(np.copyto, npy.rew, rew_)  # XXX allow structured rewards
     np.copyto(npy.fin, fin_)  # XXX must be a boolean scalar/vector
-    # XXX the info dict `nfo_` can be returned, but we IGNORE it
 
-    return (input, out), hx
+    # Make adeep copy of the info dict `nfo_` before returning it
+    return (input, out), hx, deepcopy(nfo_)  # ATTN `nfo` is AFTER `input`
 
 
 def pyt_logpact(logpol, act):

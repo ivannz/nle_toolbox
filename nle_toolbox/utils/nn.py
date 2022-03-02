@@ -445,6 +445,113 @@ def masked_rnn(core, input, hx=None, *, reset=None, h0=None):
     return torch.cat(outputs, dim=0), hx
 
 
+def latched_masked_rnn(
+    core,
+    input,
+    hx=None,
+    yx=None,
+    *,
+    reset=None,
+    h0=None,
+    latch=None,
+):
+    # resort to the masked rnn implementation if latch is omitted
+    if latch is None or not latch.any():
+        return masked_rnn(core, input, hx, reset=reset, h0=h0)
+
+    # Although there is no need to reset the recurrent states, we still have to
+    # latch them and the outputs. For this it is simpler to piggy back off the
+    # existing loop rather than implement a separate one.
+    if reset is None:
+        reset = torch.zeros_like(latch)
+
+    # check the leading dims (seq x batch)
+    if not (latch.shape == reset.shape == input.shape[:2]):
+        raise ValueError('Dim mismatch in `reset`, `latch` and `input`.')
+
+    # make sure the masks are numeric 0-1 for lerp-ing
+    reset = reset.to(input)
+
+    # prepare `hx`: if `hx` isn't None, then ensure correct `h0`, otherwise
+    # broadcast `h0` along its unit batch dim, PROVIDED it is not omitted.
+    n_seq, n_batch = input.shape[:2]
+    if hx is not None:
+        if h0 is None:
+            h0 = plyr.suply(lambda t: t.new_zeros(()), hx)
+        hx_ = plyr.apply(trailing_lerp, hx, h0, eta=reset[0])
+
+    elif h0 is not None:
+        hx_ = plyr.tuply(torch.cat, *(h0,) * n_batch, dim=1)
+
+    else:
+        # if we can not meaningfully init `hx_`, since both `hx`
+        #  and `h0` are None, then delegate this to the core.
+        hx_ = None
+
+    # compute one step of the core to check the recurrent state
+    # XXX at this point `h0` and `hx_` are either both None or both not None
+    yx_, hx_ = out_ = core(input[:1], hx=hx_)
+    if hx_ is None and (hx is not None or h0 is not None):
+        raise RuntimeError('`hx` and `h0` must NOT be specified '
+                           ' if the `core` is non-recurrent.')
+    #    hx         h0      =>       hx_         h0     hx
+    #     None       None   =>   None           None   None
+    #     None   not None   =>   (h0,) * B       --    None
+    # not None       None   =>   lerp(hx, 0)    zero    --
+    # not None   not None   =>   lerp(hx, h0)    --     --
+
+    # the past output was omitted, init it to zeros
+    if yx is None:
+        yx = plyr.suply(lambda t: t.new_zeros(()), yx_)
+
+    # the core is non-recurrent and the reset signal is irrelevant
+    latch = latch.to(input)
+    if hx_ is None:
+        # fast branch for one-element sequences
+        yx = plyr.apply(trailing_lerp, yx_, yx, eta=latch[0])
+        if n_seq == 1:
+            return yx, None
+
+        # we compute all outputs at once and latch them in post processing
+        outputs = [yx]
+        remaining, _ = core(input[1:], hx=None)
+        for yx_, s in zip(remaining.unsqueeze(1), latch[1:]):
+            yx = plyr.apply(trailing_lerp, yx_, yx, eta=s)
+            outputs.append(yx)
+
+        return torch.cat(outputs, dim=0), None
+
+    # either latch to the original hx or the default h0, initted to zero from
+    # the meaningful `hx` yielded by the first core step
+    if h0 is None:  # fires only when `hx` was omitted
+        h0 = plyr.suply(lambda t: t.new_zeros(()), hx_)
+    hx = h0 if hx is None else hx
+
+    # if the original hx was omitted, then latch on to the inital h0 instead
+    yx, hx = out = plyr.apply(trailing_lerp, out_, (yx, hx), eta=latch[0])
+    # XXX use explicit `yx` and `hx`, but also refer to them via `out`
+    if n_seq == 1:
+        return out  # fast branch for one-element sequences
+
+    # `yx` latched output, `hx` current recurrent state (`h0` default)
+    outputs = [yx]
+    for x, s, r in zip(input.unsqueeze(1)[1:], latch[1:], reset[1:]):
+        # pre-reset the recurrent state `hx` to `h0` if instructed to by
+        #  `reset` and compute the output and the recurrent state update
+        #     $\hat{h}_t = (1 - r_t) \odot h_t + r_t \odot h_0$
+        #     $\hat{y}_t, \hat{h}_{t+1} = g(x_t, \hat{h}_t)$
+        out_ = core(x, hx=plyr.apply(trailing_lerp, hx, h0, eta=r))
+
+        # latch the output `yx` and the recurrent state `hx`
+        #     $h_{t+1} = (1 - s_t) \odot \hat{h}_{t+1} + s_t \odot h_t$
+        #     $y_t = (1 - s_t) \odot \hat{y}_t + s_t \odot y_{t-1}$
+        yx, hx = out = plyr.apply(trailing_lerp, out_, out, eta=s)
+        outputs.append(yx)  # accumulate the output seq
+        # XXX r_t -- "reset recurrent" flag, s_t - 'latch output' flag
+
+    return torch.cat(outputs, dim=0), hx
+
+
 @torch.no_grad()
 def rnn_reset_bias(mod):
     """Open certain rnn gates by positively biasing them.

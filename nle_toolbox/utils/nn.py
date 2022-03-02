@@ -392,36 +392,45 @@ def masked_rnn(core, input, hx=None, *, reset=None, h0=None):
     if reset.shape != input.shape[:2]:
         raise ValueError(f'Dim mismatch {reset.shape} != {input.shape[:2]}')
 
-    # make sure the reset mask is numeric for lerp-ing
+    # make sure the reset mask is numeric 0-1 for lerp-ing
     reset = reset.to(input)
     if hx is not None:
-        # create `h0` as broadcastible scalar zeros from the existing `hx`
+        # create `h0` as broadcastible scalar zeros from the given `hx`
         if h0 is None:
             h0 = plyr.suply(lambda t: t.new_zeros(()), hx)
 
-        # XXX `hx` could have unit batch, since .lerp broadcasts across eta
+        # XXX `hx` could have unit batch, since .lerp broadcasts across `eta`
         hx = plyr.apply(trailing_lerp, hx, h0, eta=reset[0])
 
-    elif h0 is not None:  # hx is None!
+    elif h0 is not None:  # `hx` is None!
         # we can safely ignore the first reset, since here `hx` should be `h0`
         hx = plyr.tuply(torch.cat, *(h0,) * n_batch, dim=1)
+    # XXX at this point `h0` and `hx` are either both None or both not None.
 
-    # fast branch for one-element sequences, regardless of the returned `hx`
-    first, hx = core(input[:1], hx=hx)
+    # make one step thru the core in order to get the correct recurrent state
+    # if `hx` is None on input, then the core must either init it properly, or
+    # return None. However, switching from non None to None is forbidden.
+    first, hx_ = core(input[:1], hx=hx)
+    if hx_ is None and hx is not None:
+        raise RuntimeError('`hx` and `h0` must NOT be specified '
+                           ' if the `core` is non-recurrent.')
+
+    # fast branch for one-element sequences
     if n_seq == 1:
-        return first, hx
+        return first, hx_
 
-    # fall back to non-resetting logic, if the first step returns `hx = None`
-    if hx is None:
+    # fall back to non-resetting logic, if the first step returns `hx=None`
+    if hx_ is None:
         # step through all the remaining input seq elements all at once,
         # since there is no recurrent state to maintain and reset.
-        remaining, hx = core(input[1:], hx=hx)
-        return torch.cat((first, remaining), dim=0), hx
+        remaining, _ = core(input[1:], hx=None)
+        return torch.cat((first, remaining), dim=0), None
 
-    # the first core step yielded a meaningful `hx`, so if `h0` is None, then
-    # init it to zeros
-    if h0 is None:
-        h0 = plyr.suply(lambda t: t.new_zeros(()), hx)
+    # the first core step yielded a meaningful non None `hx`, but the original
+    #  `hx` was None, so init `h0` to zeros (default), if it was omitted.
+    if h0 is None and hx is None:
+        h0 = plyr.suply(lambda t: t.new_zeros(()), hx_)
+    hx = hx_
 
     # loop along `n_seq` dim in slices with fake T=1, diffably resetting
     # `hx` to `h0' when `reset` tells us to by lerp-ing.

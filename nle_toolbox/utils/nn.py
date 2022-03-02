@@ -374,19 +374,18 @@ def masked_rnn(core, input, hx=None, *, reset=None, h0=None):
     # `hx` is `? x B x ...`, and `h0` is `? x 1 x ...`
     n_seq, n_batch = input.shape[:2]
 
-    # Use the initial runtime state `h0`, repeated along the batch dim, if `hx`
-    # hasn't been supplied, since the `hx` passed to `core()` must have correct
-    # batch dims.
-    if h0 is not None and hx is None:
-        # `h0 <<-- torch.cat([h0, h0, ..., h0], dim=1)`
-        # XXX we'd better check if the batch dim of h0 is unit...
-        hx = plyr.tuply(torch.cat, *(h0,) * n_batch, dim=1)
-        # XXX We do not use `.tile` or `.repeat`, because they require their
-        # replication specs to be broadcastible from the trailing dims, thereby
-        # constraining dimensionality of `hx` and `h0`.
-
     # ignore absent or all-false reset masks
     if reset is None or not reset.any() or n_seq < 1:
+        # Use the initial runtime state `h0`, repeated along the batch dim, if
+        # `hx` hasn't been supplied, since the `hx` passed to `core()` must
+        # have correct batch dims.
+        if h0 is not None and hx is None:
+            # `h0 <<-- torch.cat([h0, h0, ..., h0], dim=1)`
+            # XXX we'd better check if the batch dim of h0 is unit...
+            hx = plyr.tuply(torch.cat, *(h0,) * n_batch, dim=1)
+            # XXX We do not use `.tile` or `.repeat`, because they require
+            # their replication specs to be broadcastible from the trailing
+            # dims, thereby constraining dimensionality of `hx` and `h0`.
         return core(input, hx=hx)
 
     # check the leading dims (seq x batch)
@@ -399,10 +398,16 @@ def masked_rnn(core, input, hx=None, *, reset=None, h0=None):
         # create `h0` as broadcastible scalar zeros from the existing `hx`
         if h0 is None:
             h0 = plyr.suply(lambda t: t.new_zeros(()), hx)
+
+        # XXX `hx` could have unit batch, since .lerp broadcasts across eta
         hx = plyr.apply(trailing_lerp, hx, h0, eta=reset[0])
 
+    elif h0 is not None:  # hx is None!
+        # we can safely ignore the first reset, since here `hx` should be `h0`
+        hx = plyr.tuply(torch.cat, *(h0,) * n_batch, dim=1)
+
     # fast branch for one-element sequences, regardless of the returned `hx`
-    first, hx = core(input[:1], hx)
+    first, hx = core(input[:1], hx=hx)
     if n_seq == 1:
         return first, hx
 
@@ -413,6 +418,8 @@ def masked_rnn(core, input, hx=None, *, reset=None, h0=None):
         remaining, hx = core(input[1:], hx=hx)
         return torch.cat((first, remaining), dim=0), hx
 
+    # the first core step yielded a meaningful `hx`, so if `h0` is None, then
+    # init it to zeros
     if h0 is None:
         h0 = plyr.suply(lambda t: t.new_zeros(()), hx)
 

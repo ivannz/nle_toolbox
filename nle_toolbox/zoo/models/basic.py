@@ -7,19 +7,15 @@ from torch.nn import functional as F
 from collections import OrderedDict, namedtuple
 
 from torch import Tensor
-from typing import Dict, Optional, Any
+from typing import Optional, Any
 
 from einops import rearrange
 from einops.layers.torch import Rearrange
 
 from .. import blstats
 from ..glyph import GlyphEmbedding, EgoCentricEmbedding
-
-from ...utils.nn import LinearSplitter, ModuleDict
-from ...utils.nn import ParameterContainer
-
-from ...utils.nn import masked_rnn, rnn_hx_shape
-from ...utils.nn import masked_multinomial
+from ...utils.nn import LinearSplitter, ModuleDict, ParameterContainer
+from ...utils.nn import masked_rnn, rnn_hx_shape, masked_multinomial
 
 
 ValPolPair = namedtuple('ValPolPair', 'val,pol')
@@ -278,7 +274,7 @@ class NLENeuralAgent(nn.Module):
             'hunger',
             'condition',
         ),
-    ) -> Dict:
+    ) -> dict:
         # compile the recipe
         recipe = {}
 

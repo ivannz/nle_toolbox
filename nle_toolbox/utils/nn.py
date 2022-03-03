@@ -719,8 +719,24 @@ def multinomial(
     return out.squeeze(dim) if squeeze else out
 
 
+def masked_multinomial(raw, mask, dim=-1):
+    """Draw a variate from the categorical rv, specified by the unnormalized
+    logits `raw` at the indicated `dim`, optionally masked by `mask` boolean
+    array of the same shape as `raw`.
+    """
+    raw = raw.detach()
+
+    # '-inf' masking should be applied to the unnormalized logits
+    if mask is not None:
+        raw = raw.masked_fill(mask, -float('inf'))
+
+    # sample from the masked distribution
+    return multinomial(raw.softmax(dim=dim), 1, dim).squeeze(dim)
+
+
 class ParameterContainer(Module):
-    """Module-compatible nested container of parameters.
+    """Module-compatible nested container of parameters, which keeps references
+    to the leaf parameters.
 
     Details
     -------
@@ -729,6 +745,18 @@ class ParameterContainer(Module):
     parameters directly in `._parameters` odict of `nn.Module`, which they are
     subclasses. However, they do not provide full support for nested containers
     of parameters.
+
+    Example
+    -------
+    >>> import troch, plyr
+    >>> from collections import namedtuple
+    >>> NT = namedtuple('NT', 'u,v')
+    >>> sz = torch.Size((7, 3, 5))
+    >>> struct = (sz, sz, {'a': sz, 'z': NT(sz, sz)},)
+    >>> h0 = plyr.apply(nn.Parameter, plyr.apply(torch.randn, struct))
+    >>> pc = ParameterContainer(h0)
+    >>> pc.half();
+    >>> pc._value()
     """
     def __new__(cls, parameters):
         # regress to nn.Parameter if non-container

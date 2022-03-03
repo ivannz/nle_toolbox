@@ -26,6 +26,7 @@ if __name__ == '__main__':
             'nle_toolbox.bot',
             'nle_toolbox.bot.model',
             'nle_toolbox.zoo',
+            'nle_toolbox.zoo.models',
             'nle_toolbox.zoo.transformer',
         ],
     )

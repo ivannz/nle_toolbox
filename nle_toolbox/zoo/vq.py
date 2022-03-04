@@ -1,10 +1,9 @@
 import math
+from warnings import warn
 
 from collections import defaultdict, namedtuple
 
-from typing import Iterator
 import torch
-
 from torch import nn
 from torch.nn import functional as F
 
@@ -107,6 +106,8 @@ class VQEmbedding(nn.Embedding):
     assigned to (the commitment loss).
 
     (REWRTE THIS, focusing on the connection of K-means with GMM using EM algo)
+    this is one step of the K-mean EM, with M being regularized by the distance
+    from the previous improper GMM mixture.
     """
     def __init__(
         self,
@@ -132,10 +133,17 @@ class VQEmbedding(nn.Embedding):
         self.register_buffer('ema_vecs', None)
         self.register_buffer('ema_size', None)
         if self.alpha <= 0:
+            if update is not None:
+                warn(
+                    f"`update` = '{update}' has no "
+                    "effect in NON moving average mode.",
+                    RuntimeWarning,
+                )
+
             return
 
         if not (0 < self.alpha <= 1):
-            raise ValueError(f"`alpha` must be in [0, 1]. Got `{self.alpha}`.")
+            raise ValueError(f"`alpha` must be in (0, 1]. Got `{self.alpha}`.")
 
         if update not in ('forward', 'backward'):
             raise ValueError(
@@ -157,13 +165,6 @@ class VQEmbedding(nn.Embedding):
         self.register_buffer(
             'ema_size', torch.zeros_like(self.ema_vecs[:, 0]),
         )
-
-        # accumulate stats for EMA embedding updates after each forward pass
-        def _accumulate(module, inputs, output):
-            if module.training:
-                module.accumulate(*inputs, output.indices)
-
-        self.register_forward_hook(_accumulate)
 
         # update embeddings only in training mode on the specified pass
         def _update(module, *ignore):
@@ -211,7 +212,7 @@ class VQEmbedding(nn.Embedding):
             return
 
         # Apply \epsilon-Laplace correction
-        n = self.ema_size.sum()
+        n = float(self.ema_size.sum())
         coef = n / (n + self.num_embeddings * self.eps)
         size = coef * (self.ema_size + self.eps).unsqueeze(1)
         self.weight.data.copy_(self.ema_vecs / size)
@@ -223,8 +224,8 @@ class VQEmbedding(nn.Embedding):
         emb = self.weight
         # k(z) = \arg \min_k \|E_k - z\|^2
         #      = \arg \min_k \|E_k\|^2 - 2 E_k^\top z + \|z\|^2
-        # XXX no need to compute the norm fully since we do not
-        #  backprop through the input when clustering.
+        # XXX no need to compute the norm fully since we cannot backprop
+        #  through the cluster affinities.
 
         sqr = (emb * emb).sum(dim=1)
         cov = torch.einsum('...j, kj -> ...k', input, emb)
@@ -256,8 +257,13 @@ class VQEmbedding(nn.Embedding):
         See details in the class docstring.
         """
 
-        # lookup the index of the nearest embedding and fetch it
-        indices = self.lookup(input)
+        # lookup the index of the nearest embedding and accumulate stats
+        #  for moving average embedding updates on forward pass
+        indices = self.lookup(input)  # E-step
+        if self.training and self.alpha > 0:
+            self.accumulate(input, indices)  # M-step
+
+        # fetch the embedding vectors (cluster centroids)
         vectors = self.fetch(indices)
 
         # use the straight-through grad estimator: copy grad from q(x) to z(x)
@@ -269,6 +275,7 @@ class VQEmbedding(nn.Embedding):
         self,
         input: torch.Tensor,
         output: VQEOutput,
+        *,
         reduction: str = 'sum',
     ) -> tuple[torch.Tensor]:
         """Compute the commitment and embedding losses and the coding entropy.
@@ -282,11 +289,11 @@ class VQEmbedding(nn.Embedding):
         # where z(x) is output of the encoder network (`input` variable)
         #       q(x) = e_{k(x)}, for k(x) = \arg\min_k \|z(x) - e_k\|^2
         # XXX `the embeddings receive no grad feedback from the reconstruction`
-        # XXX `embedding` loss is non-diffable if we use ewm updates
         embedding = F.mse_loss(
             output.vectors, input.detach(),
             reduction=reduction,
         )
+        # XXX `embedding` loss is non-diffable if we use EMA updates
 
         # XXX p.4 `To make sure the encoder commits to an embedding and its
         #          output does not grow, since the volume of the embedding
@@ -296,22 +303,11 @@ class VQEmbedding(nn.Embedding):
             input, output.vectors.detach(),
             reduction=reduction,
         )
+        # XXX this reduces the bias of the straight-through grad estimator
 
         # compute the binary entropy of the produced codes
         ent = entropy(output.indices, self.num_embeddings)
         return VQELoss(embedding, commitment, ent)
-
-
-def named_vq_modules(
-    module: nn.Module,
-    prefix: str = '',
-) -> Iterator[tuple[str, nn.Module]]:
-    """
-    """
-
-    for nom, mod in module.named_modules(prefix=prefix):
-        if isinstance(mod, VQEmbedding):
-            yield nom, mod
 
 
 class VQEmbeddingHelper:
@@ -321,8 +317,11 @@ class VQEmbeddingHelper:
     def __init__(
         self,
         module: nn.Module,
+        *,
         reduction: str = 'sum',
     ) -> None:
+        assert reduction in ('mean', 'sum', 'none')
+
         self.hooks, self.names = {}, {}
         self.register(module)
 
@@ -336,10 +335,12 @@ class VQEmbeddingHelper:
         """Attach output hooks to every VQ-vae layer in the module.
         """
         for nom, mod in module.named_modules():
-            if isinstance(mod, VQEmbedding):
-                if mod not in self.hooks:
-                    self.names[mod] = nom
-                    self.hooks[mod] = mod.register_forward_hook(self._output_hook)
+            if not isinstance(mod, VQEmbedding):
+                continue
+
+            if mod not in self.hooks:
+                self.names[mod] = nom
+                self.hooks[mod] = mod.register_forward_hook(self._output_hook)
 
     def remove(self) -> None:
         self.clear()
@@ -359,13 +360,25 @@ class VQEmbeddingHelper:
             return output
 
         self.collected[module].append(
-            module.loss(*inputs, output, self.reduction)
+            module.loss(*inputs, output, reduction=self.reduction)
         )
 
         return output.values
 
     def __iter__(self) -> None:
-        yield from self.collected.items()
+        if self.reduction == 'sum':
+            fn = sum
+
+        elif self.reduction == 'mean':
+            fn = lambda x: sum(x) / len(x)
+
+        elif self.reduction == 'none':
+            fn = list
+
+        for mod, dat in self.collected.items():
+            emb, com, ent = zip(*dat)
+            yield self.names[mod], (fn(emb), fn(com), sum(ent) / len(dat))
+
         self.clear()
 
 
@@ -408,6 +421,7 @@ class VQSendRecv(nn.Module):
 
         # `vq: R^F -> R^F` quantizes (k-means) and reembeds w. centroids
         out = self.vq(z, reduction)
+        assert isinstance(out, VQEOutput)
 
         # `recv: R^{M F} -> X`
         x = self.recv(out.values)

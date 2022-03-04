@@ -1,6 +1,6 @@
 import math
 
-from typing import Tuple
+from typing import Iterator
 import torch
 
 from torch import nn
@@ -104,6 +104,8 @@ class VQEmbedding(nn.Embedding):
         embedding_dim: int,
         alpha: float = 0.,
         eps: float = 1e-5,
+        *,
+        auto: bool = True,
     ) -> None:
         super().__init__(
             num_embeddings,
@@ -114,7 +116,7 @@ class VQEmbedding(nn.Embedding):
             sparse=False,
         )
 
-        self.alpha, self.eps = alpha, eps
+        self.alpha, self.eps, self.auto = alpha, eps, auto
 
         # if `alpha` is zero then `.weight` is updated by other means
         self.register_buffer('ema_vecs', None)
@@ -138,7 +140,7 @@ class VQEmbedding(nn.Embedding):
         )
 
     @torch.no_grad()
-    def update(
+    def accumulate(
         self,
         input: torch.Tensor,
         indices: torch.Tensor,
@@ -160,6 +162,14 @@ class VQEmbedding(nn.Embedding):
         # XXX torch.lerp(a, b, w) = a.lerp(b, w) = (1 - w) * a + w * b
         self.ema_vecs.lerp_(upd_vecs, self.alpha)
         self.ema_size.lerp_(upd_size, self.alpha)
+
+    @torch.no_grad()
+    def update(self) -> None:
+        """Update the embedding vectors from the accumulated EMA stats.
+        """
+        # do not update is EMA is disabled (all `ema_*` buffers are None)
+        if self.alpha <= 0:
+            return
 
         # Apply \epsilon-Laplace correction
         n = self.ema_size.sum()
@@ -202,7 +212,7 @@ class VQEmbedding(nn.Embedding):
         self,
         input: torch.Tensor,
         reduction: str = 'sum',
-    ) -> Tuple[torch.Tensor]:
+    ) -> tuple[torch.Tensor]:
         """vq-VAE clustering with straight-through estimator and commitment
         losses.
 
@@ -235,14 +245,40 @@ class VQEmbedding(nn.Embedding):
         # the straight-through grad estimator: copy grad from q(x) to z(x)
         output = input + (vectors - input).detach()
 
-        # update the weights only if we are in training mode
-        if self.training and self.alpha > 0:
-            self.update(input, indices)
+        # accumulate the clusterting stats with the exponential moving average
+        #  regardless of the mode we're in, but update only in training mode
+        if self.alpha > 0:
+            self.accumulate(input, indices)
+
+            # update the weights only in training mode when auto-update is on
             # XXX `embedding` loss is non-diffable if we use ewm updates
+            if self.training and self.auto:
+                self.update()
 
         # compute the binary entropy
         ent = entropy(indices, self.num_embeddings)
         return output, indices, embedding, commitment, ent
+
+
+def named_vq_modules(
+    module: nn.Module,
+    prefix: str = '',
+) -> Iterator[tuple[str, nn.Module]]:
+    """Yield all VQ-vae layers in the module.
+    """
+
+    for nom, mod in module.named_modules(prefix=prefix):
+        if isinstance(mod, VQEmbedding):
+            yield nom, mod
+
+
+def update_vq_modules(module: nn.Module) -> None:
+    """Call `.update` on every child VQ layer in the module, regardless of
+    their `.training` mode or `.auto` setting.
+    """
+
+    for _, mod in named_vq_modules(module):
+        mod.update()
 
 
 class VQSendRecv(nn.Module):
@@ -261,6 +297,8 @@ class VQSendRecv(nn.Module):
         num_embeddings: int,
         embedding_dim: int,
         alpha: float = 0.01,
+        *,
+        auto: bool = True
     ) -> None:
         super().__init__()
         self.send = send
@@ -269,13 +307,14 @@ class VQSendRecv(nn.Module):
             num_embeddings,
             embedding_dim,
             alpha=alpha,
+            auto=auto,
         )
 
     def forward(
         self,
         input: torch.Tensor,
         reduction: str = 'sum',
-    ) -> Tuple[torch.Tensor]:
+    ) -> tuple[torch.Tensor]:
         # `send: X -> R^{M F}` transforms [... C] -->> [... M F]`
         z = self.send(input)
 

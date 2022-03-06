@@ -313,7 +313,7 @@ class NLENeuralAgent(nn.Module):
 
         # add the core to the recipe (See `nn.LSTM` or `NonRNNCore`)
         recipe['core'] = {
-            'cls': 'lstm',
+            'cls': core,
             'input_size':  n_core_input_size,
             'hidden_size': hidden_size,
             'num_layers': num_layers,

@@ -84,7 +84,7 @@ rx_is_prompt = re.compile(
             # This is why we prioritize this rx over the next one
             .*-$
         |
-            # y/n, direction, object an monster naming, and other prompts,
+            # y/n, direction, object and monster naming, and other prompts,
             # always contain a question mark, e.g.
             #  [do_oname()](./nle/src/do_name.c#L1200-1280) for objects,
             #  [do_mname()](./nle/src/do_name.c#L1118-1196) for monster,
@@ -608,10 +608,12 @@ class Chassis(InteractiveWrapper):
         self.in_menu = False
         self.fetch_misc_flags(obs)
 
-        # bypass the gui logic if the SPACE action is unavailable
-        if self.space is None:
-            self.prompt, self.messages, self.menu = {}, (), None
-            return obs, rew, done, info
+        # game over screens in Nethack expect SPACE, but since they are
+        # terminal, whether or not SPACE is bound is irrelevant.
+        if self.xwaitingforspace and not done and self.space is None:
+            raise RuntimeError(
+                "NLE is waiting for SPACE, but this action is not bound.",
+            )
 
         # quit immediately, if we've got an interactible page or we've left
         #  the modal window input capturing section in `win/tty`.

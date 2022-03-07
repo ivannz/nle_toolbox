@@ -424,7 +424,7 @@ def masked_rnn(core, input, hx=None, *, reset=None, h0=None):
         # step through all the remaining input seq elements all at once,
         # since there is no recurrent state to maintain and reset.
         remaining, _ = core(input[1:], hx=None)
-        return torch.cat((first, remaining), dim=0), None
+        return plyr.tuply(torch.cat, first, remaining, dim=0), None
 
     # the first core step yielded a meaningful non None `hx`, but the original
     #  `hx` was None, so init `h0` to zeros (default), if it was omitted.
@@ -442,7 +442,7 @@ def masked_rnn(core, input, hx=None, *, reset=None, h0=None):
         out, hx = core(x, hx=plyr.apply(trailing_lerp, hx, h0, eta=f))
         outputs.append(out)
 
-    return torch.cat(outputs, dim=0), hx
+    return plyr.tuply(torch.cat, *outputs, dim=0), hx
 
 
 def latched_masked_rnn(
@@ -519,7 +519,7 @@ def latched_masked_rnn(
             yx = plyr.apply(trailing_lerp, yx_, yx, eta=s)
             outputs.append(yx)
 
-        return torch.cat(outputs, dim=0), None
+        return plyr.tuply(torch.cat, *outputs, dim=0), None
 
     # either latch to the original hx or the default h0, initted to zero from
     # the meaningful `hx` yielded by the first core step
@@ -549,7 +549,7 @@ def latched_masked_rnn(
         outputs.append(yx)  # accumulate the output seq
         # XXX r_t -- "reset recurrent" flag, s_t - 'latch output' flag
 
-    return torch.cat(outputs, dim=0), hx
+    return plyr.tuply(torch.cat, *outputs, dim=0), hx
 
 
 @torch.no_grad()

@@ -21,7 +21,7 @@ def launch(capsule, initial):
     return capsule.send(initial)
 
 
-def capsule(step, update, length):
+def capsule(step, update, length, *, device=None):
     """T-BPTT trajectory collector for capsuled RL. See docs `.engine.step`.
 
     Parameters
@@ -56,6 +56,10 @@ def capsule(step, update, length):
     pyt = suply(torch.as_tensor, npy)  # XXX `pyt` aliases `npy` (array proto.)
     suply(torch.Tensor.unsqueeze_, pyt, dim=0)  # fake seq dim
 
+    # (capsule) the tensor cloning func, since host-device moves produce a copy
+    device = torch.device('cpu') if device is None else device
+    cloner = torch.clone if device.type == 'cpu' else lambda t: t.to(device)
+
     # (sys) collect trajectory in fragments, when instructed to
     fragment = []
     append = id if length < 1 else fragment.append  # `id` serves as a dummy
@@ -64,7 +68,7 @@ def capsule(step, update, length):
     nfo_ = {}  # XXX the true initial info dict is empty
     while True:  # .learn()
         # (sys) clone for diff-ability, because `pyt` is updated in-place
-        input = suply(torch.clone, pyt)
+        input = suply(cloner, pyt)
         nfo = nfo_
 
         # REACT x_t, a_{t-1}, h_t -->> a_t, y_t, h_{t+1} with `a_t \sim \pi_t`
@@ -99,7 +103,7 @@ def capsule(step, update, length):
 
         # (sys) one-step look-ahead $y_N$, e.g. value-to-go bootstrap.
         # DO NOT yield action to the caller, nor update `npy-pyt`, nor `hx`!
-        input = suply(torch.clone, pyt)
+        input = suply(cloner, pyt)
         _, output, _ = step(input, hx=hx)
         append(((input, output), nfo_))
 

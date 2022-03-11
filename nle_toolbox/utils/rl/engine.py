@@ -107,7 +107,7 @@ def prepare(env, rew=np.nan, fin=True):
     return AliasedNPYT(npy, pyt)
 
 
-def step(env, agent, npyt, hx):
+def step(env, agent, npyt, hx, *, device=None):
     r"""Perform the `t` -->> `t+1` env's transition under the agnet's policy.
 
     Details
@@ -172,7 +172,12 @@ def step(env, agent, npyt, hx):
 
     # (sys) clone to avoid graph diff-ability issues, because `pyt` is updated
     #  INPLACE through storage-aliased `npy`
-    input = plyr.apply(torch.clone, pyt)
+    if device is None or device.type == 'cpu':
+        input = plyr.apply(torch.clone, pyt)
+
+    else:
+        # host-device moves produce a copy, since `pyt` is on the HOST!
+        input = plyr.apply(lambda t: t.to(device), pyt)
 
     # (agent) REACT x_t, a_{t-1}, h_t -->> v_t, \pi_t, h_{t+1}
     #  and sample `a_t \sim \pi_t`

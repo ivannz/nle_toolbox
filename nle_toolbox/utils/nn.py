@@ -728,7 +728,7 @@ def masked_multinomial(raw, mask, dim=-1):
 
     # '-inf' masking should be applied to the unnormalized logits
     if mask is not None:
-        raw = raw.masked_fill(mask, -float('inf'))
+        raw = raw.masked_fill(mask.to(bool), -float('inf'))
 
     # sample from the masked distribution
     return multinomial(raw.softmax(dim=dim), 1, dim).squeeze(dim)

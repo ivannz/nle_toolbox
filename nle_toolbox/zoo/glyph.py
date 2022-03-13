@@ -50,7 +50,8 @@ class GlyphEmbedding(nn.Module):
 
 
 class EgoCentricEmbedding(nn.Module):
-    """Ego-centric embedding for vicinities (centered symmetric glpyh views).
+    """Learnable additive embedding to the centre of the ego-centric symmetric
+    glpyh view into the map.
     """
     def __init__(self, embedding_dim):
         super().__init__()

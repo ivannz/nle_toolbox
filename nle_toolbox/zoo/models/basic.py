@@ -115,6 +115,11 @@ class ObsBLStatsEmbedding(nn.ModuleDict):
 
 class ObsEmbedding(nn.Module):
     """The combined ego-centric vicinity - inventory embedding.
+
+    The design of a simple obervation encoder:
+    * additively embed glyphs' entities and groups
+    * employ the `ego` embedding
+    * join with embeddings of 'health', 'hunger' and 'condition' form the botl
     """
     def __new__(cls, embedding_dim: int) -> None:
         vicinity = ObsGlyphVicinityEmbedding(embedding_dim)

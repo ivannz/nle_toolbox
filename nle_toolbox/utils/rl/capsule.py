@@ -150,10 +150,10 @@ def buffered(step, update, length, *, device=None):
 
     # (sys) perpetual rollout
     nfo_ = {}  # XXX the true initial info dict is empty
-    fragment = []
     gx = hx = None  # XXX hx is either None, or an object
     while True:  # .learn()
         with torch.no_grad():
+            fragment = []
             while len(fragment) < length:
                 # (sys) write the current `pyt` into the buffer
                 input = vw_buffer[len(fragment)]
@@ -163,6 +163,7 @@ def buffered(step, update, length, *, device=None):
                 # REACT and update the action in `npy` through `pyt`
                 #   x_t, a_{t-1}, h_t
                 #     -->> a_t, y_t, h_{t+1} with `a_t \sim \pi_t`
+                #   but y_t is ignored
                 act_, _, hx = step(input, hx=hx)
                 suply(torch.Tensor.copy_, pyt.act, act_)
 
@@ -184,7 +185,6 @@ def buffered(step, update, length, *, device=None):
             # (sys) write the last `pyt` into the buffer
             suply(torch.Tensor.copy_, vw_buffer[len(fragment)], pyt)
             nfo = *fragment, nfo_
-            fragment.clear()
 
         # (sys) do an update on the collected fragment and get the revised
         #  recurrent runtime state for the next fragment

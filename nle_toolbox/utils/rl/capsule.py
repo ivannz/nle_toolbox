@@ -1,10 +1,9 @@
-import plyr
-from plyr import suply
-
 import torch
 import numpy as np
 
 from copy import deepcopy
+from plyr import apply, suply
+
 from .engine import Input
 
 
@@ -59,6 +58,7 @@ def capsule(step, update, length, *, device=None):
     # (capsule) the tensor cloning func, since host-device moves produce a copy
     device = torch.device('cpu') if device is None else device
     cloner = torch.clone if device.type == 'cpu' else lambda t: t.to(device)
+    # XXX `.to` is enough here as the npy/pyt buffers are "on host" by design
 
     # (sys) collect trajectory in fragments, when instructed to
     fragment = []
@@ -113,10 +113,80 @@ def capsule(step, update, length, *, device=None):
         # XXX `nfo` is the auxiliary data associated with each step in input
         # is not collated, since the info dict is entirely env-dependent.
         chunk, nfo = zip(*fragment)
-        input, output = plyr.apply(torch.cat, *chunk, _star=False)  # dim=0
+        input, output = apply(torch.cat, *chunk, _star=False)  # dim=0
         fragment.clear()
 
         # (sys) do an update on the collected fragment and get the revised
         # recurrent runtime state for the next fragment
         _, gx = update(input, output, gx=gx, hx=hx, nfo=nfo)
+        hx = gx = hx if gx is None else gx  # if None, set gx to hx
+
+
+def buffered(step, update, length, *, device=None):
+    """Buffered non-diffable trajectory collector for capsuled RL.
+
+    Details
+    -------
+    Unlike `capsule`, this collector does not track the value output of
+    the `step`, ONLY its `act` and `hx` outputs.
+    """
+    assert length >= 1
+    device = torch.device('cpu') if device is None else device
+
+    # (ctx) ensure a numpy array and then make its tensor copy
+    pyt = suply(torch.as_tensor, suply(np.copy, Input(*(yield None))))
+    if device.type != 'cpu':
+        pyt = suply(torch.Tensor.pin_memory, pyt)
+
+    # (ctx) alias torch's storage with numpy arrays, and add a fake leading dim
+    npy = suply(np.asarray, pyt)
+    input = pyt = suply(torch.Tensor.unsqueeze_, pyt, dim=0)
+    if device.type != 'cpu':
+        input = suply(lambda t: t.to(device), pyt)
+
+    # (sys) allocate buffers on the correct device and get one-element slices
+    buffer = apply(torch.cat, *(input,) * (1 + length), _star=False)
+    vw_buffer = [suply(lambda x: x[t:t+1], buffer) for t in range(length + 1)]
+
+    # (sys) perpetual rollout
+    nfo_ = {}  # XXX the true initial info dict is empty
+    fragment = []
+    gx = hx = None  # XXX hx is either None, or an object
+    while True:  # .learn()
+        with torch.no_grad():
+            while len(fragment) < length:
+                # (sys) write the current `pyt` into the buffer
+                input = vw_buffer[len(fragment)]
+                suply(torch.Tensor.copy_, input, pyt)
+                nfo = nfo_
+
+                # REACT and update the action in `npy` through `pyt`
+                #   x_t, a_{t-1}, h_t
+                #     -->> a_t, y_t, h_{t+1} with `a_t \sim \pi_t`
+                act_, _, hx = step(input, hx=hx)
+                suply(torch.Tensor.copy_, pyt.act, act_)
+
+                # STEP
+                #   \omega_t, a_t
+                #      -->> \omega_{t+1}, x_{t+1}, r_{t+1}, d_{t+1}, I_{t+1}
+                #   with \omega_t being the unobservable complete state
+                obs_, rew_, fin_, nfo_ = yield npy.act
+
+                # (sys) update the rest of the `npy-pyt` aliased context
+                suply(np.copyto, npy.obs, obs_)
+                suply(np.copyto, npy.rew, rew_)
+                np.copyto(npy.fin, fin_)
+
+                # (sys) we deepcopy `nfo_`, but report on the NEXT step
+                nfo_ = deepcopy(nfo_)
+                fragment.append(nfo or nfo_)
+
+            # (sys) write the last `pyt` into the buffer
+            suply(torch.Tensor.copy_, vw_buffer[len(fragment)], pyt)
+            nfo = *fragment, nfo_
+            fragment.clear()
+
+        # (sys) do an update on the collected fragment and get the revised
+        #  recurrent runtime state for the next fragment
+        _, gx = update(buffer, None, gx=gx, hx=hx, nfo=nfo)
         hx = gx = hx if gx is None else gx  # if None, set gx to hx

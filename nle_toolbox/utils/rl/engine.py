@@ -15,9 +15,15 @@ from gym.vector.utils import batch_space
 class SerialVecEnv(gym.Env):
     """A simple serial vectorized env.
     """
-
-    def __init__(self, factory, n_envs=1):
-        self.envs = [factory() for _ in range(n_envs)]
+    def __init__(
+        self,
+        factory: callable,
+        n_envs: int = 1,
+        *,
+        args: tuple = (),
+        kwargs: dict = None,
+    ):
+        self.envs = [factory(*args, **(kwargs or {})) for _ in range(n_envs)]
 
         # assume the factory produces consistent envs
         env = self.envs[0]

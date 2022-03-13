@@ -144,47 +144,51 @@ def buffered(step, update, length, *, device=None):
     if device.type != 'cpu':
         input = suply(lambda t: t.to(device), pyt)
 
-    # (sys) allocate buffers on the correct device and get one-element slices
-    buffer = apply(torch.cat, *(input,) * (1 + length), _star=False)
-    vw_buffer = [suply(lambda x: x[t:t+1], buffer) for t in range(length + 1)]
+    # (sys) allocate buffers on the correct device and get its single-step
+    # editable slices. `+ 1` is the one-step ahead overlap
+    buffer = apply(torch.cat, *(input,) * (length + 1), _star=False)
+    vw_buffer = tuple([
+        suply(lambda x: x[t:t+1], buffer) for t in range(length + 1)
+    ])
 
     # (sys) perpetual rollout
-    nfo_ = {}  # XXX the true initial info dict is empty
-    gx = hx = None  # XXX hx is either None, or an object
+    nfos, nfo_ = [], {}  # XXX the true initial info dict is empty
+    gx = hx = None  # XXX `hx` is either None, or an object
     while True:  # .learn()
-        with torch.no_grad():
-            fragment = []
-            while len(fragment) < length:
-                # (sys) write the current `pyt` into the buffer
-                input = vw_buffer[len(fragment)]
-                suply(torch.Tensor.copy_, input, pyt)
-                nfo = nfo_
+        # (sys) write the current `pyt` into the buffer
+        input = vw_buffer[len(nfos)]
+        suply(torch.Tensor.copy_, input, pyt)
+        nfo = nfo_
 
-                # REACT and update the action in `npy` through `pyt`
-                #   x_t, a_{t-1}, h_t
-                #     -->> a_t, y_t, h_{t+1} with `a_t \sim \pi_t`
-                #   but y_t is ignored
-                act_, _, hx = step(input, hx=hx)
-                suply(torch.Tensor.copy_, pyt.act, act_)
+        # REACT and update the action in `npy` through `pyt`
+        #   x_t, a_{t-1}, h_t
+        #     -->> a_t, y_t, h_{t+1} with `a_t \sim \pi_t`
+        #   but y_t is ignored
+        with torch.no_grad():  # XXX `yield` NEVER causes `__exit__`!
+            act_, _, hx = step(input, hx=hx)
+            suply(torch.Tensor.copy_, pyt.act, act_)
 
-                # STEP
-                #   \omega_t, a_t
-                #      -->> \omega_{t+1}, x_{t+1}, r_{t+1}, d_{t+1}, I_{t+1}
-                #   with \omega_t being the unobservable complete state
-                obs_, rew_, fin_, nfo_ = yield npy.act
+        # STEP
+        #   \omega_t, a_t
+        #      -->> \omega_{t+1}, x_{t+1}, r_{t+1}, d_{t+1}, I_{t+1}
+        #   with \omega_t being the unobservable complete state
+        obs_, rew_, fin_, nfo_ = yield npy.act
 
-                # (sys) update the rest of the `npy-pyt` aliased context
-                suply(np.copyto, npy.obs, obs_)
-                suply(np.copyto, npy.rew, rew_)
-                np.copyto(npy.fin, fin_)
+        # (sys) update the rest of the `npy-pyt` aliased context
+        suply(np.copyto, npy.obs, obs_)
+        suply(np.copyto, npy.rew, rew_)
+        np.copyto(npy.fin, fin_)
 
-                # (sys) we deepcopy `nfo_`, but report on the NEXT step
-                nfo_ = deepcopy(nfo_)
-                fragment.append(nfo or nfo_)
+        # (sys) we deepcopy `nfo_`, but report on the NEXT step
+        nfo_ = deepcopy(nfo_)
+        nfos.append(nfo or nfo_)
+        if len(nfos) < length:
+            continue
 
-            # (sys) write the last `pyt` into the buffer
-            suply(torch.Tensor.copy_, vw_buffer[len(fragment)], pyt)
-            nfo = *fragment, nfo_
+        # (sys) write the last `pyt` into the buffer
+        suply(torch.Tensor.copy_, vw_buffer[len(nfos)], pyt)
+        nfo = *nfos, nfo_
+        nfos.clear()
 
         # (sys) do an update on the collected fragment and get the revised
         #  recurrent runtime state for the next fragment

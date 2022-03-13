@@ -16,22 +16,23 @@ def fixup_tty(
     misc,
     **ignore,
 ):
-    r"""Restore broken `tty_chars` in case of mutliline message with `--More--`.
+    r"""Restore broken `tty_chars` in case of multiline message with `--More--`.
 
     Details
     -------
-    It apperas that the tty used internally byt the NLE to capture NetHack's
-    output operates in CRLF (\r\n) mode, whereas the game itself issues LF (\n).
-    This results in broken second and third lines when the message in long
-    and was wrapped at 80 char per column by the game. the NLE gives us plenty
-    of information to attempt to reconstruct the correct tty-chars output
+    It appears that the tty used internally by the NLE to capture NetHack's
+    output operates in CRLF (\r\n) mode, whereas the game itself issues LF
+    ("\n"). This results in broken second and third lines when the message in
+    long and was wrapped at 80 char per column by the game. the NLE gives us
+    plenty of information to attempt to reconstruct the correct tty-chars
+    output.
     """
 
     # message containing an LF means that originally it did not fit 80 cols
     lf_mask = message == 0x0A
     has_any_lf = lf_mask.any()
 
-    # detecting a rare event when themessage is a part of a chain, and has
+    # detecting a rare event when the message is a part of a chain, and has
     #  --More--, but fully fits into the top line and thus has no lf in
     # the message. For example, executing 'acy' in a seeded nethack with
     #     seed = 12604736832047991440, 12469632217503715839
@@ -54,9 +55,9 @@ def fixup_tty(
         # properly wrap the text at 80
         text = message.view('S256')[0].decode('ascii')
         pieces = wrap(text + '--More--', 80, break_on_hyphens=False)
-        # XXX in the case when multiple egravings are appended to each other at
-        #  the same location the message may get so long as to span across up
-        #  to four top lines. This is why the check for the number of pieces
+        # XXX in the case when multiple engravings are appended to each other
+        #  at the same location the message may get so long as to span across
+        #  up to four top lines. This is why the check for the number of pieces
         #  has been removed.
 
         # recreate tty-chars by patching the relevant regions
@@ -67,7 +68,7 @@ def fixup_tty(
         # XXX The game's map area in `tty_chars` may get `dirty` from long
         #  messages, because it is not redrawn, unless the game receives
         #  `\\x12` REDRAW command. The first two lines are redrawn in `topl`,
-        # but the garbage split onto the thrid and fourth lines is not flushed.
+        # but the garbage split onto the third and fourth lines is not flushed.
         new_tty_chars[1:22, :79] = chars
         new_tty_colors[1:22, :79] = colors
 
@@ -101,6 +102,25 @@ def fixup_tty(
         tty_cursor=tty_cursor,
         message=message,
     )
+
+
+def fixup_message(
+    message,
+    misc,
+    **ignore,
+):
+    """Replace line feeds (\\x0a) in the message with whitespace (\\x20).
+    """
+
+    # message containing an LF means that originally it did not fit 80 cols
+    lf_mask = message == 0x0A
+
+    misc = Misc(*misc.astype(bool))
+    if lf_mask.any() and misc.xwaitingforspace:
+        # fix the message: replace lf '\n' (\x0a) with whitespace ` ` (\x20)
+        message = np.where(lf_mask, 0x20, message)
+
+    return dict(message=message)
 
 
 def render(

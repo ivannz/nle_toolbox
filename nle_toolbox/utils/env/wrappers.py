@@ -3,7 +3,7 @@ import gym
 
 from collections import deque
 
-from .render import fixup_tty
+from .render import fixup_tty, fixup_message
 from ..fold import npy_fold2d
 
 from nle.nethack import (
@@ -59,8 +59,11 @@ class NLEObservationPatches(ObservationWrapper):
     def observation(self, observation):
         # apply tty rendering patches
         if 'tty_chars' in observation:
-            # XXX assume we-ve got all `tty_*` stuff
+            # XXX assume we-ve got all `tty_*` stuff, misc, message and others
             observation.update(fixup_tty(**observation))
+
+        elif 'message' in observation:
+            observation.update(fixup_message(**observation))
 
         return observation
 

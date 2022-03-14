@@ -45,20 +45,22 @@ def capsule(step, update, length, *, device=None):
     if update is None and length >= 1 or update is not None and length < 1:
         raise ValueError('`update` can be None iff fragment `length` is zero.')
 
-    # (sys) let the learner properly init `hx`-s batch dims
-    # XXX hx is current, gx is at the start of the fragment
-    gx = hx = None  # XXX hx is either None, or an object
-
-    # (capsule) finish handshake and prepare the npyt state
-    # XXX not need to create `AliasedNPYT`, since we live in a capsule!
-    npy = suply(np.copy, Input(*(yield None)))  # expect obs, act, rew, fin
-    pyt = suply(torch.as_tensor, npy)  # XXX `pyt` aliases `npy` (array proto.)
-    suply(torch.Tensor.unsqueeze_, pyt, dim=0)  # fake seq dim
-
     # (capsule) the tensor cloning func, since host-device moves produce a copy
     device = torch.device('cpu') if device is None else device
     cloner = torch.clone if device.type == 'cpu' else lambda t: t.to(device)
     # XXX `.to` is enough here as the npy/pyt buffers are "on host" by design
+
+    # (sys) let the learner properly init `hx`-s batch dims
+    # XXX hx is current, gx is at the start of the fragment
+    gx = hx = None  # XXX hx is either None, or an object
+
+    # (capsule) finish handshake and prepare the npyt state (aliased npy-pyt)
+    # XXX no need to create `AliasedNPYT`, since we live in a capsule!
+    pyt = suply(torch.as_tensor, suply(np.copy, Input(*(yield None))))
+    if device.type != 'cpu':
+        pyt = suply(torch.Tensor.pin_memory, pyt)
+    npy = suply(np.asarray, pyt)  # XXX `npy` aliases `pyt` (thru array proto)
+    suply(torch.Tensor.unsqueeze_, pyt, dim=0)  # fake seq dim
 
     # (sys) collect trajectory in fragments, when instructed to
     fragment = []

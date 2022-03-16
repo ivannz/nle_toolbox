@@ -206,6 +206,37 @@ def step(env, agent, npyt, hx, *, device=None):
     return (input, out), hx, deepcopy(nfo_)  # ATTN `nfo` is AFTER `input`
 
 
+def dropout_mask(input, *, k=None):
+    # (batching) instead of sampling a random batch from the specified buffer
+    #  we do the next best thing and sample a binary mask which ignores certain
+    #  loss terms. For a non-recurrent agent this is entirely equivalent to
+    #  sampling a random batch w/o replacement (according to the mask), except
+    #  for the full O(TB) arithmetic complexity. For recurrent agents this
+    #  allows proper feedback propagation for the recurrent states, due to
+    #  multiple grad pathways for $h_t$, $t=0..T$, in $
+    #      y_t, h_{t+1} = g(x_t, h_t; \theta)
+    #  $.
+
+    fin = input.fin[1:]
+    if isinstance(k, float) and 0 < k < 1:
+        # k is a float within the zero-one interval means we want
+        # "batch dropout": a mask with `1` w. prob `p`.
+        uni = torch.rand(fin.shape, device=fin.device)
+        return uni.le(k)
+
+    elif isinstance(k, int) and 0 < k < fin.numel():
+        # draw a sample of uniform rv-s, then set to zero
+        #  all values that are not among the `k` least ones.
+        uni = torch.rand(fin.shape, device=fin.device)
+        return uni.le(uni.flatten().kthvalue(k).values)
+
+    elif k is None:
+        return None
+
+    raise ValueError("`k` must be either `None`, a +ve int,"
+                     f" or a float between 0 and 1. Got `{k}`.")
+
+
 def pyt_logpact(logpol, act):
     """Get log probability of the taken actions.
 
@@ -218,7 +249,7 @@ def pyt_logpact(logpol, act):
     return logpol[:-1].gather(-1, act[1:].unsqueeze(-1)).squeeze_(-1)
 
 
-def pyt_polgrad(logpol, act, adv):
+def pyt_polgrad(logpol, act, adv, *, mask=None):
     r"""Compute the GAE policy gradient surrogate.
 
     Details
@@ -234,14 +265,20 @@ def pyt_polgrad(logpol, act, adv):
     """
     # the policy contains logits over the last (event) dims
     # \sum_j \sum_t A_{j t} \log \pi_{j t}(a_{j t})
-    return pyt_logpact(logpol, act).mul(adv).sum()
+    out = pyt_logpact(logpol, act).mul(adv)
+
+    # block the grads trough certain surrogate losses
+    if mask is not None:
+        out = out.mul(mask)
+
+    return out.sum()
 
 
-def pyt_entropy(logpol):
+def pyt_entropy(logpol, *, mask=None):
     r"""Compute the entropy `- \sum_j \pi_{j t} \log \pi_{j t}` over
     the event dim.
     """
-    # `.kl_div` correctly handles -ve infinite logits (or zero probs), but
+    # `.kl_div` correctly handles `-ve` infinite logits (or zero probs), but
     #  computes $\sum_j e^{\log p_j} \log p_j$, so we need to flip the sign.
     # XXX `.new_zeros(())` creates a scalar zero (yes, an EMPTY tuple)
     # XXX `.kl_div` computes \sum_n e^y_n (y_n - x_n), for y = logpol, x = 0.
@@ -252,17 +289,23 @@ def pyt_entropy(logpol):
         reduction='none',
     ).sum(dim=-1).neg()
 
-    # sum over the remaining dims
+    # sum over the remaining dims after applying the optional mask
+    if mask is not None:
+        entropy = entropy.mul(mask)
+
     return entropy.sum()
 
 
-def pyt_critic(val, ret):
+def pyt_critic(val, ret, *, mask=None):
     r"""The critic loss in the A2C algo (and others).
     """
     mse = F.mse_loss(
         val[:-1],
         ret,
         reduction='none',
-    ).sum(dim=-1)
+    )
+
+    if mask is not None:
+        mse = mse.mul(mask)
 
     return mse.sum() / 2

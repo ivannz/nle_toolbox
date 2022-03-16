@@ -269,7 +269,8 @@ def pyt_polgrad(logpol, act, adv, *, mask=None):
 
     # block the grads trough certain surrogate losses
     if mask is not None:
-        out = out.mul(mask)
+        scale = float(mask.sum()) / mask.numel()
+        out = out.mul(mask).div(scale)
 
     return out.sum()
 
@@ -291,7 +292,8 @@ def pyt_entropy(logpol, *, mask=None):
 
     # sum over the remaining dims after applying the optional mask
     if mask is not None:
-        entropy = entropy.mul(mask)
+        scale = float(mask.sum()) / mask.numel()
+        entropy = entropy.mul(mask).div(scale)
 
     return entropy.sum()
 
@@ -306,6 +308,7 @@ def pyt_critic(val, ret, *, mask=None):
     )
 
     if mask is not None:
-        mse = mse.mul(mask)
+        scale = float(mask.sum()) / mask.numel()
+        mse = mse.mul(mask).div(scale)
 
     return mse.sum() / 2

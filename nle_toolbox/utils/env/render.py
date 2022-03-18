@@ -177,3 +177,49 @@ def render(
     ansi += f'\033[m\033[{1+r};{1+c}H'
 
     return ansi
+
+
+def load_minihack_tileset():
+    """Get the tileset provided by minihack.
+    """
+
+    import pickle
+    from pkg_resources import resource_filename
+
+    try:
+        from minihack.tiles.tile import glyph2tile
+
+        # array of keys into the tileset dict
+        res = resource_filename('minihack.tiles', 'tiles.pkl')
+        return np.array(glyph2tile), pickle.load(open(res, 'rb'))
+
+    except ImportError:
+        return None
+
+
+default_tileset = load_minihack_tileset()
+
+
+def render_to_rgb(glyphs, *, tileset=default_tileset):
+    """Render glyphs with the specified tileset.
+    """
+    if glyphs.ndim < 3:
+        raise TypeError("`glyphs` array must be at least three-dimensional.")
+
+    assert tileset is not None
+    glyph2tile, tile2image = tileset
+
+    # the renderer is just a sparse lookup table
+    void = np.zeros_like(next(iter(tile2image.values())))
+    tiles = np.stack([
+        tile2image.get(tile, void) for tile in glyph2tile[glyphs.flat]
+    ], axis=0)
+
+    # restore geometry of each frame
+    ph, pw, col = void.shape
+    *head, gh, gw = glyphs.shape
+    frames = tiles.reshape(-1, gh, gw, ph, pw, col)
+
+    # pair related spatial dims and flatten them
+    frames = frames.transpose(0, 1, 3, 2, 4, 5)
+    return frames.reshape(*head, gh * ph, gw * pw, col)

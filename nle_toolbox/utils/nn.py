@@ -719,19 +719,27 @@ def multinomial(
     return out.squeeze(dim) if squeeze else out
 
 
-def masked_multinomial(raw, mask, dim=-1):
-    """Draw a variate from the categorical rv, specified by the unnormalized
-    logits `raw` at the indicated `dim`, optionally masked by `mask` boolean
-    array of the same shape as `raw`.
+def masked_softmax(raw, mask, dim=-1):
+    """Compute the probabilites from the unnormalized logits `raw` along
+    the indicated `dim`, optionally masking using `mask`.
     """
-    raw = raw.detach()
-
     # '-inf' masking should be applied to the unnormalized logits
     if mask is not None:
         raw = raw.masked_fill(mask.to(bool), -float('inf'))
 
     # sample from the masked distribution
-    return multinomial(raw.softmax(dim=dim), 1, dim).squeeze(dim)
+    return raw.softmax(dim=dim)
+
+
+def masked_multinomial(raw, mask, dim=-1):
+    """Draw a variate from the categorical rv, specified by the unnormalized
+    logits `raw` at the indicated `dim`, optionally masked by `mask` boolean
+    array of the same shape as `raw`.
+    """
+    proba = masked_softmax(raw.detach(), mask, dim=dim)
+
+    # sample from the masked distribution
+    return multinomial(proba, 1, dim).squeeze(dim)
 
 
 class ParameterContainer(Module):

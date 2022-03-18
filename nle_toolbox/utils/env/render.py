@@ -203,8 +203,8 @@ default_tileset = load_minihack_tileset()
 def render_to_rgb(glyphs, *, tileset=default_tileset):
     """Render glyphs with the specified tileset.
     """
-    if glyphs.ndim < 3:
-        raise TypeError("`glyphs` array must be at least three-dimensional.")
+    if glyphs.ndim < 2:
+        raise TypeError("`glyphs` array must be at least two-dimensional.")
 
     assert tileset is not None
     glyph2tile, tile2image = tileset

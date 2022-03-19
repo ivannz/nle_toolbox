@@ -194,6 +194,7 @@ class NLENeuralAgent(nn.Module):
         act: dict = None,
         fin: dict = None,
         h0: bool = True,
+        tau: dict = None,
     ) -> None:
         super().__init__()
 
@@ -224,9 +225,10 @@ class NLENeuralAgent(nn.Module):
         else:
             self.register_parameter('h0', None)
 
-        # actor-critic heads
+        # actor-critic and temperature heads
         self.pol = LinearSplitter(**pol)
         self.val = LinearSplitter(**val)
+        self.tau = LinearSplitter(**tau) if tau else None
 
     @property
     def initial_hx(self) -> Optional[Tensor]:
@@ -250,6 +252,12 @@ class NLENeuralAgent(nn.Module):
         out, hx = masked_rnn(self.core, x, hx, reset=fin, h0=self.initial_hx)
 
         pol = self.pol(out)
+
+        # apply the temperature
+        if self.tau is not None:
+            tau = plyr.apply(F.softplus, self.tau(out))
+            pol = plyr.apply(torch.mul, pol, tau)
+
         if 'action_mask' in obs:
             act = plyr.apply(masked_multinomial, pol, obs['action_mask'])
 
@@ -279,6 +287,7 @@ class NLENeuralAgent(nn.Module):
             'hunger',
             'condition',
         ),
+        learn_tau: bool = False,
     ) -> dict:
         # compile the recipe
         recipe = {}
@@ -338,4 +347,8 @@ class NLENeuralAgent(nn.Module):
                 'in_features': hidden_size,
                 'out_features': n_actions,
             },
+            'tau': {
+                'in_features': hidden_size,
+                'out_features': 1,
+            } if learn_tau else None,
         }

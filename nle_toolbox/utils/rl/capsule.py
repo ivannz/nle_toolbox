@@ -65,6 +65,7 @@ def capsule(step, update, length, *, device=None):
     # (sys) collect trajectory in fragments, when instructed to
     fragment = []
     append = id if length < 1 else fragment.append  # `id` serves as a dummy
+    length = max(length, 1)  # clamp the length to on anyway
 
     # (sys) perpetual rollout
     nfo_ = {}  # XXX the true initial info dict is empty

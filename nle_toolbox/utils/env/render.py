@@ -105,6 +105,7 @@ def fixup_tty(
 
 
 def fixup_message(
+    *,
     message,
     misc,
     **ignore,

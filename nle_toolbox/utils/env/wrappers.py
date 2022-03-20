@@ -55,11 +55,24 @@ class NLEAtoN(ActionWrapper):
 
 
 class NLEObservationPatches(ObservationWrapper):
-    """Patch the tty character data."""
+    """Apply a patch depending on the fields available in the observation dict.
+
+    tty renderer
+    ------------
+    If `tty_chars` is in the dict, then assume `chars`, `colors`, `message`,
+    `misc`, and the remaining `tty_*` fields are present and apply the tty
+    rendering patch, which reconstruct botched top line messages.
+
+    message
+    -------
+    If the tty-patch cannot be applied, then we try to just fix the message,
+    which contains a stray line-feed whenever it gets text-wrapped by 80 chars
+    limit due to the `--More--` flag. The patch is applied if `message` field
+    is present, and assumes the observation dict also has the `misc` field.
+    """
+
     def observation(self, observation):
-        # apply tty rendering patches
         if 'tty_chars' in observation:
-            # XXX assume we-ve got all `tty_*` stuff, misc, message and others
             observation.update(fixup_tty(**observation))
 
         elif 'message' in observation:

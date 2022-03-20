@@ -719,13 +719,20 @@ def multinomial(
     return out.squeeze(dim) if squeeze else out
 
 
+def apply_mask(tensor, mask, *, value=-float('inf')):
+    """Mask the values in the given tensor.
+    """
+
+    return tensor.masked_fill(mask.to(bool), value)
+
+
 def masked_softmax(raw, mask, dim=-1):
     """Compute the probabilites from the unnormalized logits `raw` along
     the indicated `dim`, optionally masking using `mask`.
     """
     # '-inf' masking should be applied to the unnormalized logits
     if mask is not None:
-        raw = raw.masked_fill(mask.to(bool), -float('inf'))
+        raw = apply_mask(raw, mask)
 
     # sample from the masked distribution
     return raw.softmax(dim=dim)

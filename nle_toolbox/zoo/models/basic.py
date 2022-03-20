@@ -15,7 +15,8 @@ from einops.layers.torch import Rearrange
 from .. import blstats
 from ..glyph import GlyphEmbedding, EgoCentricEmbedding
 from ...utils.nn import LinearSplitter, ModuleDict, ParameterContainer
-from ...utils.nn import masked_rnn, rnn_hx_shape, masked_multinomial
+from ...utils.nn import masked_rnn, rnn_hx_shape
+from ...utils.nn import apply_mask, masked_multinomial
 
 
 ValPolPair = namedtuple('ValPolPair', 'val,pol')
@@ -258,11 +259,14 @@ class NLENeuralAgent(nn.Module):
             tau = plyr.apply(F.softplus, self.tau(out))
             pol = plyr.apply(torch.mul, pol, tau)
 
+        # It appears that sampling from a masked distribution distabilizes
+        #  policy-grad-based algos. This is possibly due to changed support
+        #  which this makes everything severely off-policy.
         if 'action_mask' in obs:
-            act = plyr.apply(masked_multinomial, pol, obs['action_mask'])
+            pol = plyr.apply(apply_mask, pol, obs['action_mask'], value=-10.)
+            # XXX use a not so extreme filler value
 
-        else:
-            act = plyr.apply(masked_multinomial, pol, mask=None)
+        act = plyr.apply(masked_multinomial, pol, mask=None)
 
         # act, (val, pol), hx
         return act, ValPolPair(

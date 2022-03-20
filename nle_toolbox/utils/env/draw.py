@@ -116,10 +116,11 @@ def draw(fig, npy, t, *, actions, artists=None):
     ax = fig.add_subplot(gs[2:3, 2:], sharex=ax)
     ax.set_title('State Value')
     artists.extend(ax.plot(ep.output.val['ext'], c='C0'))
+    artists.extend(ax.plot(ep.output.val['int'], c='C1'))
     ent = -(ep.output.pol * np.exp(ep.output.pol)).sum(-1)
     artists.append(ax.axvline(t, c='r', zorder=+10))
     ax_ = ax.twinx()
     ax_.set_ylim(0., math.log(len(proba)))
-    artists.extend(ax_.plot(ent, c='C1'))
+    artists.extend(ax_.plot(ent, c='C2'))
 
     return artists

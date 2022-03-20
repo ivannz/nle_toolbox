@@ -21,6 +21,27 @@ then focus on actually seeking the positive reward for task completion.
 from minihack import MiniHackNavigation, LevelGenerator
 from minihack.envs import register
 
+from nle import nethack
+
+# the essential navigation actions and basic GUI handling
+BASE_ACTIONS = (
+    *nethack.CompassDirection,
+    nethack.MiscDirection.WAIT,
+
+    # these service actions are for GUI
+    nethack.MiscAction.MORE,  # \015
+    nethack.TextCharacters.SPACE,  # \040
+    nethack.Command.ESC,  # \033
+)
+
+# extended, composite, or actions, which potentially summon a menu
+EXT_ACTIONS = (
+    *BASE_ACTIONS,
+    nethack.Command.SEARCH,  # single-step search action
+    nethack.Command.KICK,  # expects direction
+    nethack.Command.EAT,  # might expect a choice form inv
+)
+
 
 class MiniHackFightCorridorDarkMoreRats(MiniHackNavigation):
     """A more ratty dark corridor battle.
@@ -37,10 +58,19 @@ class MiniHackFightCorridorDarkMoreRats(MiniHackNavigation):
     [All Rats]
     Let's see what kind of trouble we can get ourselves into
     """
-    def __init__(self, *args, n_extra_rats=0, lit=False, **kwargs):
-        kwargs["character"] = "kni-hum-law-fem"  # tested on human knight
-        kwargs["max_episode_steps"] = kwargs.pop("max_episode_steps", 350)
-
+    def __init__(
+        self,
+        *args,
+        n_extra_rats: int = 0,
+        # This env is unlit by default
+        lit: bool = False,
+        # Play with human knight character by default
+        character: str = "kni-hum-law-fem",
+        # Default episode limit
+        max_episode_steps: int = 350,
+        # remaining kwargs (see `MiniHackNavigation`)
+        **other,
+    ):
         map = """
 -----       ----------------------
 |...|       |....................|
@@ -61,7 +91,13 @@ class MiniHackFightCorridorDarkMoreRats(MiniHackNavigation):
         for _ in range(n_extra_rats):
             lvl_gen.add_monster(name="giant rat", place="random")
 
-        super().__init__(*args, des_file=lvl_gen.get_des(), **kwargs)
+        super().__init__(
+            *args,
+            des_file=lvl_gen.get_des(),
+            character=character,
+            max_episode_steps=max_episode_steps,
+            **other,
+        )
 
 
 register(
@@ -105,4 +141,45 @@ register(
     id="MiniHack-Memento-F4-v1",
     entry_point="minihack.envs.memento:MiniHackMementoF4",
     kwargs=dict(reward_win=+1, reward_lose=-1),
+)
+
+register(
+    id="MiniHack-CorridorBattle-Dark-MoreActions-v0",
+    entry_point="minihack.envs.fightcorridor:MiniHackFightCorridorDark",
+    kwargs=dict(
+        reward_win=+1,
+        reward_lose=-1,
+        actions=BASE_ACTIONS,
+    ),
+)
+
+register(
+    id='MiniHack-CorridorBattle-Dark-MoreRats-MoreActions-v0',
+    entry_point=MiniHackFightCorridorDarkMoreRats,
+    kwargs=dict(
+        n_extra_rats=6,
+        reward_win=+1,
+        reward_lose=-1,
+        actions=BASE_ACTIONS,
+    ),
+)
+
+register(
+    id="MiniHack-Room-Ultimate-15x15-MoreActions-v0",
+    entry_point="minihack.envs.room:MiniHackRoom15x15Ultimate",
+    kwargs=dict(
+        reward_win=+1,
+        reward_lose=-1,
+        actions=BASE_ACTIONS,
+    ),
+)
+
+register(
+    id="MiniHack-HideNSeek-Big-MoreActions-v0",
+    entry_point="minihack.envs.hidenseek:MiniHackHideAndSeekBig",
+    kwargs=dict(
+        reward_win=+1,
+        reward_lose=-1,
+        actions=BASE_ACTIONS,
+    ),
 )

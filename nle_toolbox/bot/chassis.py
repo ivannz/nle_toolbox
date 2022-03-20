@@ -551,9 +551,11 @@ class Chassis(InteractiveWrapper):
         """
 
         # we expect this to fail if the `obs['misc']` spec changes upstream
-        self.in_yn_function, \
-            self.in_getlin, \
-            self.xwaitingforspace = map(bool, obs['misc'])
+        (
+            self.in_yn_function,
+            self.in_getlin,
+            self.xwaitingforspace
+        ) = map(bool, obs['misc'])
 
     def update(self, obs, rew=0., done=False, info=None):
         """Detect whether NetHack expects a text input form the user, a pick
@@ -631,14 +633,14 @@ class Chassis(InteractiveWrapper):
             screen, modal = extract_modal_window(obs)
             if modal is None:
                 raise ValueError(
-                    f'Unrecognized screen `{screen}` while waiting for space.'
+                    f"Unrecognized screen `{screen}` while waiting for space."
                 )
 
             # the topline message is a zero-terminated ascii string, so we
             #  can trivially test if it is empty.
             is_topl_msg_nonempty = obs['message'][0] != 0
             # XXX In fact [the docs](./nle/doc/window.doc#L46-48) state that
-            #  menu/message are mutually exculsive, and forbid using `putstr`
+            #  menu/message are mutually exclusive, and forbid using `putstr`
             #  after [start_menu](./nle/doc/window.doc#L306-310).
 
             # see if we've got a multi-part top-line message, or a message log:
@@ -650,7 +652,7 @@ class Chassis(InteractiveWrapper):
                 messages.extend(fetch_messages(obs, self.split))
                 if not modal.is_message:
                     raise ValueError(
-                        f'Non-empty message `{messages}` in a menu `{screen}`.'
+                        f"Non-empty message `{messages}` in a menu `{screen}`."
                     )
 
             elif modal.is_message:
@@ -671,9 +673,10 @@ class Chassis(InteractiveWrapper):
                 obs, rew, done, info = self.env.step(self.space)  # send SPACE
                 self.fetch_misc_flags(obs)
 
-        # We've got an alternative here: either the current page is interactible
-        #  in which case `in_menu` is set, or currently nothing is capturing
-        #  the input, since the game has run out of menu pages or messages.
+        # We've got an alternative here: either the current page is
+        #  interactible in which case `in_menu` is set, or currently nothing
+        #  is capturing the input, since the game has run out of menu pages
+        #  or messages.
         self.prompt = {}
         if not self.in_menu:
             # at least one message from the log, or a multi-part message spills
@@ -699,7 +702,7 @@ class Chassis(InteractiveWrapper):
 
                 else:
                     raise ValueError(
-                        f'Weird prompt `{message}` while expecting user input.'
+                        f"Weird prompt `{message}` while expecting user input."
                     )
 
         # leave out empty messages
@@ -783,7 +786,7 @@ class ActionMasker(InteractiveWrapper):
         # win by quitting!
         241,     # \\xf1   65      Command                 QUIT
 
-        # we let the chassis hande mores, ESCs and spaces
+        # we let the chassis handle mores, ESCs and spaces
         13,      # \\r     19      MiscAction              MORE
         27,      # \\x1b   36      Command                 ESC
         32,      # \\x20   99      TextCharacters          SPACE
@@ -808,8 +811,8 @@ class ActionMasker(InteractiveWrapper):
         36,      # $       112     TextCharacters          DOLLAR
         36,      # $       79      Command                 SEEGOLD
 
-        # spells can be enumerateed from CAST command `Z`, and neural bots
-        #  do not need to ra0bind spell-key mappings
+        # spells can be enumerated from CAST command `Z`, and neural bots
+        #  do not need to rebind spell-key mappings
         43,      # +       81      Command                 SEESPELLS
         43,      # +       97      TextCharacters          PLUS
 
@@ -817,12 +820,12 @@ class ActionMasker(InteractiveWrapper):
         42,      # *       76      Command                 SEEALL
         47,      # /       93      Command                 WHATIS
 
-        # The seetrap command simply shows the type of an adjacent trap and
+        # The SEETRAP command simply shows the type of an adjacent trap and
         #  does not `Find traps`. Detecting them is achieved by searching
         #  around for a while with `[0-9]s` (see `SEARCH`).
         94,      # ^       83      Command                 SEETRAP
 
-        # No need for farlook
+        # No need for FARLOOK
         59,      # ;       42      Command                 GLANCE
         64,      # @       26      Command                 AUTOPICKUP
         67,      # C       27      Command                 CALL
@@ -880,7 +883,7 @@ class ActionMasker(InteractiveWrapper):
     ])
 
     # The following actions, identified by their ASCII code, are the ones that
-    #  we allow to the neural agents in the general non-gui interaction mode (
+    #  we allow to the neural agents in the general non-GUI interaction mode (
     #  except for prompt and menu letter interactions).
     _allowed = frozenset([
         # XXX gym-ids are subject to change depending on the NLE
@@ -929,7 +932,7 @@ class ActionMasker(InteractiveWrapper):
         237,     # \\xed   53      Command                 MONSTER
         244,     # \\xf4   94      Command                 TURN
 
-        # advneture mode actions
+        # adventure mode actions
         229,     # \\xe5   37      Command                 ENHANCE
         97,      # a       24      Command                 APPLY
         228,     # \\xe4   32      Command                 DIP
@@ -969,7 +972,7 @@ class ActionMasker(InteractiveWrapper):
                 RuntimeWarning,
             )
 
-        # precompute common masks
+        # precompute the common masks
         self._allowed_actions = np.array([
             c in self._prohibited for a, c in self.ascii_to_action
         ], dtype=np.int8)
@@ -1052,6 +1055,6 @@ class ActionMasker(InteractiveWrapper):
             mask = self._allowed_actions.copy()
 
         # a numpy mask indicating actions, that SHOULD NOT be taken
-        # i.e. masked or forbidden.
+        # i.e. masked or forbidden. (0 -- allowed, 1 -- forbidden)
         obs['action_mask'] = mask
         return obs, rew, done, info

@@ -189,10 +189,15 @@ def load_minihack_tileset():
 
     try:
         from minihack.tiles.tile import glyph2tile
+        from nle.nethack import MAX_GLYPH
+
+        # make sure all glyphs can be mapped to tiles
+        n_extra = max(0, MAX_GLYPH - len(glyph2tile) + 1)
+        glyph2tile = np.array(glyph2tile + [-1] * n_extra)
 
         # array of keys into the tileset dict
         res = resource_filename('minihack.tiles', 'tiles.pkl')
-        return np.array(glyph2tile), pickle.load(open(res, 'rb'))
+        return glyph2tile, pickle.load(open(res, 'rb'))
 
     except ImportError:
         return None

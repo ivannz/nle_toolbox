@@ -425,6 +425,8 @@ def fetch_messages(obs, split=False, top=False):
     separates multiple messages, that fit in one line.
     """
     if top:
+        warn("Top-line message extraction is deprecated.", RuntimeWarning)
+
         topl = obs['tty_chars'].view('S80')[:2, 0]
         message = b' '.join(map(bytes.strip, topl))
         if message.endswith(b'--More--'):
@@ -610,11 +612,15 @@ class Chassis(InteractiveWrapper):
         self.in_menu = False
         self.fetch_misc_flags(obs)
 
-        # game over screens in Nethack expect SPACE, but since they are
-        # terminal, whether or not SPACE is bound is irrelevant.
+        # game over screens in NetHack expect SPACE, but they are terminal,
+        #  states which makes it irrelevant whether the action is bound or
+        #  not. For other game states, such as menus, and multi-part message
+        #  log SPACE, ESC, or ENTER are required to unfreeze the game.
         if self.xwaitingforspace and not done and self.space is None:
             raise RuntimeError(
-                "NLE is waiting for SPACE, but this action is not bound.",
+                "NLE is waiting for SPACE, but this action is NOT BOUND."
+                " To see what was going on run `obs['tty_chars'].view('S80')`"
+                " in a post-mortem debugger, e.g. `import pdb; pdb.pm()`."
             )
 
         # quit immediately, if we've got an interactible page or we've left
@@ -996,6 +1002,7 @@ class ActionMasker(InteractiveWrapper):
             raise RuntimeError(
                 f"`action_mask` is already declared by `{self.env}`."
             )
+
         space = spaces.MultiBinary(len(self.ascii_to_action))
         self.observation_space['action_mask'] = space
         # XXX `MultiBinary` has `int8` dtype, which is not exactly `bool`.
@@ -1048,7 +1055,7 @@ class ActionMasker(InteractiveWrapper):
                 # XXX should not be reached by non-prohibited actions, e.g.
                 #  the prohibited WHATDOES command '&' yields 'What command?'
                 #  prompt, which ends up here.
-                raise RuntimeError(cha.prompt['full'])
+                raise RuntimeError(f"Unexpected prompt `{cha.prompt['full']}`")
 
         else:
             # we're in proper gameplay mode, only allow only certain actions

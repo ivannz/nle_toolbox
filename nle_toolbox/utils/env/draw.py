@@ -4,6 +4,7 @@ import plyr
 import numpy as np
 from scipy.special import softmax
 
+from matplotlib import pyplot as plt
 from matplotlib.gridspec import GridSpec
 
 from nle.nethack import (
@@ -53,6 +54,43 @@ def get_compass(proba):
     }
 
 
+def get_ylim(x, rtol=0.1, atol=0.01):
+    a, b = min(x), max(x)
+    return (
+        a - abs(a) * rtol - atol,
+        b + abs(b) * rtol + atol,
+    )
+
+
+def plot_series(
+    main,
+    *rest,
+    title=None,
+    ylim=None,
+    xlim=None,
+    yaxis=False,
+    ax=None,
+    **kwargs,
+):
+    artists = []
+    ax = plt.gca() if ax is None else ax
+
+    # plot the main series, then set the aesthetics
+    artists.extend(ax.plot(main, **kwargs))
+    ax.set_ylim(get_ylim(main) if ylim is None else ylim)
+    if xlim is not None:
+        ax.set_xlim(xlim)
+
+    if title is not None:
+        ax.set_title(title)
+
+    ax.yaxis.set_visible(yaxis)  # the precise values are irrelevant
+    for x in rest:
+        artists.extend(ax.plot(x))
+
+    return artists
+
+
 def draw(fig, npy, t, *, actions, artists=None, view=None):
     artists = list() if artists is None else artists
     gs = GridSpec(3, 3)
@@ -65,6 +103,7 @@ def draw(fig, npy, t, *, actions, artists=None, view=None):
     ep_t = plyr.apply(lambda x: x[t], ep)
 
     # compute the moving view port around `t`
+    xlim = None
     if view is not None:
         if isinstance(view, float):
             view = max(1, int(n_length * view))
@@ -73,16 +112,16 @@ def draw(fig, npy, t, *, actions, artists=None, view=None):
             raise ValueError("`view` must be float or int.")
 
         # get the center of the "viewport" [x - v, x + v]
+        # XXX make vw stay within [0, T-1]
         x = min(max(t, view), n_length - 1 - view)
-        view = x - view, x + view  # XXX make vw stay within [0, T-1]
+        xlim = x - view - 0.25, x + view + 0.25
 
     # the current policy and the botl stats
     proba = dict(zip(actions, softmax(ep_t.output.pol, axis=-1).tolist()))
     blstats = ep.input.obs['blstats']
 
     # render the agent's view with the compass action distribution overlay
-    ax = fig.add_subplot(gs[:2, :2])
-    ax.set_axis_off()
+    view = ax = fig.add_subplot(gs[:2, :2])
     vicinity = render_to_rgb(ep_t.input.obs['vicinity'])
     artists.append(ax.imshow(vicinity, zorder=-99, alpha=0.75, animated=True))
 
@@ -101,58 +140,48 @@ def draw(fig, npy, t, *, actions, artists=None, view=None):
             ax.scatter(*xy[0], c='black', zorder=15, s=10)
         )
 
-    # plot the vitals and time
-    ax = fig.add_subplot(gs[0:1, 2:])
-    ax.set_title('HP')
-    artists.extend(ax.plot(blstats[:, NLE_BL_HP]))
-    artists.append(ax.axvline(t, c='r', zorder=+10))
-    ax.set_ylim(0, blstats[:, NLE_BL_HPMAX].max() + 1)
-    ax.yaxis.set_visible(False)  # the values are irrelevant
-    if view is not None:
-        ax.set_xlim(view)
+    ax.set_axis_off()
 
-    series = np.ediff1d(blstats[:, NLE_BL_TIME], to_begin=0)
-    ax = fig.add_subplot(gs[1:2, 2:], sharex=ax)
-    ax.set_title('Timedelta')
-    artists.extend(ax.plot(series))
-    artists.append(ax.axvline(t, c='r', zorder=+10))
-    ax.yaxis.set_visible(False)
-    if view is not None:
-        ax.set_ylim(0, series.max())
-        ax.set_xlim(view)
+    # plot the vitals
+    ax = fig.add_subplot(gs[0, 2])
+    artists.extend(plot_series(
+        blstats[:, NLE_BL_HP], title='HP', xlim=xlim, ax=ax,
+        ylim=(0, blstats[:, NLE_BL_HPMAX].max()+1),
+    ))
 
-    series = blstats[:, NLE_BL_SCORE]
-    ax = fig.add_subplot(gs[2:3, :1], sharex=ax)
-    ax.set_title('Game Score')
-    artists.extend(ax.plot(series))
-    artists.append(ax.axvline(t, c='r', zorder=+10))
-    ax.yaxis.set_visible(False)
-    if view is not None:
-        ax.set_ylim(0, series.max())
-        ax.set_xlim(view)
+    # the in-game time-deltas
+    ax = fig.add_subplot(gs[1, 2], sharex=ax)
+    artists.extend(plot_series(
+        np.ediff1d(blstats[:, NLE_BL_TIME], to_begin=0),
+        title='Timedelta', xlim=xlim, ax=ax
+    ))
 
-    ax = fig.add_subplot(gs[2:3, 1:2], sharex=ax)
-    ax.set_title('LVL/XP')
-    artists.extend(ax.plot(blstats[:, NLE_BL_EXP]))
-    artists.extend(ax.plot(blstats[:, NLE_BL_XP]))
-    artists.append(ax.axvline(t, c='r', zorder=+10))
-    ax.yaxis.set_visible(False)
-    if view is not None:
-        ax.set_xlim(view)
+    # the in-game score
+    ax = fig.add_subplot(gs[2, 0], sharex=ax)
+    artists.extend(plot_series(
+        blstats[:, NLE_BL_SCORE], title='Game Score', xlim=xlim, ax=ax
+    ))
+
+    # the value estimates and the policy entropy
+    ax = fig.add_subplot(gs[2, 1], sharex=ax)
+    artists.extend(plot_series(
+        ep.output.val['ext'], ep.output.val['int'],
+        title='State Value Ext', xlim=xlim, ax=ax, ylim=None,
+    ))
+    artists.extend(plot_series(
+        -(ep.output.pol * np.exp(ep.output.pol)).sum(-1),
+        xlim=xlim, ax=ax.twinx(), c='C2',
+        ylim=(0, math.log(len(proba))),
+    ))
 
     # plot the values and the entropy
-    ax = fig.add_subplot(gs[2:3, 2:], sharex=ax)
-    ax.set_title('State Value')
-    artists.extend(ax.plot(ep.output.val['ext'], c='C0'))
-    artists.extend(ax.plot(ep.output.val['int'], c='C1'))
-    ent = -(ep.output.pol * np.exp(ep.output.pol)).sum(-1)
-    artists.append(ax.axvline(t, c='r', zorder=+10))
-    ax.yaxis.set_visible(False)
-    if view is not None:
-        ax.set_xlim(view)
+    # ax = fig.add_subplot(gs[2, 2], sharex=ax)
+    # artists.extend(plot_series(
+    #     , title='State Value', xlim=xlim, ax=ax
+    # ))
 
-    ax_ = ax.twinx()
-    ax_.set_ylim(0., math.log(len(proba)))
-    artists.extend(ax_.plot(ent, c='C2'))
+    for ax in fig.axes:
+        if ax is not view:
+            artists.append(ax.axvline(t, c='r', zorder=+10))
 
     return artists

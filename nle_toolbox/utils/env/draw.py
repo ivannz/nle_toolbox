@@ -53,7 +53,7 @@ def get_compass(proba):
     }
 
 
-def draw(fig, npy, t, *, actions, artists=None):
+def draw(fig, npy, t, *, actions, artists=None, view=None):
     artists = list() if artists is None else artists
     gs = GridSpec(3, 3)
 
@@ -63,6 +63,16 @@ def draw(fig, npy, t, *, actions, artists=None):
 
     ep = plyr.apply(lambda x: x[:n_length], npy)
     ep_t = plyr.apply(lambda x: x[t], ep)
+
+    # compute the moving view port around `t`
+    if view is not None:
+        if isinstance(view, float):
+            view = int(n_length * view) + 1
+
+        if not isinstance(view, int):
+            raise ValueError("`view` must be float or int.")
+
+        view = max(0, t - view), min(n_length, t + view)
 
     # the current policy and the botl stats
     proba = dict(zip(actions, softmax(ep_t.output.pol, axis=-1).tolist()))
@@ -95,22 +105,30 @@ def draw(fig, npy, t, *, actions, artists=None):
     artists.extend(ax.plot(blstats[:, NLE_BL_HP]))
     artists.append(ax.axvline(t, c='r', zorder=+10))
     ax.set_ylim(-1, blstats[:, NLE_BL_HPMAX].max() + 1)
+    if view is not None:
+        ax.set_xlim(view)
 
     ax = fig.add_subplot(gs[1:2, 2:], sharex=ax)
     ax.set_title('Timedelta')
     artists.extend(ax.plot(np.ediff1d(blstats[:, NLE_BL_TIME], to_begin=0)))
     artists.append(ax.axvline(t, c='r', zorder=+10))
+    if view is not None:
+        ax.set_xlim(view)
 
     ax = fig.add_subplot(gs[2:3, :1], sharex=ax)
     ax.set_title('Game Score')
     artists.extend(ax.plot(blstats[:, NLE_BL_SCORE]))
     artists.append(ax.axvline(t, c='r', zorder=+10))
+    if view is not None:
+        ax.set_xlim(view)
 
     ax = fig.add_subplot(gs[2:3, 1:2], sharex=ax)
     ax.set_title('LVL/XP')
     artists.extend(ax.plot(blstats[:, NLE_BL_EXP]))
     artists.extend(ax.plot(blstats[:, NLE_BL_XP]))
     artists.append(ax.axvline(t, c='r', zorder=+10))
+    if view is not None:
+        ax.set_xlim(view)
 
     # plot the values and the entropy
     ax = fig.add_subplot(gs[2:3, 2:], sharex=ax)
@@ -119,6 +137,9 @@ def draw(fig, npy, t, *, actions, artists=None):
     artists.extend(ax.plot(ep.output.val['int'], c='C1'))
     ent = -(ep.output.pol * np.exp(ep.output.pol)).sum(-1)
     artists.append(ax.axvline(t, c='r', zorder=+10))
+    if view is not None:
+        ax.set_xlim(view)
+
     ax_ = ax.twinx()
     ax_.set_ylim(0., math.log(len(proba)))
     artists.extend(ax_.plot(ent, c='C2'))

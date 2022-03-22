@@ -67,12 +67,14 @@ def draw(fig, npy, t, *, actions, artists=None, view=None):
     # compute the moving view port around `t`
     if view is not None:
         if isinstance(view, float):
-            view = int(n_length * view) + 1
+            view = max(1, int(n_length * view))
 
         if not isinstance(view, int):
             raise ValueError("`view` must be float or int.")
 
-        view = max(0, t - view), min(n_length, t + view)
+        # get the center of the "viewport" [x - v, x + v]
+        x = min(max(t, view), n_length - 1 - view)
+        view = x - view, x + view  # XXX make vw stay within [0, T-1]
 
     # the current policy and the botl stats
     proba = dict(zip(actions, softmax(ep_t.output.pol, axis=-1).tolist()))
@@ -105,21 +107,28 @@ def draw(fig, npy, t, *, actions, artists=None, view=None):
     artists.extend(ax.plot(blstats[:, NLE_BL_HP]))
     artists.append(ax.axvline(t, c='r', zorder=+10))
     ax.set_ylim(-1, blstats[:, NLE_BL_HPMAX].max() + 1)
+    ax.yaxis.set_visible(False)  # the values are irrelevant
     if view is not None:
         ax.set_xlim(view)
 
+    series = np.ediff1d(blstats[:, NLE_BL_TIME], to_begin=0)
     ax = fig.add_subplot(gs[1:2, 2:], sharex=ax)
     ax.set_title('Timedelta')
-    artists.extend(ax.plot(np.ediff1d(blstats[:, NLE_BL_TIME], to_begin=0)))
+    artists.extend(ax.plot(series))
     artists.append(ax.axvline(t, c='r', zorder=+10))
+    ax.yaxis.set_visible(False)
     if view is not None:
+        ax.set_ylim(-1, series.max())
         ax.set_xlim(view)
 
+    series = blstats[:, NLE_BL_SCORE]
     ax = fig.add_subplot(gs[2:3, :1], sharex=ax)
     ax.set_title('Game Score')
-    artists.extend(ax.plot(blstats[:, NLE_BL_SCORE]))
+    artists.extend(ax.plot(series))
     artists.append(ax.axvline(t, c='r', zorder=+10))
+    ax.yaxis.set_visible(False)
     if view is not None:
+        ax.set_ylim(-1, series.max())
         ax.set_xlim(view)
 
     ax = fig.add_subplot(gs[2:3, 1:2], sharex=ax)
@@ -127,6 +136,7 @@ def draw(fig, npy, t, *, actions, artists=None, view=None):
     artists.extend(ax.plot(blstats[:, NLE_BL_EXP]))
     artists.extend(ax.plot(blstats[:, NLE_BL_XP]))
     artists.append(ax.axvline(t, c='r', zorder=+10))
+    ax.yaxis.set_visible(False)
     if view is not None:
         ax.set_xlim(view)
 
@@ -137,6 +147,7 @@ def draw(fig, npy, t, *, actions, artists=None, view=None):
     artists.extend(ax.plot(ep.output.val['int'], c='C1'))
     ent = -(ep.output.pol * np.exp(ep.output.pol)).sum(-1)
     artists.append(ax.axvline(t, c='r', zorder=+10))
+    ax.yaxis.set_visible(False)
     if view is not None:
         ax.set_xlim(view)
 

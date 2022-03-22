@@ -10,7 +10,7 @@ from typing import Optional, Any
 from .basic import ObsEmbedding, ValPolPair
 from ..transformer.hit import HiT
 from ...utils.nn import LinearSplitter, ModuleDict
-from ...utils.nn import masked_rnn, masked_multinomial
+from ...utils.nn import masked_rnn, apply_mask, masked_multinomial
 
 
 class NLEHITNeuralAgent(nn.Module):
@@ -96,10 +96,9 @@ class NLEHITNeuralAgent(nn.Module):
             pol = plyr.apply(torch.mul, pol, tau)
 
         if 'action_mask' in obs:
-            act = plyr.apply(masked_multinomial, pol, obs['action_mask'])
+            pol = plyr.apply(apply_mask, pol, obs['action_mask'], value=-10.)
 
-        else:
-            act = plyr.apply(masked_multinomial, pol, mask=None)
+        act = plyr.apply(masked_multinomial, pol, mask=None)
 
         # act, (val, pol), hx
         return act, ValPolPair(

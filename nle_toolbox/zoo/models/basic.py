@@ -291,6 +291,7 @@ class NLENeuralAgent(nn.Module):
             'hunger',
             'condition',
         ),
+        h0: bool = True,
         learn_tau: bool = False,
     ) -> dict:
         # compile the recipe
@@ -355,4 +356,5 @@ class NLENeuralAgent(nn.Module):
                 'in_features': hidden_size,
                 'out_features': 1,
             } if learn_tau else None,
+            'h0': h0,
         }

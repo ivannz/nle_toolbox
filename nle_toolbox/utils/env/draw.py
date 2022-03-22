@@ -106,7 +106,7 @@ def draw(fig, npy, t, *, actions, artists=None, view=None):
     ax.set_title('HP')
     artists.extend(ax.plot(blstats[:, NLE_BL_HP]))
     artists.append(ax.axvline(t, c='r', zorder=+10))
-    ax.set_ylim(-1, blstats[:, NLE_BL_HPMAX].max() + 1)
+    ax.set_ylim(0, blstats[:, NLE_BL_HPMAX].max() + 1)
     ax.yaxis.set_visible(False)  # the values are irrelevant
     if view is not None:
         ax.set_xlim(view)
@@ -118,7 +118,7 @@ def draw(fig, npy, t, *, actions, artists=None, view=None):
     artists.append(ax.axvline(t, c='r', zorder=+10))
     ax.yaxis.set_visible(False)
     if view is not None:
-        ax.set_ylim(-1, series.max())
+        ax.set_ylim(0, series.max())
         ax.set_xlim(view)
 
     series = blstats[:, NLE_BL_SCORE]
@@ -128,7 +128,7 @@ def draw(fig, npy, t, *, actions, artists=None, view=None):
     artists.append(ax.axvline(t, c='r', zorder=+10))
     ax.yaxis.set_visible(False)
     if view is not None:
-        ax.set_ylim(-1, series.max())
+        ax.set_ylim(0, series.max())
         ax.set_xlim(view)
 
     ax = fig.add_subplot(gs[2:3, 1:2], sharex=ax)

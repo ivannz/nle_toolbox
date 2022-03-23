@@ -523,7 +523,20 @@ class Chassis(InteractiveWrapper):
         set when 'letters' in `.menu` is non-empty.
     """
     def __init__(self, env, *, split=True, space=' '):
+        # make sure that the wrapped env has all the necessary fields
+        #  and their dtype is correct. `message` must be np.uint8, since
+        #  we use .view('S') to convert to bytes.
+        if not ({'message', 'misc'} <= set(env.observation_space)):
+            raise RuntimeError("Chassis requires `message` and `misc`"
+                               " fields in the observation dict.")
+
+        msg = env.observation_space['message']
+        if msg.dtype != np.uint8:
+            raise RuntimeError("NLE's `message` field must have"
+                               f" `uint8` dtype. Got `{msg.dtype}`.")
+
         super().__init__(env)
+
         self.split = split
 
         # let the user configure SPACE action id

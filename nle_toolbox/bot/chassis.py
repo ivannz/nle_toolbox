@@ -10,7 +10,7 @@ import numpy as np
 from gym import spaces, Wrapper
 
 from itertools import chain
-from collections import namedtuple
+from collections import namedtuple, deque
 
 from warnings import warn
 
@@ -1081,3 +1081,48 @@ class ActionMasker(InteractiveWrapper):
         # i.e. masked or forbidden. (0 -- allowed, 1 -- forbidden)
         obs['action_mask'] = mask
         return obs, rew, done, info
+
+
+class RecentMessageLog(InteractiveWrapper):
+    """A non-interactive wrapper that adds a message log to the observations.
+    """
+
+    def __new__(cls, env, *, n_recent=0):
+        # bypass self if no history is required
+        if n_recent < 1:
+            return env
+
+        space = env.observation_space['message']
+        assert space.dtype == np.uint8
+
+        return object.__new__(cls)
+
+    def __init__(self, env, *, n_recent=0):
+        super().__init__(env)
+
+        # we need a reference to the underlying chassis wrapper, since it
+        #  colects the messages
+        self.chassis = get_wrapper(env, Chassis)
+        self.messages = deque([], n_recent)
+
+        # declare the message log observation
+        shape = env.observation_space['message'].shape
+        self.space = self.observation_space['message_log'] = spaces.Box(
+            low=np.iinfo(np.uint8).min, high=np.iinfo(np.uint8).max,
+            shape=(n_recent,) + shape, dtype=np.uint8,
+        )
+
+    def update(self, obs, rew=0., fin=False, nfo=None):
+        # flush the message log
+        if self.method_ == 'reset':
+            self.messages.extend((b'',) * self.messages.maxlen)
+
+        # get the messages from the Chassis, making sure to include
+        #  the empty ones, when there were no messages
+        self.messages.extend(self.chassis.messages or (b'',))
+
+        # form the log, convert it to uint8, and add to dict
+        log = np.array(self.messages, np.dtype('S256'))
+        obs['message_log'] = log[:, np.newaxis].view(np.uint8)
+
+        return obs, rew, fin, nfo

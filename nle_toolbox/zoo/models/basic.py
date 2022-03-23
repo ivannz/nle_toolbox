@@ -229,7 +229,11 @@ class NLENeuralAgent(nn.Module):
         # actor-critic and temperature heads
         self.pol = LinearSplitter(**pol)
         self.val = LinearSplitter(**val)
-        self.tau = LinearSplitter(**tau) if tau else None
+        if isinstance(tau, float):
+            self.tau = tau
+
+        else:
+            self.tau = LinearSplitter(**tau) if tau else None
 
     @property
     def initial_hx(self) -> Optional[Tensor]:
@@ -255,9 +259,12 @@ class NLENeuralAgent(nn.Module):
         pol = self.pol(out)
 
         # apply the temperature
-        if self.tau is not None:
+        if isinstance(self.tau, nn.Module):
             tau = plyr.apply(F.softplus, self.tau(out))
             pol = plyr.apply(torch.mul, pol, tau)
+
+        elif isinstance(self.tau, float):
+            pol = plyr.apply(torch.div, pol, other=self.tau)
 
         # It appears that sampling from a masked distribution distabilizes
         #  policy-grad-based algos. This is possibly due to changed support

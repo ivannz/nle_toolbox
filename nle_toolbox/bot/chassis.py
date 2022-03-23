@@ -737,7 +737,10 @@ def get_wrapper(env, cls=Chassis):
 
         env = env.env
 
-    raise RuntimeError
+    raise RuntimeError(
+        f"The wrapper `{type(env).__name__}` requires"
+        f" a `{cls.__name__}` wrapper in the upstream chain."
+    )
 
 
 def decompactify(text, defaults=b'\033'):

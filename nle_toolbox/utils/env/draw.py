@@ -97,7 +97,8 @@ def draw(fig, npy, t, *, actions, artists=None, view=None):
 
     # the adjusted duration of the episode and the actions taken in the env
     n_length = len(npy.input.fin) - int(npy.input.fin[-1])
-    act_ = plyr.apply(lambda x: x[1:], npy.input.act)  # XXX act[t] is a_{t-1}
+    act_ = plyr.apply(lambda x: x[1:], npy.input.act)  # XXX a_t is act[t+1]
+    rew_ = plyr.apply(lambda x: x[1:], npy.input.rew)  # XXX rew[t] is r_t
 
     ep = plyr.apply(lambda x: x[:n_length], npy)
     ep_t = plyr.apply(lambda x: x[t], ep)
@@ -174,11 +175,11 @@ def draw(fig, npy, t, *, actions, artists=None, view=None):
         ylim=(0, math.log(len(proba))),
     ))
 
-    # plot the values and the entropy
-    # ax = fig.add_subplot(gs[2, 2], sharex=ax)
-    # artists.extend(plot_series(
-    #     , title='State Value', xlim=xlim, ax=ax
-    # ))
+    # plot the rewards
+    ax = fig.add_subplot(gs[2, 2], sharex=ax)
+    artists.extend(plot_series(
+        rew_.cumsum(), title='Reward', xlim=xlim, ax=ax,
+    ))
 
     for ax in fig.axes:
         if ax is not view:

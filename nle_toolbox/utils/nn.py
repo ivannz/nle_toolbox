@@ -726,24 +726,24 @@ def apply_mask(tensor, mask, *, value=-float('inf')):
     return tensor.masked_fill(mask.to(bool), value)
 
 
-def masked_softmax(raw, mask, dim=-1):
+def masked_softmax(raw, mask, dim=-1, *, value=None):
     """Compute the probabilites from the unnormalized logits `raw` along
     the indicated `dim`, optionally masking using `mask`.
     """
     # '-inf' masking should be applied to the unnormalized logits
     if mask is not None:
-        raw = apply_mask(raw, mask)
+        raw = apply_mask(raw, mask, value=value)
 
     # sample from the masked distribution
     return raw.softmax(dim=dim)
 
 
-def masked_multinomial(raw, mask, dim=-1):
+def masked_multinomial(raw, mask, dim=-1, *, value=None):
     """Draw a variate from the categorical rv, specified by the unnormalized
     logits `raw` at the indicated `dim`, optionally masked by `mask` boolean
     array of the same shape as `raw`.
     """
-    proba = masked_softmax(raw.detach(), mask, dim=dim)
+    proba = masked_softmax(raw.detach(), mask, dim=dim, value=value)
 
     # sample from the masked distribution
     return multinomial(proba, 1, dim).squeeze(dim)

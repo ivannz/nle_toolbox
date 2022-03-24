@@ -21,6 +21,7 @@ if __name__ == '__main__':
             'nle_toolbox',
             'nle_toolbox.utils',
             'nle_toolbox.utils.env',
+            'nle_toolbox.utils.env.minihack',
             'nle_toolbox.utils.replay',
             'nle_toolbox.utils.rl',
             'nle_toolbox.bot',

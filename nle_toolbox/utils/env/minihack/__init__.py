@@ -21,6 +21,7 @@ from minihack import MiniHackNavigation, LevelGenerator
 from minihack.envs import register
 
 from nle import nethack
+from pkg_resources import resource_filename
 
 # the essential navigation actions and basic GUI handling
 BASE_ACTIONS = (
@@ -221,6 +222,40 @@ register(
     kwargs=dict(
         n_giant_rats=10,  # 0-10 rats
         det=False,
+        reward_win=+1,
+        reward_lose=-1,
+        actions=BASE_ACTIONS,
+    ),
+)
+
+
+class MiniHackFightCustomCorridorDark(MiniHackNavigation):
+    def __init__(
+        self,
+        *args,
+        # Play with human knight character by default
+        character: str = "kni-hum-law-fem",
+        # Default episode limit
+        max_episode_steps: int = 500,
+        # remaining kwargs (see `MiniHackNavigation`)
+        **other,
+    ):
+        with open(resource_filename(__name__, 'corridor.des'), 'rt') as f:
+            des_file = f.read()
+
+        super().__init__(
+            *args,
+            des_file=des_file,
+            character=character,
+            max_episode_steps=max_episode_steps,
+            **other,
+        )
+
+
+register(
+    id='MiniHack-FightCustomCorridor-Dark-v0',
+    entry_point=MiniHackFightCustomCorridorDark,
+    kwargs=dict(
         reward_win=+1,
         reward_lose=-1,
         actions=BASE_ACTIONS,

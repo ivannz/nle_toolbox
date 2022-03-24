@@ -1,0 +1,42 @@
+LEVEL: "mylevel"
+FLAGS: hardfloor
+GEOMETRY:left,top
+MAP
+-----
+|...#
+|...|
+|...#
+-#-#-
+ENDMAP
+REGION: (0,0,5,5), unlit, "ordinary"
+BRANCH: (0,0,2,2),(3,3,3,3)
+
+# overwrite the mapped region
+ROOM: "ordinary", unlit, (1, 1), (left, top), (5, 5),unfilled {}
+
+# middle room
+$n_rats_mid = 1d7 + (-1)
+ROOM: "ordinary", unlit, (2, 5), (center, center), (5, 5) {
+    IF [$n_rats_mid > 0] {
+        LOOP [$n_rats_mid] {
+            MONSTER: "giant rat", random
+        }
+    }
+}
+
+# exit room
+$n_rats_end = 1d7 + (-1)
+ROOM: "ordinary", unlit, (3, 3), (center, center), (5, 5) {
+    IF [$n_rats_end > 0] {
+        LOOP [$n_rats_end] {
+            MONSTER: "giant rat", random
+        }
+    }
+    STAIR: random, down
+}
+
+# link the rooms and replace the closed doors
+RANDOM_CORRIDORS
+RANDOM_CORRIDORS
+RANDOM_CORRIDORS
+REPLACE_TERRAIN: (0, 0, 40, 20), '+', '#', 100%

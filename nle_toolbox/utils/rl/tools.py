@@ -1,11 +1,23 @@
 import plyr
 import torch
+import numpy as np
 
 from collections import defaultdict
 
 
+def cat(arraylike, dim=0):
+    """Concatenate the ndarray or tensor data along the specified dim.
+    """
+    if isinstance(arraylike[0], torch.Tensor):
+        return torch.cat(arraylike, dim=dim)
+
+    return np.concatenate(arraylike, axis=dim)
+
+
 def stitch(*chunks, dim=0):
-    return plyr.apply(torch.cat, *chunks, _star=False, dim=dim)
+    """Stitch the structured fragments.
+    """
+    return plyr.apply(cat, *chunks, _star=False, dim=dim)
 
 
 def extract(strands, reset, fragment):
@@ -17,16 +29,17 @@ def extract(strands, reset, fragment):
     strands : container of lists
         The incomplete fragmented trajectory traced in each environment.
 
-    reset : boolean torch.Tensor, shape=(T, B)
+    reset : boolean array-like, shape=(T, B)
         A boolean mask, indicating if the associated record in `fragment` is
-        marked as the end-of-episode.
+        marked as the end-of-episode. Either a numpy array or a torch tensor.
 
-    fragment : Nested Container of torch.Tensor, shape=(T, B, ...)
-        The new fragment of trajectories with in each environment.
+    fragment : Nested Container of array-like, shape=(T, B, ...)
+        The new fragment of trajectories with in each environment. Can be
+        a mix of numpy arrays and torch tensors.
 
     Yields
     ------
-    episode : Nested Container of torch.Tensor, shape=(L, ...)
+    episode : Nested Container of array-like, shape=(L, ...)
         The full trajectory of each episode, completed by the given fragment.
         Unlike the `fragment`, the history DOES NOT have the batch dimension.
     """

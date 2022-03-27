@@ -302,6 +302,13 @@ class LinearSplitter(Linear):
         return text.format(self.in_features, splits, self.bias is not None)
 
 
+class ModuleDictSplitter(BaseModuleDict):
+    """A dictionary that applies the contained modules to the input tensor.
+    """
+    def forward(self, input: Tensor) -> Mapping[str, Tensor]:
+        return {k: None if m is None else m(input) for k, m in self.items()}
+
+
 def trailing_lerp(x0, x1, *, eta, leading=1):
     """Unsqueeze the trailing dims of `eta` for linear interpolation.
 

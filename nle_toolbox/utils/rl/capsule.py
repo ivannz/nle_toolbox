@@ -74,20 +74,23 @@ def capsule(step, update, length, *, device=None):
         input = suply(cloner, pyt)
         nfo = nfo_
 
-        # REACT x_t, a_{t-1}, h_t -->> a_t, y_t, h_{t+1} with `a_t \sim \pi_t`
+        # REACT and update runtime recurrent state from t to t+1
+        #   x_t, a_{t-1}, h_t -->> a_t, y_t, h_{t+1}
+        #   with `a_t \sim \pi_t`
         #  XXX if the runtime state is irrelevant to `step`, then it returns
         #  `hx` intact
-        act_, output, hx = step(input, hx=hx)
+        act_, output, hx = step(input, hx=hx, nfo=nfo)
 
         # (sys) update the action in `npy` through `pyt`
         suply(torch.Tensor.copy_, pyt.act, act_)
 
-        # STEP
+        # STEP and advance local time
         #   \omega_t, a_t -->> \omega_{t+1}, x_{t+1}, r_{t+1}, d_{t+1}, I_{t+1}
-        #   with \omega_t being the unobservable complete state
+        #   with \omega_t being the unobservable complete state, and I_{t+1}
+        #   -- the dict with information relevant to the t -->> t+1 transition.
         obs_, rew_, fin_, nfo_ = yield npy.act
-        # XXX adding a skip logic here is dumb: just don't .send anything into
-        # this capsule!
+        # XXX adding a skip logic here is dumb: just don't `.send` anything
+        #  into this capsule!
 
         # (sys) update the rest of the `npy-pyt` aliased context
         suply(np.copyto, npy.obs, obs_)
@@ -132,6 +135,17 @@ def buffered(step, update, length, *, device=None):
     -------
     Unlike `capsule`, this collector does not track the value output of
     the `step`, ONLY its `act` and `hx` outputs.
+
+    Thoughts
+    --------
+    `obs`, `act`, `rew` and `fin` are STRONGLY structured, meaning that this
+    data has static unchanging higher-level structure and lower-level shape
+    and dtype. Thus this data is guaranteed to be collated and sent to the
+    requested device. `nfo` on the other hand is WEAKLY structured, meaning
+    that we only know that it is a dict, which may have dynamically changing
+    content. Therefore it is relayed to `step` and `update` as is.
+
+    `yield` statements govern determine the LOCAL time tick of this capsule.
     """
     assert length >= 1
     device = torch.device('cpu') if device is None else device
@@ -146,10 +160,12 @@ def buffered(step, update, length, *, device=None):
     input = pyt = suply(torch.Tensor.unsqueeze_, pyt, dim=0)
     if device.type != 'cpu':
         input = suply(lambda t: t.to(device), pyt)
+        # XXX `pyt` and `input` diverge here: `pyt` resides in the pinned
+        #  memory on the host, whereas `input` has been copied to device.
 
     # (sys) allocate buffers on the correct device and get its single-step
     # editable slices. `+ 1` is the one-step ahead overlap
-    buffer = apply(torch.cat, *(input,) * (length + 1), _star=False)
+    buffer = apply(torch.cat, *(input,) * (length + 1), _star=False, dim=0)
     vw_buffer = tuple([
         suply(lambda x: x[t:t+1], buffer) for t in range(length + 1)
     ])
@@ -158,20 +174,19 @@ def buffered(step, update, length, *, device=None):
     nfos, nfo_ = [], {}  # XXX the true initial info dict is empty
     gx = hx = None  # XXX `hx` is either None, or an object
     while True:  # .learn()
-        # (sys) write the current `pyt` into the buffer
+        # (sys) write the current `pyt` into the current slice of the buffer
         input = vw_buffer[len(nfos)]
         suply(torch.Tensor.copy_, input, pyt)
         nfo = nfo_
 
         # REACT and update the action in `npy` through `pyt`
-        #   x_t, a_{t-1}, h_t
-        #     -->> a_t, y_t, h_{t+1} with `a_t \sim \pi_t`
-        #   but y_t is ignored
+        #   x_t, a_{t-1}, h_t -->> a_t, y_t, h_{t+1}
+        #   with `a_t \sim \pi_t`, but y_t is ignored
         with torch.no_grad():  # XXX `yield` NEVER causes `__exit__`!
-            act_, _, hx = step(input, hx=hx)
+            act_, _, hx = step(input, hx=hx, nfo=nfo)
             suply(torch.Tensor.copy_, pyt.act, act_)
 
-        # STEP
+        # STEP and advance local time
         #   \omega_t, a_t
         #      -->> \omega_{t+1}, x_{t+1}, r_{t+1}, d_{t+1}, I_{t+1}
         #   with \omega_t being the unobservable complete state

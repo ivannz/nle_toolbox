@@ -157,6 +157,44 @@ def pyt_vtrace(
     return adv + val
 
 
+def pyt_multistep(rew, fin, val, *, gam, n_lookahead=4):
+    r"""Compute the multistep lookahead bootstrapped returns.
+
+    $$
+        G^l_t = \sum_{j=0}^{l-1} \biggl\{
+            \prod_{k < j} \beta_{t+k+1}
+        \bigr\} r_{t+k+1}
+        + \biggl\{
+            \prod_{k < l} \beta_{t+k+1}
+        \bigr\} v_{t+l}
+        \,, $$
+    where $
+        \beta_t = \gamma 1_{f_t \neq \top}
+    $ -- the observed conditional probability of not terminating on
+    the t-th step.
+    """
+    # v_t ~ G_t = r_{t+1} + \gamma 1_{\neg f_{t+1}} G_{t+1}
+    # f_{t+1} indicates if $t+1$ is terminal
+    fin_ = trailing_broadcast(fin, rew)
+
+    # broadcast gamma coefficients over the negated termination mask
+    # gam_[t] = (~fin[t]) * gamma = 1_{\neg f_{t+1}} \gamma, t=0..T-1
+    gam_ = rew.new_full(fin_.shape, gam).masked_fill_(fin_, 0.)
+
+    # the current multistep ahead bootstrapped returns (diffable)
+    val_ = val.clone()  # zero-step ahead bootstrapped returns
+    for _ in range(n_lookahead):
+        # [O(T B F)] one-step time-delta target $r_{t+1} + \beta_{t+1} v_{t+1}$
+        # where $\beta_{t+1} = \gamma 1_{\neg f_{t+1}}$.
+        #     val_[t] = rew[t] + gam_[t] * val[t+1], t=0..T-1
+        # here `gam_[t]` is $\beta_{t+1}$ and `rew` is $r_{t+1}$
+        val_[:-1] = torch.addcmul(rew, gam_, val[1:])
+        val = val_.clone()  # XXX val[-1] never changes, cos it is zero-ahead!
+
+    # do not cut off incomplete returns
+    return val_[:-1]
+
+
 def pyt_q_targets(
     rew,
     fin,
@@ -165,6 +203,7 @@ def pyt_q_targets(
     *,
     gam,
     double=True,
+    n_lookahead=1,
 ):
     r"""Compute the Double-DQN targets.
 
@@ -213,11 +252,6 @@ def pyt_q_targets(
         \hat{a}_t = \arg \max_a q_{\theta t}(a)
     $ being the action taken by the current Q-network $\theta$ at $x_t$.
     """
-
-    # broadcast gamma coefficients over the logcal-not of the termination mask
-    fin_ = trailing_broadcast(fin, rew)
-    gam_ = rew.new_full(fin_.shape, gam).masked_fill_(fin_, 0.)
-
     # use $q_{\theta t}$ instead of $q_{\theta^- t}$ in Q-learning
     if qtg is None:
         qtg, double = qon, False
@@ -235,42 +269,5 @@ def pyt_q_targets(
         # get $\hat{v}_t = \max_a q_{\theta^- t}(a)$
         val = qtg.max(dim=-1).values
 
-    # get the td-targets $r_{t+1} + \gamma \hat{v}_{t+1} 1_{f_{t+1}}$
-    # here `rew` is $r_{t+1}$, `gam_` is \gamma 1_{\neg f_{t+1}}
-    return torch.addcmul(rew, gam_, val[1:])
-
-
-def pyt_multistep(rew, fin, val, *, gam, n_lookahead=4):
-    r"""Compute the multistep lookahead bootstrapped returns.
-
-    $$
-        G^l_t = \sum_{j=0}^{l-1} \biggl\{
-            \prod_{k < j} \beta_{t+k+1}
-        \bigr\} r_{t+k+1}
-        + \biggl\{
-            \prod_{k < l} \beta_{t+k+1}
-        \bigr\} v_{t+l}
-        \,, $$
-    where $
-        \beta_t = \gamma 1_{f_t \neq \top}
-    $ -- the observed conditional probability of not terminating on
-    the t-th step.
-    """
-    # v_t ~ G_t = r_{t+1} + \gamma 1_{\neg f_{t+1}} G_{t+1}
-    # f_{t+1} indicates if $t+1$ is terminal
-    fin_ = trailing_broadcast(fin, rew)
-
-    # broadcast gamma coefficients over the negated termination mask
-    # gam_[t] = (~fin[t]) * gamma = 1_{\neg f_{t+1}} \gamma, t=0..T-1
-    gam_ = rew.new_full(fin_.shape, gam).masked_fill_(fin_, 0.)
-
-    # the current multistep ahead bootstrapped returns (diffable)
-    val_ = val.clone()  # zero-step ahead bootstrapped returns
-    for _ in range(n_lookahead):
-        # [O(T B F)] one-step time-delta target
-        #    val_[t] = rew[t] + gamma * fin[t] * val[t+1], t=0..T-1
-        val_[:-1] = torch.addcmul(rew, gam_, val[1:])
-        val = val_.clone()  # XXX val[-1] never changes, cos it is zero-ahead!
-
-    # do not cut off incomplete returns
-    return val_[:-1]
+    # compute one- or multi-step lookahead bootstrapped value targets
+    return pyt_multistep(rew, fin, val, gam=gam, n_lookahead=n_lookahead)

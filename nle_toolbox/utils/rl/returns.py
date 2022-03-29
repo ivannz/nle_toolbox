@@ -7,20 +7,6 @@ def trailing_broadcast(what, to):
     return what.reshape(what.shape + (1,) * max(to.ndim - what.ndim, 0))
 
 
-def pyt_td_target(rew, fin, val, *, gam):
-    r"""Compute the TD(0) targets.
-
-    Details
-    -------
-    see `pyt_ret_gae` about synchronization of `rew`, `fin` and `val`.
-    `rew` is on element shorter than `val`!
-    """
-
-    fin_ = trailing_broadcast(fin, rew)
-    gam_ = rew.new_full(fin_.shape, gam).masked_fill_(fin_, 0.)
-    return torch.addcmul(rew, gam_, val[1:])
-
-
 def pyt_ret_gae(rew, fin, val, *, gam, lam, rho=None):
     r"""Compute the Generalized Advantage Estimates and the Returns.
 
@@ -160,19 +146,34 @@ def pyt_vtrace(
 def pyt_multistep(rew, fin, val, *, gam, n_lookahead=4):
     r"""Compute the multistep lookahead bootstrapped returns.
 
+    Details
+    -------
+    see `pyt_ret_gae` about synchronization of `rew`, `fin` and `val`.
+    `rew` is on element shorter than `val`!
+
+    This computes the $l$-step lookahead bootstrapped return (value estimate):
     $$
-        G^l_t = \sum_{j=0}^{l-1} \biggl\{
-            \prod_{k < j} \beta_{t+k+1}
-        \bigr\} r_{t+k+1}
-        + \biggl\{
-            \prod_{k < l} \beta_{t+k+1}
-        \bigr\} v_{t+l}
+        G^l_t
+            = \sum_{j=0}^{l-1}
+                \biggl\{ \prod_{k < j} \beta_{t+k+1} \biggr\}
+                r_{t+k+1}
+            + \biggl\{ \prod_{k < l} \beta_{t+k+1} \biggr\}
+                v_{t+l}
+                % bootstrapped value-to-go estimate at state t+l. It does
+                % not include r_{t+l}, since this reward has been received
+                % SIMULTANEOUSLY with transitioning to the state.
         \,, $$
     where $
         \beta_t = \gamma 1_{f_t \neq \top}
     $ -- the observed conditional probability of not terminating on
     the t-th step.
+
+    ATTN this explanation of $\beta_t$ makes no sense. Either we compute
+    expectations and discount by gamma and never terminate (since gamma
+    is the probability of termination conditional on NOT havin terminated
+    before), or terminate upon end-of-episode and never discount.
     """
+
     # v_t ~ G_t = r_{t+1} + \gamma 1_{\neg f_{t+1}} G_{t+1}
     # f_{t+1} indicates if $t+1$ is terminal
     fin_ = trailing_broadcast(fin, rew)
@@ -181,18 +182,37 @@ def pyt_multistep(rew, fin, val, *, gam, n_lookahead=4):
     # gam_[t] = (~fin[t]) * gamma = 1_{\neg f_{t+1}} \gamma, t=0..T-1
     gam_ = rew.new_full(fin_.shape, gam).masked_fill_(fin_, 0.)
 
-    # the current multistep ahead bootstrapped returns (diffable)
-    val_ = val.clone()  # zero-step ahead bootstrapped returns
-    for _ in range(n_lookahead):
+    # fast branch for one-step lookahead, i.e. the TD(0) targets.
+    if n_lookahead == 1:
+        return torch.addcmul(rew, gam_, val[1:])
+
+    assert n_lookahead > 1
+
+    # diffably compute the multi-step ahead bootstrapped returns
+    val_ = val.clone()  # XXX we will be diffably overwriting some values
+    for _ in range(1, n_lookahead):
         # [O(T B F)] one-step time-delta target $r_{t+1} + \beta_{t+1} v_{t+1}$
         # where $\beta_{t+1} = \gamma 1_{\neg f_{t+1}}$.
         #     val_[t] = rew[t] + gam_[t] * val[t+1], t=0..T-1
         # here `gam_[t]` is $\beta_{t+1}$ and `rew` is $r_{t+1}$
         val_[:-1] = torch.addcmul(rew, gam_, val[1:])
-        val = val_.clone()  # XXX val[-1] never changes, cos it is zero-ahead!
+
+        # `val[-1]` never changes, cause it's zero-step ahead bootstrapped!
+        val = val_.clone()
 
     # do not cut off incomplete returns
-    return val_[:-1]
+    return torch.addcmul(rew, gam_, val[1:])
+
+
+def pyt_td_target(rew, fin, val, *, gam):
+    r"""Compute the TD(0) targets.
+
+    Details
+    -------
+    see `pyt_ret_gae` about synchronization of `rew`, `fin` and `val`.
+    `rew` is on element shorter than `val`!
+    """
+    return pyt_multistep(rew, fin, val, gam=gam, n_lookahead=1)
 
 
 def pyt_q_targets(

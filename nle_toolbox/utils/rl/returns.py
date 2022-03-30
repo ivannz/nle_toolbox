@@ -199,6 +199,10 @@ def pyt_multistep(rew, fin, val, *, gam, n_lookahead=4):
 
         # `val[-1]` never changes, cause it's zero-step ahead bootstrapped!
         val = val_.clone()
+        # XXX l-step ahead bootstrapped return estimate can be though of as
+        #    G^l_t = r_{t+1} + \gamma \tilde{v}_{t+1}
+        # where $\tilde{v}_{t+1}$ is the (l-1)-step bootstrapped value esimate.
+        # Here `val` is exactly that.
 
     # do not cut off incomplete returns
     return torch.addcmul(rew, gam_, val[1:])

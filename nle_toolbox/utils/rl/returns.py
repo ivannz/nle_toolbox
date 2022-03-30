@@ -89,7 +89,7 @@ def pyt_vtrace(
 
     Recall that the TD(0) residuals are given by
     $$
-        \delta_t = r_{t+1} + \gamma v_{t+1} 1_{\neg d_{t+1}} - v_t
+        \delta_t = r_{t+1} + \gamma 1_{\neg d_{t+1}} v_{t+1} - v_t
         \,, $$
 
     where $v_t = V(\omega_t)$ -- the state-value function associated with
@@ -136,7 +136,7 @@ def pyt_vtrace(
         # V-trace [O(B F)] \hat{v}_t = \hat{a}_t + v_t
         #         \hat{a}_t = \rho_t \delta_t
         #                   + \gamma c_t 1_{\neg d_{t+1}} \hat{a}_{t+1}
-        # adv[t] = rho[t] * delta[t] + gamma * fin[t] * see[t] * adv[t+1]
+        # adv[t] = rho[t] * delta[t] + gamma * (~fin[t]) * see[t] * adv[t+1]
         adv[-j-1].addcmul_(adv[-j], see[-j], value=gam)
         adv[-j-1].masked_fill_(fin_[-j], 0.).add_(delta[-j])
 

@@ -46,7 +46,7 @@ def get_compass(proba):
         if a in proba:
             dirs[a.name] += proba[a]
 
-    # normalize and scale the directonal vectors
+    # normalize and scale the directional vectors
     C = sum(dirs.values())
     return {
         CompassDirection[k]:
@@ -54,12 +54,26 @@ def get_compass(proba):
     }
 
 
-def get_ylim(x, rtol=0.1, atol=0.01):
-    a, b = min(x), max(x)
+def limits(a, b, *, rtol=0.1, atol=0.01):
+    """Aesthetically expand the given limits.
+    """
+    lo, hi = min(a, b), max(a, b)
     return (
-        a - abs(a) * rtol - atol,
-        b + abs(b) * rtol + atol,
+        lo - abs(lo) * rtol - atol,
+        hi + abs(hi) * rtol + atol,
     )
+
+
+def viewport(x, width, *, lo, hi):
+    """Get the center of the symmetric viewport [x - width, x + width]
+    that is guaranteed to stay within the specified interval [lo, hi].
+    """
+    c = min(max(x, lo + width), hi - width)
+    return c - width, c + width
+
+
+def get_ylim(x, *, rtol=0.1, atol=0.01):
+    return limits(min(x), max(x), rtol=rtol, atol=atol)
 
 
 def plot_series(
@@ -112,10 +126,8 @@ def draw(fig, npy, t, *, actions, artists=None, view=None):
         if not isinstance(view, int):
             raise ValueError("`view` must be float or int.")
 
-        # get the center of the "viewport" [x - v, x + v]
-        # XXX make vw stay within [0, T-1]
-        x = min(max(t, view), n_length - 1 - view)
-        xlim = x - view - 0.25, x + view + 0.25
+        xlim = limits(*viewport(t, view, lo=0, hi=n_length-1),
+                      rtol=0., atol=0.25)
 
     # the current policy and the botl stats
     proba = dict(zip(actions, softmax(ep_t.output.pol, axis=-1).tolist()))

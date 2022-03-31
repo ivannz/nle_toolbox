@@ -178,30 +178,40 @@ class VQEmbedding(nn.Embedding):
             self.register_forward_hook(_update)
 
     @torch.no_grad()
-    def accumulate(
+    def centroids(
         self,
         input: torch.Tensor,
         indices: torch.Tensor,
-    ) -> None:
-        """Update the exponential moving averages.
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Compute the cluster centroids for the given data and affinity.
         """
-        # raise if EMA updates were disabled (all `ema_*` buffers are None)
-        assert self.alpha > 0
-
-        # `input` is `... x F`, `indices` are `...`
+        # `input` is `... x F` and `indices` are `...`
         affinity = F.one_hot(indices, self.num_embeddings).to(input)
         # XXX 'affinity' is `... x C`
 
         # sum the F-dim input vectors into bins by affinity
-        #  S_j = \sum_i 1_{k_i = j} x_i
-        #  n_j = \lvert i: k_i=j \rvert
-        upd_vecs = torch.einsum('...f, ...k -> kf', input, affinity)
-        upd_size = torch.einsum('...k -> k', affinity)
+        #  `size[j]`:  n_j = \lvert i: k_i=j \rvert
+        #  `vecs[j]`:  S_j = \sum_i 1_{k_i = j} x_i
+        size = torch.einsum('...k -> k', affinity)
+        vecs = torch.einsum('...f, ...k -> kf', input, affinity)
+
+        return size, vecs  # XXX $\mu_j = \frac{S_j}{n_j}$ <<- centroid
+
+    @torch.no_grad()
+    def accumulate(
+        self,
+        size: torch.Tensor,
+        vecs: torch.Tensor,
+    ) -> None:
+        """Update the exponential moving averages with the centroid data.
+        """
+        # raise if EMA updates were disabled (all `ema_*` buffers are None)
+        assert self.alpha > 0
 
         # track cluster size and unnormalized vecs with EMA
         # XXX torch.lerp(a, b, w) = a.lerp(b, w) = (1 - w) * a + w * b
-        self.ema_vecs.lerp_(upd_vecs, self.alpha)
-        self.ema_size.lerp_(upd_size, self.alpha)
+        self.ema_size.lerp_(size, self.alpha)
+        self.ema_vecs.lerp_(vecs, self.alpha)
 
     @torch.no_grad()
     def update(self) -> None:
@@ -261,7 +271,8 @@ class VQEmbedding(nn.Embedding):
         #  for moving average embedding updates on forward pass
         indices = self.lookup(input)  # E-step
         if self.training and self.alpha > 0:
-            self.accumulate(input, indices)  # M-step
+            # slowly update embeddings with new cluster centroids
+            self.accumulate(*self.centroids(input, indices))  # M-step
 
         # fetch the embedding vectors (cluster centroids)
         vectors = self.fetch(indices)

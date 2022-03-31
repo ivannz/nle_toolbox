@@ -172,6 +172,7 @@ class VQEmbedding(nn.Embedding):
             if module.training:
                 module.update()
 
+        self.do_auto_update = update != 'manual'
         if update == 'backward':
             self.register_full_backward_hook(_update)
 
@@ -203,30 +204,52 @@ class VQEmbedding(nn.Embedding):
         self,
         size: torch.Tensor,
         vecs: torch.Tensor,
+        *,
+        alpha: float = None,
     ) -> None:
         """Update the exponential moving averages with the centroid data.
         """
+        alpha = float(self.alpha if alpha is None else alpha)
+
         # raise if EMA updates were disabled (all `ema_*` buffers are None)
-        assert self.alpha > 0
+        if not (0 < alpha <= 1):
+            raise ValueError(f"`alpha` must be in (0, 1]. Got `{alpha}`.")
 
         # track cluster size and unnormalized vecs with EMA
         # XXX torch.lerp(a, b, w) = a.lerp(b, w) = (1 - w) * a + w * b
-        self.ema_size.lerp_(size, self.alpha)
-        self.ema_vecs.lerp_(vecs, self.alpha)
+        self.ema_size.lerp_(size, alpha)
+        self.ema_vecs.lerp_(vecs, alpha)
 
     @torch.no_grad()
-    def update(self) -> None:
+    def update(
+        self,
+        size: torch.Tensor = None,
+        vecs: torch.Tensor = None,
+    ) -> None:
         """Update the embedding vectors from the accumulated EMA stats.
         """
-        # Silently quit if EMA is disabled (all `ema_*` buffers are None)
-        if self.alpha <= 0:
+        # if `size` and `vecs` were not overridden, use our own buffers
+        if size is not None and vecs is not None:
+            pass
+
+        elif size is None and vecs is None:
+            size = self.ema_size
+            vecs = self.ema_vecs
+
+        else:
+            raise RuntimeError("No centroid data for the incremental update.")
+
+        # Silently quit if EMA is disabled (all `.ema_*` buffers are `None`)
+        if size is None or vecs is None:
             return
 
+        assert self.num_embeddings == len(size)
+
         # Apply \epsilon-Laplace correction
-        n = float(self.ema_size.sum())
-        coef = n / (n + self.num_embeddings * self.eps)
-        size = coef * (self.ema_size + self.eps).unsqueeze(1)
-        self.weight.data.copy_(self.ema_vecs / size)
+        n = float(size.sum())
+        coef = n / (n + len(size) * self.eps)
+        size = coef * (size + self.eps).unsqueeze(1)
+        self.weight.data.copy_(vecs / size)
 
     @torch.no_grad()
     def lookup(self, input: torch.Tensor) -> torch.Tensor:
@@ -271,7 +294,7 @@ class VQEmbedding(nn.Embedding):
         # lookup the index of the nearest embedding and accumulate stats
         #  for moving average embedding updates on forward pass
         indices = self.lookup(input)  # E-step
-        if self.training and self.alpha > 0:
+        if self.training and self.alpha > 0 and self.do_auto_update:
             # slowly update embeddings with new cluster centroids
             self.accumulate(*self.centroids(input, indices))  # M-step
 

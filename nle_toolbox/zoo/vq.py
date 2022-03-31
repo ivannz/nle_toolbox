@@ -145,10 +145,11 @@ class VQEmbedding(nn.Embedding):
         if not (0 < self.alpha <= 1):
             raise ValueError(f"`alpha` must be in (0, 1]. Got `{self.alpha}`.")
 
-        if update not in ('forward', 'backward'):
+        if update not in ('forward', 'backward', 'manual'):
             raise ValueError(
                 "In exponential moving average mode (`alpha` > 0) `update`"
-                f" must be either 'forward' or 'backward'. Got `{update}`."
+                " must be either 'manual', 'forward' or 'backward'."
+                f" Got `{update}`."
             )
 
         # demote `.weight` to a buffer and disable backprop for it

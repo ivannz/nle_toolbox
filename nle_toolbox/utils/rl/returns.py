@@ -7,6 +7,28 @@ def trailing_broadcast(what, to):
     return what.reshape(what.shape + (1,) * max(to.ndim - what.ndim, 0))
 
 
+def gamma(rew, fin, *, gam):
+    """Prepare the discount factor array.
+
+    The discount factor `gam` can be a scalar, or a [T x B x ...] tensor,
+    which can be broadcasted to `rew` from its leading dimensions (like `fin`).
+    """
+    # align the termination mask with the rewards `rew` by broadcasting from
+    #  the leading dimensions
+    fin_ = trailing_broadcast(fin, rew)
+
+    # either create a new gamma tensor, or align the given one with `rew`
+    if isinstance(gam, float):
+        gam_ = rew.new_full(fin_.shape, gam)
+
+    else:
+        # make sure to `.clone` gamma since we will be overwriting it soon
+        gam_ = trailing_broadcast(gam, rew).clone()
+
+    # annihilate the discounts according to the termination mask
+    return fin_, gam_.masked_fill_(fin_, 0.)
+
+
 def pyt_ret_gae(rew, fin, val, *, gam, lam, rho=None):
     r"""Compute the Generalized Advantage Estimates and the Returns.
 
@@ -22,11 +44,12 @@ def pyt_ret_gae(rew, fin, val, *, gam, lam, rho=None):
     `rew[t]` is $r_{t+1}$, `fin[t]` indicates if $\omega_{t+1}$ is terminal,
     and `val[t]` is the bootsrap estimate $v_t$ of the value-to-go from the
     current state $\omega_t$.
+
+    See `gamma()` about the discount factor `gam`.
     """
 
-    # broadcast gamma coefficients over the logcal-not of the termination mask
-    fin_ = trailing_broadcast(fin, rew)
-    gam_ = rew.new_full(fin_.shape, gam).masked_fill_(fin_, 0.)
+    # get properly broadcasted and zeroed discount coefficients
+    fin_, gam_ = gamma(rew, fin, gam=gam)
 
     # [O(T B F)] delta_t = r_{t+1} + \gamma 1_{T \leq t+1} v_{t+1} - v_t
     # td(n) target is the (n+1)-step lookahead value estimate over the current
@@ -114,17 +137,20 @@ def pyt_vtrace(
                 \gamma^{j-t} \delta_j \eta_j \prod_{k=t}^{j-1} c_k
             = v_t + \delta_t \eta_t + \gamma c_t (\hat{v}_{t+1} - v_{t+1})
         \,. $$
+
+    See `gamma()` about the discount factor `gam`.
     """
 
-    # add extra trailing unitary dims for broadcasting
+    # get properly broadcasted and zeroed discount coefficients
+    fin_, gam_ = gamma(rew, fin, gam=gam)
+
+    # add extra trailing unitary dims for broadcasting to the log-likelihood
     # XXX rho is the current/behavioural likelihood ratio for the taken action
-    fin_ = trailing_broadcast(fin, rew)
     rho_ = rho.reshape_as(fin_)
 
     # [O(T B F)] get the clipped importance-weighted td(0)-residuals
     #     \delta_t = r_{t+1} + \gamma v_{t+1} - v_t
     #     \rho_t = \min\{ \bar{\rho},  \frac{\pi_t(a_t)}{\mu_t(a_t)} \}
-    gam_ = rew.new_full(fin_.shape, gam).masked_fill_(fin_, 0.)
     delta = torch.addcmul(rew, gam_, val[1:]).sub_(val[:-1])
     delta.mul_(rho_.exp().clamp_(max=r_bar))  # NB extra copy by `.exp()`
 
@@ -149,7 +175,7 @@ def pyt_multistep(rew, fin, val, *, gam, n_lookahead=4):
     Details
     -------
     see `pyt_ret_gae` about synchronization of `rew`, `fin` and `val`.
-    `rew` is on element shorter than `val`!
+    `rew` is on element shorter than `val`! See `gamma()` about `gam`.
 
     This computes the $l$-step lookahead bootstrapped return (value estimate):
     $$
@@ -165,22 +191,23 @@ def pyt_multistep(rew, fin, val, *, gam, n_lookahead=4):
         \,, $$
     where $
         \beta_t = \gamma 1_{f_t \neq \top}
-    $ -- the observed conditional probability of not terminating on
-    the t-th step.
+    $ -- the observed conditional probability of not terminating on the t-th
+    step, $f_t = \top$ indicates if the step $t$ was terminal, and
+    $$
+        v_t \approx
+            G^\infty_t
+                = r_{t+1} + \gamma 1_{\neg f_{t+1}} G^\infty_{t+1}
+        \,. $$
 
     ATTN this explanation of $\beta_t$ makes no sense. Either we compute
     expectations and discount by gamma and never terminate (since gamma
-    is the probability of termination conditional on NOT havin terminated
+    is the probability of termination conditional on NOT having terminated
     before), or terminate upon end-of-episode and never discount.
     """
 
-    # v_t ~ G_t = r_{t+1} + \gamma 1_{\neg f_{t+1}} G_{t+1}
-    # f_{t+1} indicates if $t+1$ is terminal
-    fin_ = trailing_broadcast(fin, rew)
-
-    # broadcast gamma coefficients over the negated termination mask
+    # get properly broadcasted and zeroed discount coefficients
     # gam_[t] = (~fin[t]) * gamma = 1_{\neg f_{t+1}} \gamma, t=0..T-1
-    gam_ = rew.new_full(fin_.shape, gam).masked_fill_(fin_, 0.)
+    fin_, gam_ = gamma(rew, fin, gam=gam)
 
     # fast branch for one-step lookahead, i.e. the TD(0) targets.
     if n_lookahead == 1:
@@ -214,7 +241,7 @@ def pyt_td_target(rew, fin, val, *, gam):
     Details
     -------
     see `pyt_ret_gae` about synchronization of `rew`, `fin` and `val`.
-    `rew` is on element shorter than `val`!
+    `rew` is on element shorter than `val`! See `gamma()` about `gam`.
     """
     return pyt_multistep(rew, fin, val, gam=gam, n_lookahead=1)
 

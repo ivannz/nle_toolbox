@@ -38,7 +38,7 @@ def pyt_ret_gae(rew, fin, val, *, gam, lam, rho=None):
     `val` [(T + 1) x B x ...] is expected to have the following timing: for
     the transition
     $$
-        \omega_t, a_t -->> \omega_{t+1}, x_{t+1}, r^E_{t+1}, d_{t+1}
+        \omega_t, a_t -->> \omega_{t+1}, x_{t+1}, r^E_{t+1}, f_{t+1}
         \,, $$
 
     `rew[t]` is $r_{t+1}$, `fin[t]` indicates if $\omega_{t+1}$ is terminal,
@@ -62,7 +62,7 @@ def pyt_ret_gae(rew, fin, val, *, gam, lam, rho=None):
 
     # A_t = (1 - \lambda) \sum_{t \leq j} \lambda^{j-t} \delta^{j-t}_j
     #     = \sum_{s \geq 0} \delta_{t+s} (\gamma \lambda)^s
-    # G_t = r_{t+1} + \gamma G_{t+1} 1_{\neg d_{t+1}}
+    # G_t = r_{t+1} + \gamma G_{t+1} 1_{\neg f_{t+1}}
     # XXX this loop version has slight overhead which is noticeable only for
     # short sequences and small batches, but otherwise this scales linearly
     # in all dimensions. Using doubly buffered
@@ -71,18 +71,17 @@ def pyt_ret_gae(rew, fin, val, *, gam, lam, rho=None):
     # iteration by T times! (`pyt_returns` and `pyt_multistep_returns`)
     gae, ret = torch.zeros_like(val), val.clone()
     for j in range(1, len(delta) + 1):
-        # rew[t], fin[t], val[t] is r_{t+1}, d_{t+1} and v(s_t)
+        # rew[t], fin[t], val[t] is r_{t+1}, f_{t+1} and v(s_t)
         # t is -j, t+1 is -j-1 (j=1..T)
 
-        # GAE [O(B F)] A_t = \delta_t + \lambda \gamma A_{t+1} 1_{\neg d_{t+1}}
+        # GAE [O(B F)] A_t = \delta_t + \lambda \gamma A_{t+1} 1_{\neg f_{t+1}}
         # gae[t] = delta[t] + gamma * C * fin[t] * gae[t+1], t=0..T-1
-        torch.mul(gae[-j], lam * gam, out=gae[-j-1]).masked_fill_(fin_[-j], 0.)
-        gae[-j-1].add_(delta[-j])
+        # XXX `gam_` is already zeroed according to the `fin` mask!
+        torch.addcmul(delta[-j], gam_[-j], gae[-j], value=lam, out=gae[-j-1])
 
-        # RET [O(B F)] G_t = r_{t+1} + \gamma G_{t+1} 1_{\neg d_{t+1}}
+        # RET [O(B F)] G_t = r_{t+1} + \gamma G_{t+1} 1_{\neg f_{t+1}}
         # ret[t] = rew[t] + gamma * fin[t] * ret[t+1], t=0..T-1
-        torch.mul(ret[-j], gam, out=ret[-j-1]).masked_fill_(fin_[-j], 0.)
-        ret[-j-1].add_(rew[-j])
+        torch.addcmul(rew[-j], gam_[-j], ret[-j], out=ret[-j-1])
 
     return ret[:-1], gae[:-1]
 
@@ -112,12 +111,12 @@ def pyt_vtrace(
 
     Recall that the TD(0) residuals are given by
     $$
-        \delta_t = r_{t+1} + \gamma 1_{\neg d_{t+1}} v_{t+1} - v_t
+        \delta_t = r_{t+1} + \gamma 1_{\neg f_{t+1}} v_{t+1} - v_t
         \,, $$
 
     where $v_t = V(\omega_t)$ -- the state-value function associated with
     the behaviour policy $\mu$, and $\delta_s = 0$ for all $s \geq t$ if
-    $d_t = \top$. The $n$-step lookahead v-trace value estimate is
+    $f_t = \top$. The $n$-step lookahead v-trace value estimate is
     $$
         \hat{v}^n_t
             = v_t + \sum_{j=t}^{t+n-1} \gamma^{j-t}
@@ -128,7 +127,7 @@ def pyt_vtrace(
         c_j = \min\{ e^\rho_j, \bar{c} \}
     $, $
         \eta_j = \min\{ e^\rho_j, \bar{\rho} \}
-    $, and $\hat{v}^n_s = 0$ for all $s \geq t$ if $d_t = \top$. At
+    $, and $\hat{v}^n_s = 0$ for all $s \geq t$ if $f_t = \top$. At
     the $n \to \infty$ limit (bounded $\rho_t$, $v_t$, and $r_t$) we
     get a forward recurrence
     $$
@@ -157,14 +156,14 @@ def pyt_vtrace(
     adv = torch.zeros_like(val)
 
     # c_t = \min\{ \bar{c}, \frac{\pi_t(a_t)}{\mu_t(a_t)} \}
-    see = rho_.exp().clamp_(max=c_bar)
+    # `seegam[t]` is \gamma 1_{\neg f_t} c_t, i.e. zeroed at terminal steps
+    seegam = rho_.exp().clamp_(max=c_bar).mul_(gam_)
     for j in range(1, len(delta) + 1):
         # V-trace [O(B F)] \hat{v}_t = \hat{a}_t + v_t
         #         \hat{a}_t = \rho_t \delta_t
-        #                   + \gamma c_t 1_{\neg d_{t+1}} \hat{a}_{t+1}
+        #                   + \gamma c_t 1_{\neg f_{t+1}} \hat{a}_{t+1}
         # adv[t] = rho[t] * delta[t] + gamma * (~fin[t]) * see[t] * adv[t+1]
-        adv[-j-1].addcmul_(adv[-j], see[-j], value=gam)
-        adv[-j-1].masked_fill_(fin_[-j], 0.).add_(delta[-j])
+        torch.addcmul(delta[-j], seegam[-j], adv[-j], out=adv[-j-1])
 
     return adv + val
 

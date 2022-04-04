@@ -220,6 +220,8 @@ class VQEmbedding(nn.Embedding):
         self.ema_size.lerp_(size, alpha)
         self.ema_vecs.lerp_(vecs, alpha)
 
+        return self.ema_size, self.ema_vecs
+
     @torch.no_grad()
     def update(
         self,
@@ -263,7 +265,7 @@ class VQEmbedding(nn.Embedding):
 
         sqr = (emb * emb).sum(dim=1)
         cov = torch.einsum('...j, kj -> ...k', input, emb)
-        return torch.argmin(sqr - 2 * cov, dim=-1)
+        return torch.argmin(sqr.sub(cov, alpha=2), dim=-1)
 
     def fetch(
         self,

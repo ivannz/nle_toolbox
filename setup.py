@@ -29,5 +29,6 @@ if __name__ == '__main__':
             'nle_toolbox.zoo',
             'nle_toolbox.zoo.models',
             'nle_toolbox.zoo.transformer',
+            'nle_toolbox.zoo.vq',
         ],
     )

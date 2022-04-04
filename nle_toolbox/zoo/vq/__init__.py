@@ -1,1 +1,1 @@
-from .vqvae import * 
+from .legacy import *

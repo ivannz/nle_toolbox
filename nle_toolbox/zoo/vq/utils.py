@@ -135,8 +135,8 @@ class VQEMAUpdater(BaseVQHelper):
         #     `size[j]` is $n_j = \lvert i: k_i = j \rvert$
         #     `vecs[j]` is $S_j = \sum_i 1_{k_i = j} x_i$
         affinity = F.one_hot(output.indices, module.num_embeddings).to(input)
+        vecs = torch.einsum('...f, ...k -> kf', input.detach(), affinity)
         size = torch.einsum('...k -> k', affinity)
-        vecs = torch.einsum('...f, ...k -> kf', input, affinity)
 
         # update the accumulators, but first lazily init them
         if self._acc.get(module) is None:

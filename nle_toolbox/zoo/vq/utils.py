@@ -86,6 +86,8 @@ class VQEMAUpdater(BaseVQHelper):
         alpha: float,
         # Laplace correction coefficient
         eps: float = 1e-3,
+        # whether to actually update the embedding or just track ema stats
+        update: bool = True,
     ) -> None:
         if not (0 < alpha <= 1):
             raise ValueError(f"`alpha` must be in (0, 1]. Got `{alpha}`.")
@@ -97,11 +99,13 @@ class VQEMAUpdater(BaseVQHelper):
         # `*_ema` buffers accumulate the historical clustering stats using
         #  exponential moving average with the specified `alpha` decay.
         self._acc, self._ema = {}, {}
-        self.alpha, self.eps = alpha, eps
+        self.alpha, self.eps, self._update = alpha, eps, update
 
-        # prevent the autograd from recording operations on the embeddings
-        for mod in self._hooks:
-            mod.weight.requires_grad_(False)
+        # prevent the autograd from recording operations on the embeddings,
+        #  only in case when updates are enabled
+        if update:
+            for mod in self._hooks:
+                mod.weight.requires_grad_(False)
 
     def on_forward(
         self,
@@ -123,7 +127,8 @@ class VQEMAUpdater(BaseVQHelper):
             return
 
         # we use EMA only if the embedding parameter does not require grad
-        assert not module.weight.requires_grad
+        if self._update and module.weight.requires_grad:
+            raise RuntimeError(f"The VQ-VAE `{module}` has grads enabled.")
 
         # Compute the assignments and unnormalized barycentres
         # XXX $\mu_j = \frac{S_j}{n_j}$ the cluster centroid like in k-means
@@ -177,6 +182,9 @@ class VQEMAUpdater(BaseVQHelper):
             # flush the accumulators (non necessary since we `.pop`)
             acc.size.zero_()
             acc.vecs.zero_()
+
+            if not self._update:
+                continue
 
             # Apply the \epsilon-Laplace correction to new cluster sizes and
             #  update the embeddings inplace with the new centroids

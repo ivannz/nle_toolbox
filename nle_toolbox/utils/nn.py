@@ -251,6 +251,58 @@ def bselect(tensor, *index, dim):
     return out.reshape(*lead, *tail)
 
 
+def flatten(struct, *, flat=None):
+    """Get a flat depth-first representation of the nested object.
+
+    Parameters
+    ----------
+    struct : nested object
+        The nested object to serialize.
+
+    flat : list, or None
+        A flat iterable container to serially append the leaf data to.
+
+    Returns
+    -------
+    flat : list
+        The container populated with the leaves in depth-first structure order.
+
+    struct : nested object
+        The skeletal structure of the nested object with arbitrary leaf data.
+    """
+    if not isinstance(flat, list):
+        flat = []
+
+    return flat, plyr.apply(flat.append, struct)
+
+
+def unflatten(flat, struct):
+    """Place the data from iterable into the specified nested structure.
+
+    Parameters
+    ----------
+    flat : iterable
+        The iterable that supplies the data for the nested object in fifo
+        depth-first order.
+
+    struct : nested object
+        The desired structure of the nested object (leaf data is intact).
+
+    Returns
+    -------
+    result : nested object
+        The nested object with the specified hierarchy populated by the data
+        from the iterable.
+
+    Details
+    -------
+    Raises `StopItertaion` if the iterable is exhausted before the structure is
+    completely rebuilt. Data consumed by an unsuccessful `unflatten` is LOST.
+    """
+
+    return plyr.apply(lambda *a, it=iter(flat): next(it), struct)
+
+
 class LinearSplitter(Linear):
     """A linear layer splitting its result into a dict of tensors.
 
@@ -280,23 +332,27 @@ class LinearSplitter(Linear):
         out_features: Union[int, Mapping[str, int]],
         bias: bool = True,
     ) -> None:
-        n_out = sum(out_features.values())
-        super().__init__(in_features, n_out, bias=bias)
+        # `out_features` is a potentially nested object, so we extract
+        #  its structre and flatten the size data contained within
+        sizes, structure = flatten(out_features)
+        if not all(isinstance(sz, int) and sz >= 0 for sz in sizes):
+            raise ValueError("Structured output sizes cannot be negative.")
 
-        self.names, self.sizes = zip(*out_features.items())
+        super().__init__(in_features, sum(sizes), bias=bias)
+        self.structure, self.sizes = structure, tuple(sizes)
 
     def forward(
         self,
         input: Tensor,
     ) -> Mapping[str, Tensor]:
-        # apply the linear transformation
-        out = super().forward(input)
+        # apply the linear layer and split the outputs along the last dim
+        flat = torch.split(super().forward(input), self.sizes, dim=-1)
 
-        # then split the outputs along the last dim and give them names
-        return dict(zip(self.names, out.split(self.sizes, dim=-1)))
+        # ... then rebuild the correct nested structure
+        return unflatten(flat, self.structure)
 
     def extra_repr(self) -> str:
-        splits = dict(zip(self.names, self.sizes))
+        splits = unflatten(self.sizes, self.structure)
 
         text = "in_features={}, out_features={}, bias={}"
         return text.format(self.in_features, splits, self.bias is not None)

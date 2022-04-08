@@ -282,12 +282,10 @@ def pyt_entropy(logpol, *, mask=None):
     # `.kl_div` correctly handles `-ve` infinite logits (or zero probs), but
     #  computes $\sum_j e^{\log p_j} \log p_j$, so we need to flip the sign.
     # XXX `.new_zeros(())` creates a scalar zero (yes, an EMPTY tuple)
-    # XXX `.kl_div` computes \sum_n e^y_n (y_n - x_n), for y = logpol, x = 0.
+    # XXX `kl_div(x, y, log_target=True)` computes \sum_n e^y_n (y_n - x_n)
     entropy = F.kl_div(
-        logpol.new_zeros(()),
-        logpol[:-1],
-        log_target=True,
-        reduction='none',
+        # input `x` and target `y`, with x = 0. and y = logpol
+        logpol.new_zeros(()), logpol[:-1], reduction='none', log_target=True,
     ).sum(dim=-1).neg()
 
     # sum over the remaining dims after applying the optional mask

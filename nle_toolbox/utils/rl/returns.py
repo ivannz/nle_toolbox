@@ -1,13 +1,24 @@
 import torch
 
+from typing import Union
+from torch import Tensor
 
-def trailing_broadcast(what, to):
+
+def trailing_broadcast(
+    what: Tensor,
+    to: Tensor,
+) -> Tensor:
     """Add extra trailing unitary dims to `what` for broadcasting it to `to`.
     """
     return what.reshape(what.shape + (1,) * max(to.ndim - what.ndim, 0))
 
 
-def gamma(rew, fin, *, gam):
+def gamma(
+    rew: Tensor,
+    fin: Tensor,
+    *,
+    gam: Union[float, Tensor],
+) -> tuple[Tensor, Tensor]:
     """Prepare the discount factor array.
 
     The discount factor `gam` can be a scalar, or a [T x B x ...] tensor,
@@ -29,7 +40,15 @@ def gamma(rew, fin, *, gam):
     return fin_, gam_.masked_fill_(fin_, 0.)
 
 
-def pyt_ret_gae(rew, fin, val, *, gam, lam, rho=None):
+def pyt_ret_gae(
+    rew: Tensor,
+    fin: Tensor,
+    val: Tensor,
+    *,
+    gam: Union[float, Tensor],
+    lam: float,
+    rho: Tensor = None,
+) -> tuple[Tensor, Tensor]:
     r"""Compute the Generalized Advantage Estimates and the Returns.
 
     Details
@@ -87,15 +106,15 @@ def pyt_ret_gae(rew, fin, val, *, gam, lam, rho=None):
 
 
 def pyt_vtrace(
-    rew,
-    fin,
-    val,
-    rho,
+    rew: Tensor,
+    fin: Tensor,
+    val: Tensor,
+    rho: Tensor,
     *,
-    gam,
-    r_bar=float('+inf'),
-    c_bar=float('+inf'),
-):
+    gam: Union[float, Tensor],
+    r_bar: float = float('+inf'),
+    c_bar: float = float('+inf'),
+) -> Tensor:
     r"""Compute the V-trace state-value estimate.
 
     Details
@@ -168,7 +187,14 @@ def pyt_vtrace(
     return adv + val
 
 
-def pyt_multistep(rew, fin, val, *, gam, n_lookahead=4):
+def pyt_multistep(
+    rew: Tensor,
+    fin: Tensor,
+    val: Tensor,
+    *,
+    gam: Union[float, Tensor],
+    n_lookahead: int = 4,
+) -> Tensor:
     r"""Compute the multistep lookahead bootstrapped returns.
 
     Details
@@ -234,41 +260,32 @@ def pyt_multistep(rew, fin, val, *, gam, n_lookahead=4):
     return torch.addcmul(rew, gam_, val[1:])
 
 
-def pyt_td_target(rew, fin, val, *, gam):
-    r"""Compute the TD(0) targets.
-
-    Details
-    -------
-    see `pyt_ret_gae` about synchronization of `rew`, `fin` and `val`.
-    `rew` is on element shorter than `val`! See `gamma()` about `gam`.
-    """
-    return pyt_multistep(rew, fin, val, gam=gam, n_lookahead=1)
-
-
-def pyt_q_targets(
-    rew,
-    fin,
-    qon,
-    qtg=None,
+def pyt_q_values(
+    qon: Tensor,
+    qtg: Tensor = None,
     *,
-    gam,
-    double=True,
-    n_lookahead=1,
-):
-    r"""Compute the Double-DQN targets.
+    double: bool = True,
+) -> Tensor:
+    r"""Compute the state-values from the q-factors using Double-DQN method.
 
     Details
     -------
-    In Q-learning the action value function minimizes the TD-error
+    In Q-learning the action value function $q_{\theta t}$ minimizes
+    the TD-error
     $$
-        r_{t+1} + \gamma \hat{v}_{t+1} 1_{\neg f_{t+1}}
+        r_{t+1} + \gamma 1_{\neg f_{t+1}} \hat{v}_{t+1}
             - q_{\theta t}(a_t)
         \,, $$
 
-    w.r.t. Q-network parameters $\theta$, with $
+    where $\hat{v}_{t+1}$ is the value estimate of the next state following
+    taking the action $a_t$. The error is minimized w.r.t. Q-network parameters
+    $\theta$, with $
         q_{\phi t}(\cdot)
             = q((x_t, a_{t-1}, r_t, f_t, h_t), \cdot; \phi)
-    $. In classic Q-learning there is no target network and the next state
+    $. The difference between various Q-learning methods lies in the way
+    the next state value is computed.
+
+    In classic Q-learning there is no target network and the next state
     optimal value function is bootstrapped using the current Q-network:
     $$
         \hat{v}_t \approx \max_a q_{\theta t}(a)
@@ -310,14 +327,50 @@ def pyt_q_targets(
     # `qon` is $q_{\theta t}$, and `qtg` is $q_{\theta^- t}$
     if double:
         # get $\hat{a}_t = \arg \max_a q_{\theta t}$
-        hat = qon.max(dim=-1).indices.unsqueeze(-1)
+        hat = qon.argmax(dim=-1, keepdim=True)
 
         # get $\hat{v}_t = q_{\theta^- t}(\hat{a}_t)$
-        val = qtg.gather(-1, hat).squeeze(-1)
+        val = qtg.gather(-1, hat).squeeze_(-1)
 
     else:
         # get $\hat{v}_t = \max_a q_{\theta^- t}(a)$
         val = qtg.max(dim=-1).values
+
+    return val
+
+
+def pyt_td_target(
+    rew: Tensor,
+    fin: Tensor,
+    val: Tensor,
+    *,
+    gam: Union[float, Tensor],
+) -> Tensor:
+    r"""Compute the TD(0) targets.
+
+    Details
+    -------
+    see `pyt_ret_gae` about synchronization of `rew`, `fin` and `val`.
+    `rew` is on element shorter than `val`! See `gamma()` about `gam`.
+    """
+    return pyt_multistep(rew, fin, val, gam=gam, n_lookahead=1)
+
+
+def pyt_q_targets(
+    rew: Tensor,
+    fin: Tensor,
+    qon: Tensor,
+    qtg: Tensor = None,
+    *,
+    gam: Union[float, Tensor],
+    double: bool = True,
+    n_lookahead: int = 1,
+) -> Tensor:
+    r"""Compute the multistep lookahead Double-DQN targets.
+    """
+
+    # get the state value estimates from the q-values
+    val = pyt_q_values(qon, qtg, double=double)
 
     # compute one- or multi-step lookahead bootstrapped value targets
     return pyt_multistep(rew, fin, val, gam=gam, n_lookahead=n_lookahead)

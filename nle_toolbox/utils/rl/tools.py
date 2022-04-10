@@ -2,27 +2,39 @@ import plyr
 import torch
 import numpy as np
 
-from typing import Any
+from typing import Any, Union
+from torch import Tensor
+from numpy import ndarray
 
 from collections import defaultdict, deque
 
 
-def cat(arraylike, dim=0):
+def cat(
+    arraylike: Union[Tensor, ndarray],
+    dim: int = 0,
+) -> Union[Tensor, ndarray]:
     """Concatenate the ndarray or tensor data along the specified dim.
     """
-    if isinstance(arraylike[0], torch.Tensor):
+    if isinstance(arraylike[0], Tensor):
         return torch.cat(arraylike, dim=dim)
 
     return np.concatenate(arraylike, axis=dim)
 
 
-def stitch(*chunks, dim=0):
+def stitch(
+    *chunks: Any,
+    dim: int = 0,
+) -> Any:
     """Stitch the structured fragments.
     """
     return plyr.apply(cat, *chunks, _star=False, dim=dim)
 
 
-def extract(strands, reset, fragment):
+def extract(
+    strands: dict,
+    reset: Union[Tensor, ndarray],
+    fragment: Any,
+) -> Any:
     """Generate completed episodes from the given trajectory fragments,
     the corresponding reset mask and incomplete strands.
 
@@ -69,21 +81,34 @@ def extract(strands, reset, fragment):
 class EpisodeExtractor:
     """A simple object to track and stitch fragmented trajectories.
     """
-    def __init__(self):
+    def __init__(self) -> None:
         # the fragmented contiguous trajectory of each incomplete episode
         self.strands = defaultdict(list)
 
-    def extract(self, reset, fragment):
+    def extract(
+        self,
+        reset: Union[Tensor, ndarray],
+        fragment: Any,
+    ) -> list[Any]:
         # the list of completed episode trajectories
         return list(extract(self.strands, reset, fragment))
 
-    def finish(self):
+    def finish(self) -> Any:
         out = [stitch(*fragmets) for fragmets in self.strands.values()]
         # this also decrefs the lists in the strands, which causes
         #  them to decref the tensor strands they contain
         self.strands.clear()
 
         return out
+
+
+def empty(
+    x: Any,
+    dim: tuple[int],
+) -> ndarray:
+    # infer the correct basic data type and shape
+    x = np.asanyarray(x)
+    return np.zeros(dim + x.shape, x.dtype)
 
 
 class UnorderedLazyBuffer:
@@ -95,10 +120,6 @@ class UnorderedLazyBuffer:
         self.free = set()
 
     def from_example(self, ex: Any) -> None:
-        def empty(x: Any, *, dim: tuple[int]) -> np.ndarray:
-            # infer the correct basic data type and shape
-            x = np.asanyarray(x)
-            return np.zeros(dim + x.shape, x.dtype)
 
         # pre-allocate the storage
         # XXX consider memmapping large buffers
@@ -146,7 +167,7 @@ class UnorderedLazyBuffer:
 
         raise IndexError
 
-    def __bool__(self):
+    def __bool__(self) -> bool:
         """Test whether there is anything in the buffer.
         """
         return bool(self.used)

@@ -178,8 +178,17 @@ class UnorderedLazyBuffer:
 
         # get the next free slot (genuine or evicted)
         j = (self.free or self.used).pop()
-        self[j] = ex
-        self.used.appendleft(j)
+        try:
+            self[j] = ex
+
+        except TypeError:
+            # mark the fetched slot as free on any error
+            self.free.add(j)
+            raise
+
+        else:
+            # otherwise use it up
+            self.used.appendleft(j)
 
     def pop(self) -> Any:
         """Pop the oldest data from the buffer.

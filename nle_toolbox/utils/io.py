@@ -2,7 +2,7 @@ import os
 import tempfile
 
 
-def mkstemp(suffix=None, prefix=None, dir=None):
+def mkstemp(suffix: str = None, prefix: str = None, dir: str = None) -> str:
     """Create and return a unique temporary file. The caller is responsible
     for deleting the file when done with it.
     """

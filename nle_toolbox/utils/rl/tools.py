@@ -31,7 +31,7 @@ def stitch(
 
 
 def extract(
-    strands: dict,
+    strands: dict[int, list],
     reset: Union[Tensor, ndarray],
     fragment: Any,
 ) -> Any:
@@ -105,10 +105,34 @@ class EpisodeExtractor:
 def empty(
     x: Any,
     dim: tuple[int],
-) -> ndarray:
+) -> Union[Tensor, ndarray]:
+    # handle non-pyt data through numpy
+    if isinstance(x, Tensor):
+        return x.new_zeros(dim + x.shape)
+
     # infer the correct basic data type and shape
     x = np.asanyarray(x)
     return np.zeros(dim + x.shape, x.dtype)
+
+
+def copyto(
+    dst: Union[Tensor, ndarray],
+    src: Union[Tensor, ndarray],
+    *,
+    at: int,
+) -> None:
+    if isinstance(dst, Tensor):
+        # `torch.can_cast` is the same as `numpy.can_cast(..., 'same_kind')`
+        #  so we compare dtypes directly
+        if src.dtype != dst.dtype:
+            raise TypeError(f"Cannot cast from `{src.dtype}` to `{dst.dtype}`")
+
+        # `.copy_` makes unsafe dtype casts and host-device moves
+        dst[at].copy_(src)
+
+    else:
+        # allow onyl strict dtype copies
+        np.copyto(dst[at], src, 'no')
 
 
 class UnorderedLazyBuffer:
@@ -134,7 +158,7 @@ class UnorderedLazyBuffer:
     def __getitem__(self, index: int) -> Any:
         """Get the data stored at index.
         """
-        return plyr.apply(np.take, self._buffer, indices=index, axis=0)
+        return plyr.apply(lambda x: x[index], self._buffer)
 
     def __setitem__(self, index: int, ex: Any) -> Any:
         """Put the data into the storage at the index.
@@ -143,7 +167,7 @@ class UnorderedLazyBuffer:
         j = (index + self.used.maxlen) if index < 0 else index
 
         # maintain strict data types
-        plyr.apply(lambda x, z: np.copyto(x[j:j+1], z, 'no'), self._buffer, ex)
+        plyr.apply(copyto, self._buffer, ex, at=j)
 
     def push(self, ex: Any) -> None:
         """Push the new data into the buffer, optionally evicting the oldest.

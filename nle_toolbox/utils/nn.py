@@ -366,6 +366,26 @@ class ModuleDictSplitter(BaseModuleDict):
         return {k: None if m is None else m(input) for k, m in self.items()}
 
 
+def scale_grad(x: Tensor, scale: Union[float, Tensor] = 0.5) -> Tensor:
+    """Scale the grads for the backprop."""
+
+    # We can scale grads from less reliable estimates, or longer trajectories
+    # to prevent exploding recurrent grads (making h-h vanish instead)...
+    # XXX Mu-zero does this in its `pseudocode.py::update_weights` and in
+    #  the Nature paper caliming that
+    #  """[To] maintain roughly similar magnitude of gradient across different
+    #  unroll steps [... we] scale the loss of each head by [...] the number
+    #  of [steps to ensure] that the total gradient has similar magnitude
+    #  irrespective of how many steps we unroll for[, and also] scale the
+    #  gradient at [every application] of the dynamics function by 1/2
+    #  [ensuring] that the total gradient  applied to [it] stays constant."""
+    #  (Schrittweiser et al.; 2020 Nature, p. 9, left column top)
+
+    # compute `x -->> (1 - s) * [x] + s * x` which identically evals to `x`,
+    #  but has diffablility properties of `s * x`!
+    return x.detach().lerp(x, scale)  # XXX a.lerp(b, w) = a + w * (b - a)
+
+
 class InputGradScaler(Identity):
     r"""Scale the gradients passing through this layer without affecting
     the values.
@@ -385,7 +405,7 @@ class InputGradScaler(Identity):
         self.scale = scale
 
     def forward(self, input: Tensor) -> Tensor:
-        return input.detach().lerp(input, self.scale)
+        return scale_grad(input, self.scale)
 
     def extra_repr(self) -> str:
         return f'scale={self.scale}'

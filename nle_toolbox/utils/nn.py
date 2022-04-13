@@ -22,7 +22,8 @@ from typing import Optional, Mapping, Any, Union, NamedTuple
 
 from torch.nn import init
 from torch.nn import Module, ModuleDict as BaseModuleDict
-from torch.nn import Linear, LSTM, GRU, RNN, RNNBase
+from torch.nn import LSTM, GRU, RNN, RNNBase
+from torch.nn import Linear, Identity
 from torch.nn import Parameter, ParameterList
 
 
@@ -363,6 +364,31 @@ class ModuleDictSplitter(BaseModuleDict):
     """
     def forward(self, input: Tensor) -> Mapping[str, Tensor]:
         return {k: None if m is None else m(input) for k, m in self.items()}
+
+
+class InputGradScaler(Identity):
+    r"""Scale the gradients passing through this layer without affecting
+    the values.
+
+    Details
+    -------
+    Let $\operatorname{sg}$ be the \emph{stop-grad} operator, which makes
+    its argument a constant. In order to neatly implement input grad scaling
+    we use the following stop-grad trick. For $\eta \in \mathbb{R}$ the map
+    $$
+    y \colon x \mapsto (1 - \eta) \operatorname{sg}(x) + \eta x
+        \,, $$
+    evaluates to $x$, but has a Jaconbian matrix $\eta I$.
+    """
+    def __init__(self, *, scale: float = 0.5) -> None:
+        super().__init__()
+        self.scale = scale
+
+    def forward(self, input: Tensor) -> Tensor:
+        return input.detach().lerp(input, self.scale)
+
+    def extra_repr(self) -> str:
+        return f'scale={self.scale}'
 
 
 def trailing_lerp(x0, x1, *, eta, leading=1):

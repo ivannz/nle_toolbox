@@ -64,6 +64,15 @@ def pyt_ret_gae(
     and `val[t]` is the bootsrap estimate $v_t$ of the value-to-go from the
     current state $\omega_t$.
 
+    Thus $v_t$ estimates the present value of the future stream of rewards
+    $(r_{j+1} )_{j \geq t}$ which includes $r_{t+1}$. In terms of the argument
+    names `val[t] ~ PV(rew[t:], gam)`.
+
+    If a state is TERMINAL ($f_{t+1} = \top$), then the reward stream coming
+    AFTER it is asssumed to be zero ($r_{j+1} = 0$ for all $j > t$). Hence,
+    the returns, time-deltas and bootstrapped esitmates are computed using
+    $\gamma_t = \gamma 1_{\neg f_t}$ series instead of plain `gamma`.
+
     See `gamma()` about the discount factor `gam`.
     """
 
@@ -90,7 +99,7 @@ def pyt_ret_gae(
     # iteration by T times! (`pyt_returns` and `pyt_multistep_returns`)
     gae, ret = torch.zeros_like(val), val.clone()
     for j in range(1, len(delta) + 1):
-        # rew[t], fin[t], val[t] is r_{t+1}, f_{t+1} and v(s_t)
+        # rew[t], fin[t], val[t] is r_{t+1}, f_{t+1} and v_t
         # t is -j, t+1 is -j-1 (j=1..T)
 
         # GAE [O(B F)] A_t = \delta_t + \lambda \gamma A_{t+1} 1_{\neg f_{t+1}}

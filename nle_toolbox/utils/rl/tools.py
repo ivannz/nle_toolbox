@@ -88,6 +88,56 @@ def extract(
         strands[j].append(plyr.apply(lambda x: x[t1:, j], fragment))
 
 
+def add_leading(x: Any, *, n_leading: int = 0) -> Union[Tensor, ndarray]:
+    """View the input as an array with extra unitary leading dimensions.
+
+    Parameters
+    ----------
+    x : arraylike or Tensor
+        A tensor, ndarray or an array-like sequence. Any non-array input is
+        converted to a numpy array.
+
+    Returns
+    -------
+    result : ndarray or Tensor
+        An array or tensor with extra unitary leading dimensions. Copies are
+        avoided where possible.
+    """
+    # let numpy handle everything that is not a tensor
+    if not isinstance(x, Tensor):
+        x = np.asanyarray(x)
+
+    return x.reshape(n_leading * (1,) + x.shape) if n_leading > 0 else x
+
+
+def ensure2d(
+    reset: Union[Tensor, ndarray],
+    fragment: Any,
+) -> tuple[Union[Tensor, ndarray], Any]:
+    """Add as many leading dims to the fragment as were missing in `reset`.
+
+    Details
+    -------
+    `numpy.atleast2d(*arys)` casts torch's tensors to npy's ndarrays, while
+    `torch.atleast_2d` refuses to accept non-array inputs. Besides, we wan to
+    expand the dims only when the reference `reset` array is missing some.
+    """
+    # convert non-array reset to ndarray, unless a tensor or already an ndarray
+    if not isinstance(reset, Tensor):
+        reset = np.asanyarray(reset)
+
+    # silently allow higher than 2d arrays
+    if reset.ndim >= 2:
+        return reset, fragment
+
+    # add the missing dims to the reset array
+    n_missing = 2 - reset.ndim
+    reset = reset.reshape(n_missing * (1,) + reset.shape)
+
+    # add extra unitary leading dims to the leaves of the structured fragment
+    return reset, plyr.apply(add_leading, fragment, n_leading=n_missing)
+
+
 class EpisodeExtractor:
     """A simple object to track and stitch fragmented trajectories.
     """
@@ -100,6 +150,9 @@ class EpisodeExtractor:
         reset: Union[Tensor, ndarray],
         fragment: Any,
     ) -> list[Any]:
+        # make sure that we're feeding `T x B` data to the extractor
+        reset, fragment = ensure2d(reset, fragment)
+
         # the list of completed episode trajectories
         return list(extract(self.strands, reset, fragment, combine=stitch))
 

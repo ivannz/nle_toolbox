@@ -2,7 +2,7 @@ import plyr
 import torch
 import numpy as np
 
-from typing import Any, Union
+from typing import Any, Union, Callable
 from torch import Tensor
 from numpy import ndarray
 
@@ -34,6 +34,8 @@ def extract(
     strands: dict[int, list],
     reset: Union[Tensor, ndarray],
     fragment: Any,
+    *,
+    combine: Callable[..., Any] = stitch,
 ) -> Any:
     """Generate completed episodes from the given trajectory fragments,
     the corresponding reset mask and incomplete strands.
@@ -49,7 +51,13 @@ def extract(
 
     fragment : Nested Container of array-like, shape=(T, B, ...)
         The new fragment of trajectories with in each environment. Can be
-        a mix of numpy arrays and torch tensors.
+        a mix of numpy arrays and torch tensors. It is assumes that the leaf
+        data in the container is dimension-synced to `reset`.
+
+    combine : callable(*chunks: Any) -> Any
+        This procedure accepts a variable number of chunks in through its
+        positionals and combines them in to one complete episode (along
+        the sequence dim `T`).
 
     Yields
     ------
@@ -57,21 +65,23 @@ def extract(
         The full trajectory of each episode, completed by the given fragment.
         Unlike the `fragment`, the history DOES NOT have the batch dimension.
     """
-    # for each independent env
-    for j in range(reset.shape[1]):
+    # for each independent environment in the batch
+    n_seq, n_env = reset.shape
+    for j in range(n_env):
         # find all reset brackets [t0, t1)
         t1 = None
-        for t, fin in enumerate(reset[:, j]):
-            if not fin:
+        for t in range(n_seq):
+            if not reset[t, j]:
                 continue
 
-            # get the [t0, t1+1) slice (we include the `t1` reset, since it
-            #  contains the reward and the lethal action).
+            # get the [t0, t1+1) slice (we include the `t1`-th element, since
+            #  it contains partial data, that is relevant to termination, such
+            #  as the the reward and the action, leading to the episode's end).
             t1, t0 = t, t1
             tail = plyr.apply(lambda x: x[t0:t1+1, j], fragment)
 
-            # stitch the fragments together and drop the incomplete strand
-            yield stitch(*strands[j], tail)
+            # combine the fragments together and drop the incomplete strand
+            yield combine(*strands[j], tail)
             strands[j].clear()
 
         # commit the residual piece [t1, +oo) to the strands
@@ -91,12 +101,12 @@ class EpisodeExtractor:
         fragment: Any,
     ) -> list[Any]:
         # the list of completed episode trajectories
-        return list(extract(self.strands, reset, fragment))
+        return list(extract(self.strands, reset, fragment, combine=stitch))
 
     def finish(self) -> Any:
         out = [stitch(*fragmets) for fragmets in self.strands.values()]
-        # this also decrefs the lists in the strands, which causes
-        #  them to decref the tensor strands they contain
+        # this also decrefs the lists in the strands, which causes them
+        #  to decref the tensor strands they contain
         self.strands.clear()
 
         return out
@@ -106,7 +116,7 @@ def empty(
     x: Any,
     dim: tuple[int],
 ) -> Union[Tensor, ndarray]:
-    # handle non-pyt data through numpy
+    # non-pyt data is handled by numpy
     if isinstance(x, Tensor):
         return x.new_zeros(dim + x.shape)
 
@@ -131,7 +141,7 @@ def copyto(
         dst[at].copy_(src)
 
     else:
-        # allow onyl strict dtype copies
+        # allow only strict dtype copies
         np.copyto(dst[at], src, 'no')
 
 

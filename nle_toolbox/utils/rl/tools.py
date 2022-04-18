@@ -6,7 +6,9 @@ from typing import Any, Union, Callable
 from torch import Tensor
 from numpy import ndarray
 
-from collections import defaultdict, deque
+from collections import defaultdict, deque, namedtuple
+
+Chunk = namedtuple('Chunk', 'size,data')
 
 
 def cat(
@@ -26,6 +28,12 @@ def stitch(
     dim: int = 0,
 ) -> Any:
     """Stitch the structured fragments.
+
+    Details
+    -------
+    This procedure accepts a variable number of chunks in through its
+    positionals and combines them in to one complete episode (along
+    the sequence dim `T`).
     """
     return plyr.apply(cat, *chunks, _star=False, dim=dim)
 
@@ -34,9 +42,7 @@ def extract(
     strands: dict[int, list],
     reset: Union[Tensor, ndarray],
     fragment: Any,
-    *,
-    combine: Callable[..., Any] = stitch,
-) -> Any:
+) -> tuple[Chunk, ...]:
     """Generate completed episodes from the given trajectory fragments,
     the corresponding reset mask and incomplete strands.
 
@@ -54,16 +60,14 @@ def extract(
         a mix of numpy arrays and torch tensors. It is assumes that the leaf
         data in the container is dimension-synced to `reset`.
 
-    combine : callable(*chunks: Any) -> Any
-        This procedure accepts a variable number of chunks in through its
-        positionals and combines them in to one complete episode (along
-        the sequence dim `T`).
-
     Yields
     ------
-    episode : Nested Container of array-like, shape=(L, ...)
-        The full trajectory of each episode, completed by the given fragment.
-        Unlike the `fragment`, the history DOES NOT have the batch dimension.
+    chunks : tuple of Chunk
+        The tuple of consecutive fragments without the batch dimension that
+        constitute a complete contiguous trajectory. Note, that the fragment
+        in each chunk DOES NOT have the batch dimension. Each chunk reports its
+        size in `.size` and contents in `.data`, which is a nested Container of
+        array-like of shape=(L, ...).
     """
     # for each independent environment in the batch
     n_seq, n_env = reset.shape
@@ -74,18 +78,21 @@ def extract(
             if not reset[t, j]:
                 continue
 
-            # get the [t0, t1+1) slice (we include the `t1`-th element, since
-            #  it contains partial data, that is relevant to termination, such
-            #  as the the reward and the action, leading to the episode's end).
+            # finish with the [t0, t1+1) slice (we include the `t1`-th element,
+            #  since it contains partial data, that is relevant to termination,
+            #  such as the the reward and the action, leading to the episode's
+            #  end).
             t1, t0 = t, t1
             tail = plyr.apply(lambda x: x[t0:t1+1, j], fragment)
+            strands[j].append(Chunk(t1 + 1 - (t0 or 0), tail))
 
             # combine the fragments together and drop the incomplete strand
-            yield combine(*strands[j], tail)
+            yield tuple(strands[j])
             strands[j].clear()
 
         # commit the residual piece [t1, +oo) to the strands
-        strands[j].append(plyr.apply(lambda x: x[t1:, j], fragment))
+        chunk = plyr.apply(lambda x: x[t1:, j], fragment)
+        strands[j].append(Chunk(n_seq - (t1 or 0), chunk))
 
 
 def add_leading(x: Any, *, n_leading: int = 0) -> Union[Tensor, ndarray]:
@@ -154,7 +161,12 @@ class EpisodeExtractor:
         reset, fragment = ensure2d(reset, fragment)
 
         # the list of completed episode trajectories
-        return list(extract(self.strands, reset, fragment, combine=stitch))
+        episodes = []
+        for out in extract(self.strands, reset, fragment):
+            _, chunks = zip(*out)
+            episodes.append(stitch(*chunks))
+
+        return episodes
 
     def finish(self) -> Any:
         out = [stitch(*fragmets) for fragmets in self.strands.values()]

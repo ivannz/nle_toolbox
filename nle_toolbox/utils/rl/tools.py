@@ -42,6 +42,8 @@ def extract(
     strands: dict[int, list],
     reset: Union[Tensor, ndarray],
     fragment: Any,
+    *,
+    copy: bool = True,
 ) -> tuple[Chunk, ...]:
     """Generate completed episodes from the given trajectory fragments,
     the corresponding reset mask and incomplete strands.
@@ -60,6 +62,9 @@ def extract(
         a mix of numpy arrays and torch tensors. It is assumes that the leaf
         data in the container is dimension-synced to `reset`.
 
+    copy : bool, default = False
+        Whether to force a copy of the trajectory data when extracing strands.
+
     Yields
     ------
     chunks : tuple of Chunk
@@ -68,30 +73,44 @@ def extract(
         in each chunk DOES NOT have the batch dimension. Each chunk reports its
         size in `.size` and contents in `.data`, which is a nested Container of
         array-like of shape=(L, ...).
+
+    Detals
+    ------
+    Incomplete trajectories may live in an fragmented state for a long time,
+    since the distribution of the spans of full trajectories is likely long
+    tailed. At the same time, by default, both numpy and torch produce views
+    and not copies when slicing and/or doing a single-index access. This may
+    lead to a sutiation, when the memory is congested by a large number of past
+    fragments, each referenced ONLY by array views that live in the strands
+    of the trajectories of a very few on-going unfinished data sources. See
+
+        https://numpy.org/devdocs/user/basics.indexing.html#advanced-indexing
     """
     # for each independent environment in the batch
     n_seq, n_env = reset.shape
     for j in range(n_env):
+        # slicing with a single-element list copies both in numpy and torch
+        jj = [j] if copy else slice(j, j+1)  # XXX a list copies, a slice views
+        # XXX it is better to be explicit, rather than implicit...
+
         # find all reset brackets [t0, t1)
         t1 = None
         for t in range(n_seq):
             if not reset[t, j]:
                 continue
 
-            # finish with the [t0, t1+1) slice (we include the `t1`-th element,
-            #  since it contains partial data, that is relevant to termination,
-            #  such as the the reward and the action, leading to the episode's
-            #  end).
+            # finish with the [t0, t1+1) slice, including the `t1`-th element,
+            #  which could contain data, relevant to the end of the trajectory
             t1, t0 = t, t1
-            tail = plyr.apply(lambda x: x[t0:t1+1, j], fragment)
+            tail = plyr.apply(lambda x: x[t0:t1+1, jj], fragment)
             strands[j].append(Chunk(t1 + 1 - (t0 or 0), tail))
 
             # combine the fragments together and drop the incomplete strand
             yield tuple(strands[j])
             strands[j].clear()
 
-        # commit the residual piece [t1, +oo) to the strands
-        chunk = plyr.apply(lambda x: x[t1:, j], fragment)
+        # commit the residual piece [t1, +oo) to the strand
+        chunk = plyr.apply(lambda x: x[t1:, jj], fragment)
         strands[j].append(Chunk(n_seq - (t1 or 0), chunk))
 
 

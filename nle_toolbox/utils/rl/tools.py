@@ -2,7 +2,7 @@ import plyr
 import torch
 import numpy as np
 
-from typing import Any, Union, Callable
+from typing import Any, Union
 from torch import Tensor
 from numpy import ndarray
 
@@ -298,3 +298,129 @@ class UnorderedLazyBuffer:
         """Test whether there is anything in the buffer.
         """
         return bool(self.used)
+
+
+def fetch(x, t0, t1):
+    """Copy a padded slice [t0, t1) from the arraylike `x`.
+    """
+
+    # if the left endpoint is negative, then pad with the first element
+    return cat((x[:1],) * max(- t0, 0) + (x[max(t0, 0):t1],))
+
+
+class EpisodeBuffer:
+    """Keeping at least the specified number of transitions.
+    """
+
+    def __init__(self, *, seed: Any = None) -> None:
+        self.n_transitions = 0
+        self.storage = deque([])
+        self.strands = defaultdict(list)
+        self.random_ = np.random.default_rng(seed=seed)
+
+    def __len__(self):
+        return self.n_transitions
+
+    @property
+    def n_episodes(self):
+        """Get the number of complete episodes."""
+        return len(self.storage)
+
+    @property
+    def n_pending(self):
+        """Get the number of pending transitions in unfinished episodes.
+        """
+        n_pending = 0
+        for chunks in self.strands.values():
+            sizes, _ = zip(*chunks)
+            n_pending += sum(sizes)
+
+        return n_pending
+
+    def shrink(self, n_target: int = None) -> None:
+        """Shrink the buffer to the specified number of transitions.
+        """
+        if n_target is None:
+            n_target = self.n_transitions - 1
+
+        # evict the oldest episodes until we hit the population target
+        while self.n_transitions > n_target:
+            size, _ = self.storage.popleft()
+            self.n_transitions -= size - 1
+
+        return len(self)
+
+    def push(
+        self,
+        reset: Union[Tensor, ndarray],
+        fragment: Any,
+        *,
+        weight: Union[Tensor, ndarray] = None,
+    ) -> None:
+        # make sure that we're feeding `T x B` data to the extractor
+        reset, fragment = ensure2d(reset, fragment)
+        # XXX we could also associate a weight series with each fragment,
+        #  every value of which weighs the observation, e.g. td-error.
+
+        # get the complete episodes (strands store slice view into fragements)
+        for out in extract(self.strands, reset, fragment):
+            # combine the chunks into an episode
+            sizes, chunks = zip(*out)
+            episode = Chunk(sum(sizes), stitch(*chunks))
+
+            # by design valid episodes contain at least two steps
+            if episode.size < 2:
+                continue
+
+            assert bool(episode.data.fin[0]), "This should never happen."
+
+            # save the episode and update the transition population size
+            self.storage.append(episode)
+            self.n_transitions += episode.size - 1
+
+    def sample(
+        self,
+        n_transitions: int,
+        n_batch: int,
+        *,
+        # for the recurrent runtime state wram-up (>= 0)
+        n_burnin: int = 0,
+        # the numbr of elements for frame stacking (>= 1)
+        n_window: int = 1,
+    ) -> tuple[Any, Any]:
+        """Randomly sample continuous trajectory fragments with burnin.
+        """
+        burnin = None
+
+        # the number of elements in the batch proper (not transitions!!!) (>= 1)
+        n_length = n_transitions + 1
+
+        # the total number of elements to request from each trajectory
+        n_total = n_length + n_burnin + max(n_window - 1, 0)
+
+        # make an O(n) shallow copy for faster random access
+        episodes = tuple(self.storage)
+
+        # select `n_batch` random episode indices
+        epix = self.random_.integers(len(episodes), size=n_batch)
+        sizes, batch = zip(*[episodes[j] for j in epix])
+        sizes = np.array(sizes)
+
+        # for each picked trajectory draw an index of the right endpoint
+        # for the slice [t0, t1) with $t1 \sim \{\min\{L, T_j\} .. T_j\}$
+        left = np.minimum(sizes, n_length)
+        stix = self.random_.integers(left, sizes, endpoint=True)
+
+        # pad the selected episodes
+        padded = [plyr.apply(fetch, ep, t0=t0, t1=t1)
+                  for ep, t0, t1 in zip(batch, stix - n_total, stix)]
+
+        # collate into a batch
+        padded = plyr.apply(cat, *padded, _star=False, dim=1)
+
+        # split the batch into the proper and brunin segments
+        batch = plyr.apply(lambda x: x[1-n_window-n_length:], padded)
+        if n_burnin > 0:
+            burnin = plyr.apply(lambda x: x[:-n_length], padded)
+
+        return batch, burnin

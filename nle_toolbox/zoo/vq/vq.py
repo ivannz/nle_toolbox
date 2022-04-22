@@ -9,6 +9,28 @@ from torch.nn import Parameter
 from collections import namedtuple
 
 VQEOutput = namedtuple('VQEOutput', 'values,indices,vectors')
+VQEOutput.__doc__ += """
+
+Attributes
+----------
+values: torch.Tensor
+    The real-valued vector-quantized embeddings (vectors from some finite
+    collection) that properly pass gradient feedback to the inputs vectors
+    (from the full real-valued continuous vector space).
+
+indices: torch.Tensor
+    The integer-valued codes that identify the embedding and the Voronoi cell
+    to which the input was assigned. These are obtained as a byproduct of
+    the vector-quantized encoding process.
+
+vectors: torch.Tensor
+    Technical field, needed for computing the embedding and commitment losses.
+
+See Also
+--------
+The docs in `VectorQuantizedVAE` provide more details, discussion and intuition
+regarding the vector-quantized encoding as a process.
+"""
 
 
 class VectorQuantizedVAE(nn.Module):
@@ -21,6 +43,16 @@ class VectorQuantizedVAE(nn.Module):
 
     embedding_dim: int
         The size of each embedding vector.
+
+    Terminology
+    -----------
+    It is important to note that the term `vector-quantized encoder` relates
+    to a procedure that constrains the input vector as a WHOLE from the full
+    real-valued continuous vector space to a finite discrete collection of
+    learnt real-valued vectors. This should not be confused with quantizing
+    individual components of a vector from reals to some finite set of values
+    with lower bit-widths, e.g. fp32 to int8 fixed point arithmetic, or based
+    on value histograms.
 
     Details
     -------
@@ -92,6 +124,11 @@ class VectorQuantizedVAE(nn.Module):
     possible to view VQ VAE with embeddings trained via the Exponential Moving
     Averaging as a special case of a Gaussian mixture model with the M-step's
     results being regularized by the distance from the previous parameters.
+
+    As such vector-quantization encoder may be seen as an unsupervised input
+    denoiser through online K-means clustering with clever tricks to properly
+    pass gradients via the straight through estimator and to ensure inputs
+    that cluster more tightly via the commitment loss.
     """
     num_embeddings: int
     embedding_dim: int
@@ -137,7 +174,6 @@ class VectorQuantizedVAE(nn.Module):
         return vectors.permute(*dims[:at], indices.ndim, *dims[at:])
 
     def forward(self, input: Tensor) -> VQEOutput:
-        """"""
         # the `input` is a tensor of integer codes: there is no embedding and
         #  commitment losses since there are no input vectors to quantize
         # XXX we still provide all the data necessary for the losses, which
@@ -168,3 +204,37 @@ class VectorQuantizedVAE(nn.Module):
 
     def extra_repr(self) -> str:
         return f'{self.num_embeddings}, {self.embedding_dim}'
+
+
+class VQVAEEmbeddings(nn.Identity):
+    """Extract real-valued vector-quantized embeddings from VQ outputs."""
+
+    def __init__(self, module: VectorQuantizedVAE) -> None:
+        if not isinstance(module, VectorQuantizedVAE):
+            raise TypeError(
+                f"{type(self).__name__} wraps VQ"
+                f" layers directly. Got `{module}`."
+            )
+        super().__init__()
+        self.wrapped = module
+
+    def forward(self, input: Tensor) -> Tensor:
+        # `out.values` are the diffable embeddings
+        return self.wrapped(input).values
+
+
+class VQVAEIntegerCodes(nn.Identity):
+    """Extract integer-valued codes from VQ outputs."""
+
+    def __init__(self, module: VectorQuantizedVAE) -> None:
+        if not isinstance(module, VectorQuantizedVAE):
+            raise TypeError(
+                f"{type(self).__name__} wraps VQ"
+                f" layers directly. Got `{module}`."
+            )
+        super().__init__()
+        self.wrapped = module
+
+    def forward(self, input: Tensor) -> Tensor:
+        # `out.indices` are the cluster ids
+        return self.wrapped(input).indices

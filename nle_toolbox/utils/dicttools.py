@@ -2,7 +2,7 @@ import copy
 from collections import defaultdict
 
 
-def propagate(lookup, tree, *, prefix='', value=None, delim='.'):
+def propagate(lookup, tree, *, prefix="", value=None, delim="."):
     """Assign values to the nodes propagating from parents to children.
 
     Parameters
@@ -38,9 +38,10 @@ def propagate(lookup, tree, *, prefix='', value=None, delim='.'):
     propagated from the parent.
     """
     # '' is a the parent of all nodes (except itself)
-    if '' in tree:
-        yield from propagate(lookup, set(n for n in tree if n),
-                             prefix=prefix, value=value, delim=delim)
+    if "" in tree:
+        yield from propagate(
+            lookup, set(n for n in tree if n), prefix=prefix, value=value, delim=delim
+        )
         return
 
     # lookup (or inherit) the parent's value
@@ -48,7 +49,7 @@ def propagate(lookup, tree, *, prefix='', value=None, delim='.'):
     yield prefix, value
 
     # collect children of the current prefix (aka `parent`)
-    children, prefix = {}, prefix + (delim if prefix else '')
+    children, prefix = {}, prefix + (delim if prefix else "")
     for node in tree:
         name, dot, child = node.partition(delim)
         children.setdefault(prefix + name, set())
@@ -57,11 +58,10 @@ def propagate(lookup, tree, *, prefix='', value=None, delim='.'):
 
     # propagate this parent's value to its children
     for prefix, tree in children.items():
-        yield from propagate(lookup, tree,
-                             prefix=prefix, value=value, delim=delim)
+        yield from propagate(lookup, tree, prefix=prefix, value=value, delim=delim)
 
 
-def resolve(references, *, errors='raise'):
+def resolve(references, *, errors="raise"):
     """Resolve references.
 
     Parameters
@@ -87,7 +87,7 @@ def resolve(references, *, errors='raise'):
     Simplified DFS for directed tree-like graphs to handle possible cycles.
     Raises `RecursionError` if a cyclic reference is detected.
     """
-    assert errors in ('raise', 'ignore')
+    assert errors in ("raise", "ignore")
 
     # dfs through the table of references
     visited, resolved = set(), {}
@@ -111,7 +111,7 @@ def resolve(references, *, errors='raise'):
                 # fetch the end-point of a resolved reference
                 root = resolved[root]
 
-            elif errors != 'ignore':
+            elif errors != "ignore":
                 # a cyclic reference: visited, and neither final, nor resolved
                 raise RecursionError(path)
 
@@ -120,7 +120,7 @@ def resolve(references, *, errors='raise'):
     return resolved
 
 
-def override(dictionary, overrides, *, delim='__'):
+def override(dictionary, overrides, *, delim="__"):
     """Override the values inside the given nested dictionary.
 
     Details
@@ -194,7 +194,7 @@ def flat_view(value, *prefix, memo=None, depth=None):
     yield prefix, value
 
 
-def flatten(dictionary, *, depth=None, delim='__'):
+def flatten(dictionary, *, depth=None, delim="__"):
     """Depth first redundantly flatten a nested dictionary.
 
     Arguments
@@ -223,17 +223,17 @@ def flatten(dictionary, *, depth=None, delim='__'):
     for flat, val in flat_view(dictionary, depth=depth):
         # XXX: these checks are sub-optimal
         if not all(isinstance(k, str) for k in flat):
-            raise TypeError(f'Non-string key detected `{flat}`.')
+            raise TypeError(f"Non-string key detected `{flat}`.")
 
         if any(delim in k for k in flat):
-            raise ValueError(f'No key must contain `{delim}`. Got `{flat}`.')
+            raise ValueError(f"No key must contain `{delim}`. Got `{flat}`.")
 
         out[delim.join(flat)] = val
 
     return out
 
 
-def unflatten(dictionary, *, delim='__'):
+def unflatten(dictionary, *, delim="__"):
     """Breadth first turn flattened dictionary into a nested one.
 
     Arguments

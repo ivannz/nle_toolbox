@@ -15,25 +15,27 @@ from ..utils.env.defs import glyph_is, dt_glyph_ext, ext_glyphlut
 from ..utils.fold import npy_fold2d
 
 
-dt_map = np.dtype([
-    # the coordinates' backreference
-    ('rc', np.dtype([('r', int), ('c', int)])),
-    # the glyph id
-    ('glyph', int),
-    # visitation counter
-    ('n_visited', int),
-    # the number of times this xy was updated
-    ('n_updates', int),
-    ('n_last_updated', int),
-    # area it belongs to
-    ('area', int),
-    # foreground object flag
-    # ('is_foreground', bool),  # equals `not .info.is_background`
-    # pathfinding cost
-    ('cost', float),
-    # the extracted glyph info
-    ('info', dt_glyph_ext),
-])
+dt_map = np.dtype(
+    [
+        # the coordinates' backreference
+        ("rc", np.dtype([("r", int), ("c", int)])),
+        # the glyph id
+        ("glyph", int),
+        # visitation counter
+        ("n_visited", int),
+        # the number of times this xy was updated
+        ("n_updates", int),
+        ("n_last_updated", int),
+        # area it belongs to
+        ("area", int),
+        # foreground object flag
+        # ('is_foreground', bool),  # equals `not .info.is_background`
+        # pathfinding cost
+        ("cost", float),
+        # the extracted glyph info
+        ("info", dt_glyph_ext),
+    ]
+)
 
 
 class Level:
@@ -46,28 +48,31 @@ class Level:
 
         # fill with default values for the border
         data[:] = (
-            (-1, -1),    # invalid row-col coords
-            MAX_GLYPH,   # invalid glyph
-            0,           # was never visited
-            0,           # never got updated
-            -1,          # last updated info is not available
-            -1,          # parent flood-fill area is the Universum
+            (-1, -1),  # invalid row-col coords
+            MAX_GLYPH,  # invalid glyph
+            0,  # was never visited
+            0,  # never got updated
+            -1,  # last updated info is not available
+            -1,  # parent flood-fill area is the Universum
             # False,       # is a foreground glyph
-            float('inf'),  # prohibitively expensive for pathfinding
+            float("inf"),  # prohibitively expensive for pathfinding
             ext_glyphlut[MAX_GLYPH],  # extra info for the invalid gylph
         )
 
         # fill in the row-col coordinate for backreference
-        tiles = self.bg_tiles, self.stg_tiles, \
-            = data[:, k:-k, k:-k].view(np.recarray)
+        tiles = self.bg_tiles, self.stg_tiles, = data[
+            :, k:-k, k:-k
+        ].view(np.recarray)
         for r, c in np.ndindex(rows, cols):
             tiles.rc[:, r, c] = r, c
 
         # setup read-only view for adjacent tiles
-        self.bg_vicinity, self.stg_vicinity, \
-            = npy_fold2d(
-                data, k=k, n_leading=1, writeable=False,
-            ).view(np.recarray)
+        self.bg_vicinity, self.stg_vicinity, = npy_fold2d(
+            data,
+            k=k,
+            n_leading=1,
+            writeable=False,
+        ).view(np.recarray)
 
         # sparse data structures with row-col keys (unbordered coords)
         # sparsely populated dict, keyed by row-col containing arbitrary data,
@@ -83,9 +88,8 @@ class Level:
         self.n_updates = 0
 
     def update(self, obs):
-        """Take the currently observed glyphs and update our representation.
-        """
-        glyphs = obs['glyphs']
+        """Take the currently observed glyphs and update our representation."""
+        glyphs = obs["glyphs"]
 
         # differentially update the glyph staging layer
         stage = self.stg_tiles
@@ -108,7 +112,7 @@ class Level:
         stage.info[diff] = ext_glyphlut[glyphs]
 
         # trace the player's coordinates through the level
-        bls = obs['blstats']
+        bls = obs["blstats"]
         r, c = location = bls[NLE_BL_Y], bls[NLE_BL_X]
         if self.trace[-1] != location:
             stage.n_visited[location] += 1
@@ -151,8 +155,8 @@ class DungeonMapper:
 
     def update(self, obs):
         # update the dungeon's internal buffers
-        np.copyto(self.vw_glyphs, obs['glyphs'], 'same_kind')
-        bls = obs['blstats']
+        np.copyto(self.vw_glyphs, obs["glyphs"], "same_kind")
+        bls = obs["blstats"]
 
         # we need to handle being swallowed separately
         window = self.vw_window[bls[NLE_BL_Y], bls[NLE_BL_X]]

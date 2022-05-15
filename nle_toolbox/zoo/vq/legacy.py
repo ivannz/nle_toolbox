@@ -8,16 +8,15 @@ from torch import nn
 from torch.nn import functional as F
 
 
-VQEOutput = namedtuple('VQEOutput', 'values,indices,vectors')
-VQELoss = namedtuple('VQELoss', 'embedding,commitment,entropy')
+VQEOutput = namedtuple("VQEOutput", "values,indices,vectors")
+VQELoss = namedtuple("VQELoss", "embedding,commitment,entropy")
 
 
 def entropy(codes, n_symbols):
-    """The empirical binary entropy of the given categorical sample.
-    """
+    """The empirical binary entropy of the given categorical sample."""
     # compute the entropy of the generated codes
     prob = torch.bincount(codes.flatten(), minlength=n_symbols) / codes.numel()
-    value = -F.kl_div(prob.new_zeros(()), prob, reduction='sum')
+    value = -F.kl_div(prob.new_zeros(()), prob, reduction="sum")
     return float(value) / math.log(2)
 
 
@@ -109,11 +108,12 @@ class VQEmbedding(nn.Embedding):
     this is one step of the K-mean EM, with M being regularized by the distance
     from the previous improper GMM mixture.
     """
+
     def __init__(
         self,
         num_embeddings: int,
         embedding_dim: int,
-        alpha: float = 0.,
+        alpha: float = 0.0,
         *,
         update: str = None,
         eps: float = 1e-5,
@@ -130,8 +130,8 @@ class VQEmbedding(nn.Embedding):
         self.alpha, self.eps = alpha, eps
 
         # if `alpha` is zero then `.weight` is updated by means other than EMA
-        self.register_buffer('ema_vecs', None)
-        self.register_buffer('ema_size', None)
+        self.register_buffer("ema_vecs", None)
+        self.register_buffer("ema_size", None)
         if self.alpha <= 0:
             if update is not None:
                 warn(
@@ -145,7 +145,7 @@ class VQEmbedding(nn.Embedding):
         if not (0 < self.alpha <= 1):
             raise ValueError(f"`alpha` must be in (0, 1]. Got `{self.alpha}`.")
 
-        if update not in ('forward', 'backward', 'manual'):
+        if update not in ("forward", "backward", "manual"):
             raise ValueError(
                 "In exponential moving average mode (`alpha` > 0) `update`"
                 " must be either 'manual', 'forward' or 'backward'."
@@ -156,15 +156,17 @@ class VQEmbedding(nn.Embedding):
         # XXX can promote buffer to parameter, but not back, so we `delattr`.
         #  Also non-inplace `.detach` creates a copy NOT reflected in referrers
         weight = self.weight
-        delattr(self, 'weight')
-        self.register_buffer('weight', weight.detach_())
+        delattr(self, "weight")
+        self.register_buffer("weight", weight.detach_())
 
         # allocate buffer for tracking k-means cluster centroid updates
         self.register_buffer(
-            'ema_vecs', self.weight.clone(),
+            "ema_vecs",
+            self.weight.clone(),
         )
         self.register_buffer(
-            'ema_size', torch.zeros_like(self.ema_vecs[:, 0]),
+            "ema_size",
+            torch.zeros_like(self.ema_vecs[:, 0]),
         )
 
         # update embeddings only in training mode on the specified pass
@@ -172,11 +174,11 @@ class VQEmbedding(nn.Embedding):
             if module.training:
                 module.update()
 
-        self.do_auto_update = update != 'manual'
-        if update == 'backward':
+        self.do_auto_update = update != "manual"
+        if update == "backward":
             self.register_full_backward_hook(_update)
 
-        elif update == 'forward':
+        elif update == "forward":
             self.register_forward_hook(_update)
 
     @torch.no_grad()
@@ -185,8 +187,7 @@ class VQEmbedding(nn.Embedding):
         input: torch.Tensor,
         indices: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Compute the cluster centroids for the given data and affinity.
-        """
+        """Compute the cluster centroids for the given data and affinity."""
         # `input` is `... x F` and `indices` are `...`
         affinity = F.one_hot(indices, self.num_embeddings).to(input)
         # XXX 'affinity' is `... x C`
@@ -194,8 +195,8 @@ class VQEmbedding(nn.Embedding):
         # sum the F-dim input vectors into bins by affinity
         #  `size[j]`:  n_j = \lvert i: k_i=j \rvert
         #  `vecs[j]`:  S_j = \sum_i 1_{k_i = j} x_i
-        size = torch.einsum('...k -> k', affinity)
-        vecs = torch.einsum('...f, ...k -> kf', input, affinity)
+        size = torch.einsum("...k -> k", affinity)
+        vecs = torch.einsum("...f, ...k -> kf", input, affinity)
 
         return size, vecs  # XXX $\mu_j = \frac{S_j}{n_j}$ <<- centroid
 
@@ -207,8 +208,7 @@ class VQEmbedding(nn.Embedding):
         *,
         alpha: float = None,
     ) -> None:
-        """Update the exponential moving averages with the centroid data.
-        """
+        """Update the exponential moving averages with the centroid data."""
         alpha = float(self.alpha if alpha is None else alpha)
 
         # raise if EMA updates were disabled (all `ema_*` buffers are None)
@@ -228,8 +228,7 @@ class VQEmbedding(nn.Embedding):
         size: torch.Tensor = None,
         vecs: torch.Tensor = None,
     ) -> None:
-        """Update the embedding vectors from the accumulated EMA stats.
-        """
+        """Update the embedding vectors from the accumulated EMA stats."""
         # if `size` and `vecs` were not overridden, use our own buffers
         if size is not None and vecs is not None:
             pass
@@ -255,8 +254,7 @@ class VQEmbedding(nn.Embedding):
 
     @torch.no_grad()
     def lookup(self, input: torch.Tensor) -> torch.Tensor:
-        """Lookup the index of the nearest embedding.
-        """
+        """Lookup the index of the nearest embedding."""
         emb = self.weight
         # k(z) = \arg \min_k \|E_k - z\|^2
         #      = \arg \min_k \|E_k\|^2 - 2 E_k^\top z + \|z\|^2
@@ -264,7 +262,7 @@ class VQEmbedding(nn.Embedding):
         #  through the cluster affinities.
 
         sqr = (emb * emb).sum(dim=1)
-        cov = torch.einsum('...j, kj -> ...k', input, emb)
+        cov = torch.einsum("...j, kj -> ...k", input, emb)
         return torch.argmin(sqr.sub(cov, alpha=2), dim=-1)
 
     def fetch(
@@ -313,10 +311,9 @@ class VQEmbedding(nn.Embedding):
         input: torch.Tensor,
         output: VQEOutput,
         *,
-        reduction: str = 'sum',
+        reduction: str = "sum",
     ) -> tuple[torch.Tensor]:
-        """Compute the commitment and embedding losses and the coding entropy.
-        """
+        """Compute the commitment and embedding losses and the coding entropy."""
         assert isinstance(output, VQEOutput)
 
         # commitment and embedding losses from van den Oord et al. (2017; p. 4 eq. 3.)
@@ -327,7 +324,8 @@ class VQEmbedding(nn.Embedding):
         #       q(x) = e_{k(x)}, for k(x) = \arg\min_k \|z(x) - e_k\|^2
         # XXX `the embeddings receive no grad feedback from the reconstruction`
         embedding = F.mse_loss(
-            output.vectors, input.detach(),
+            output.vectors,
+            input.detach(),
             reduction=reduction,
         )
         # XXX `embedding` loss is non-diffable if we use EMA updates
@@ -337,7 +335,8 @@ class VQEmbedding(nn.Embedding):
         #          space is dimensionless.`
         # XXX we can compute the commitment loss using `output.detach()`
         commitment = F.mse_loss(
-            input, output.vectors.detach(),
+            input,
+            output.vectors.detach(),
             reduction=reduction,
         )
         # XXX this reduces the bias of the straight-through grad estimator
@@ -348,16 +347,15 @@ class VQEmbedding(nn.Embedding):
 
 
 class VQEmbeddingHelper:
-    """A helper for seamless operation of VQ embedding layers.
-    """
+    """A helper for seamless operation of VQ embedding layers."""
 
     def __init__(
         self,
         module: nn.Module,
         *,
-        reduction: str = 'sum',
+        reduction: str = "sum",
     ) -> None:
-        assert reduction in ('mean', 'sum', 'none')
+        assert reduction in ("mean", "sum", "none")
 
         self.hooks, self.names = {}, {}
         self.register(module)
@@ -369,8 +367,7 @@ class VQEmbeddingHelper:
         self.collected.clear()
 
     def register(self, module: nn.Module) -> None:
-        """Attach output hooks to every VQ-vae layer in the module.
-        """
+        """Attach output hooks to every VQ-vae layer in the module."""
         for nom, mod in module.named_modules():
             if not isinstance(mod, VQEmbedding):
                 continue
@@ -403,13 +400,13 @@ class VQEmbeddingHelper:
         return output.values
 
     def __iter__(self) -> None:
-        if self.reduction == 'sum':
+        if self.reduction == "sum":
             fn = sum
 
-        elif self.reduction == 'mean':
+        elif self.reduction == "mean":
             fn = lambda x: sum(x) / len(x)
 
-        elif self.reduction == 'none':
+        elif self.reduction == "none":
             fn = list
 
         for mod, dat in self.collected.items():
@@ -428,6 +425,7 @@ class VQSendRecv(nn.Module):
     also useful for implementing vq-vae MuZero
         [Ozair et al. (2021)](https://proceedings.mlr.press/v139/ozair21a.html)
     """
+
     def __init__(
         self,
         send: nn.Module,
@@ -436,7 +434,7 @@ class VQSendRecv(nn.Module):
         embedding_dim: int,
         alpha: float = 0.01,
         *,
-        update: str = None
+        update: str = None,
     ) -> None:
         super().__init__()
         self.send = send
@@ -451,7 +449,7 @@ class VQSendRecv(nn.Module):
     def forward(
         self,
         input: torch.Tensor,
-        reduction: str = 'sum',
+        reduction: str = "sum",
     ) -> tuple[torch.Tensor]:
         # `send: X -> R^{M F}` transforms [... C] -->> [... M F]`
         z = self.send(input)

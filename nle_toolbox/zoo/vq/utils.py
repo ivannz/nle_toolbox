@@ -16,8 +16,8 @@ from .vq import VectorQuantizedVAE, VQEOutput
 
 
 class BaseVQHelper:
-    """A context object, which tracks the VQ layers in the module.
-    """
+    """A context object, which tracks the VQ layers in the module."""
+
     def __init__(
         self,
         module: nn.Module,
@@ -57,8 +57,8 @@ class BaseVQHelper:
 
 
 # nt-s for more convenient access to the runtime states of the EMA updater
-StateAcc = namedtuple('StateAcc', 'size,vecs')
-StateEMA = namedtuple('StateEMA', 'size,vecs,alpha,eps')
+StateAcc = namedtuple("StateAcc", "size,vecs")
+StateEMA = namedtuple("StateEMA", "size,vecs,alpha,eps")
 
 
 class VQEMAUpdater(BaseVQHelper):
@@ -78,6 +78,7 @@ class VQEMAUpdater(BaseVQHelper):
     ----
     * allow customizable per-layer alpha settings, like the generic Optimizer.
     """
+
     def __init__(
         self,
         module: nn.Module,
@@ -113,8 +114,7 @@ class VQEMAUpdater(BaseVQHelper):
         inputs: tuple[torch.Tensor, ...],
         output: VQEOutput,
     ) -> None:
-        """Compute the cluster centroids for the given input and affinity.
-        """
+        """Compute the cluster centroids for the given input and affinity."""
         # make sure our assumptions are correct
         input, *remaining = inputs
         assert not remaining
@@ -135,8 +135,8 @@ class VQEMAUpdater(BaseVQHelper):
         #     `size[j]` is $n_j = \lvert i: k_i = j \rvert$
         #     `vecs[j]` is $S_j = \sum_i 1_{k_i = j} x_i$
         affinity = F.one_hot(output.indices, module.num_embeddings).to(input)
-        vecs = torch.einsum('...f, ...k -> kf', input.detach(), affinity)
-        size = torch.einsum('...k -> k', affinity)
+        vecs = torch.einsum("...f, ...k -> kf", input.detach(), affinity)
+        size = torch.einsum("...k -> k", affinity)
 
         # update the accumulators, but first lazily init them
         if self._acc.get(module) is None:
@@ -202,7 +202,7 @@ class VQEMAUpdater(BaseVQHelper):
 
             # compute the entropy
             prob = ema.size / float(ema.size.sum())
-            entropy = -F.kl_div(prob.new_zeros(()), prob, reduction='sum')
+            entropy = -F.kl_div(prob.new_zeros(()), prob, reduction="sum")
             out[mod] = float(entropy) / math.log(2)
 
         return out
@@ -248,6 +248,7 @@ class VQLossHelper(BaseVQHelper):
     (ibid, p.4 par. 4). Additionally, the loss aims to reduce the bias of
     the straight-through grad estimator.
     """
+
     def __init__(
         self,
         module: nn.Module,
@@ -255,9 +256,9 @@ class VQLossHelper(BaseVQHelper):
         # diffable commitment loss weight
         beta: float = 0.25,
         # loss reduction method (sum or mean)
-        reduction: str = 'sum',
+        reduction: str = "sum",
     ) -> None:
-        assert reduction in ('sum', 'mean')
+        assert reduction in ("sum", "mean")
         super().__init__(module)
         self.reduction = reduction
         self.beta = beta
@@ -269,8 +270,7 @@ class VQLossHelper(BaseVQHelper):
         inputs: tuple[torch.Tensor],
         output: VQEOutput,
     ) -> None:
-        r"""Compute the commitment and embedding losses over the forward pass data.
-        """
+        r"""Compute the commitment and embedding losses over the forward pass data."""
 
         # make sure our assumptions are correct
         input, *remaining = inputs
@@ -282,21 +282,19 @@ class VQLossHelper(BaseVQHelper):
 
         # Save the losses in lists in case the same layer is passed more
         #  than once within the active collection scope.
-        self._losses.setdefault(module, []).append((
-            # the embedding loss is computed regardless of whether the module
-            #  is in EMA mode or not, although it is never needed when in EMA
-            F.mse_loss(output.vectors, input.detach(),
-                       reduction=self.reduction),
-
-            # the commitment loss controls the within-cluster sum of squares
-            #  and is useful only if the `input` is diffable numeric data
-            F.mse_loss(input, output.vectors.detach(),
-                       reduction=self.reduction),
-        ))
+        self._losses.setdefault(module, []).append(
+            (
+                # the embedding loss is computed regardless of whether the module
+                #  is in EMA mode or not, although it is never needed when in EMA
+                F.mse_loss(output.vectors, input.detach(), reduction=self.reduction),
+                # the commitment loss controls the within-cluster sum of squares
+                #  and is useful only if the `input` is diffable numeric data
+                F.mse_loss(input, output.vectors.detach(), reduction=self.reduction),
+            )
+        )
 
     def finish(self) -> dict[nn.Module, torch.Tensor]:
-        """Finalise the collection and return a dict of losses.
-        """
+        """Finalise the collection and return a dict of losses."""
 
         # we average across multiple passes through the same layer
         # XXX the losses could potentially be non-diffable

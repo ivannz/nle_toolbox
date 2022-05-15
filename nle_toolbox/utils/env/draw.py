@@ -14,7 +14,6 @@ from nle.nethack import (
     NLE_BL_SCORE,
     NLE_BL_XP,
     NLE_BL_EXP,
-
     CompassDirection,
     CompassDirectionLonger,
     MiscDirection,
@@ -23,40 +22,58 @@ from nle.nethack import (
 from .render import render_to_rgb
 
 
-compass_to_complex = dict(zip(
-    # counter-clockwise from the east, use complex values for simplicity
-    ('E', 'NE', 'N', 'NW', 'W', 'SW', 'S', 'SE',),
-    np.exp(1j * np.deg2rad((
-       0,   45,  90,  135, 180,  225, 270,  315,
-    ))),
-))
+compass_to_complex = dict(
+    zip(
+        # counter-clockwise from the east, use complex values for simplicity
+        (
+            "E",
+            "NE",
+            "N",
+            "NW",
+            "W",
+            "SW",
+            "S",
+            "SE",
+        ),
+        np.exp(
+            1j
+            * np.deg2rad(
+                (
+                    0,
+                    45,
+                    90,
+                    135,
+                    180,
+                    225,
+                    270,
+                    315,
+                )
+            )
+        ),
+    )
+)
 
 
 def get_compass(proba):
-    """Get the  conditional probabilities of the compass directions.
-    """
+    """Get the  conditional probabilities of the compass directions."""
     dirs = {}
     for a in (
         *CompassDirection,
         *CompassDirectionLonger,
     ):
         if a.name not in dirs:
-            dirs[a.name] = 0.
+            dirs[a.name] = 0.0
 
         if a in proba:
             dirs[a.name] += proba[a]
 
     # normalize and scale the directional vectors
     C = sum(dirs.values())
-    return {
-        CompassDirection[k]:
-        z * dirs[k] / C for k, z in compass_to_complex.items()
-    }
+    return {CompassDirection[k]: z * dirs[k] / C for k, z in compass_to_complex.items()}
 
 
 def limits(a, b, *, rtol=0.1, atol=0.01):
-    """Aesthetically expand the given limits.
-    """
+    """Aesthetically expand the given limits."""
     lo, hi = min(a, b), max(a, b)
     return (
         lo - abs(lo) * rtol - atol,
@@ -126,75 +143,104 @@ def draw(fig, npy, t, *, actions, artists=None, view=None):
         if not isinstance(view, int):
             raise ValueError("`view` must be float or int.")
 
-        xlim = limits(*viewport(t, view, lo=0, hi=n_length-1),
-                      rtol=0., atol=0.25)
+        xlim = limits(*viewport(t, view, lo=0, hi=n_length - 1), rtol=0.0, atol=0.25)
 
     # the current policy and the botl stats
     proba = dict(zip(actions, softmax(ep_t.output.pol, axis=-1).tolist()))
-    blstats = ep.input.obs['blstats']
+    blstats = ep.input.obs["blstats"]
 
     # render the agent's view with the compass action distribution overlay
     view = ax = fig.add_subplot(gs[:2, :2])
-    vicinity = render_to_rgb(ep_t.input.obs['vicinity'])
+    vicinity = render_to_rgb(ep_t.input.obs["vicinity"])
     artists.append(ax.imshow(vicinity, zorder=-99, alpha=0.75, animated=True))
 
     compass = get_compass(proba)
     uv = np.asarray([(z.real, z.imag) for z in compass.values()])
-    cc = ['black' if actions[act_[t]] == a else 'magenta' for a in compass]
+    cc = ["black" if actions[act_[t]] == a else "magenta" for a in compass]
 
     n_row, n_col = vicinity.shape[:2]
     xy = np.full_like(uv, (n_row / 2, n_col / 2))
     artists.append(
-        ax.quiver(*xy.T, *uv.T, color=cc, scale=1e-2,
-                  zorder=10, angles='uv', units='xy', width=.6)
+        ax.quiver(
+            *xy.T,
+            *uv.T,
+            color=cc,
+            scale=1e-2,
+            zorder=10,
+            angles="uv",
+            units="xy",
+            width=0.6,
+        )
     )
     if actions[act_[t]] == MiscDirection.WAIT:
-        artists.append(
-            ax.scatter(*xy[0], c='black', zorder=15, s=10)
-        )
+        artists.append(ax.scatter(*xy[0], c="black", zorder=15, s=10))
 
     ax.set_axis_off()
 
     # plot the vitals
     ax = fig.add_subplot(gs[0, 2])
-    artists.extend(plot_series(
-        blstats[:, NLE_BL_HP], title='HP', xlim=xlim, ax=ax,
-        ylim=(0, blstats[:, NLE_BL_HPMAX].max()+1),
-    ))
+    artists.extend(
+        plot_series(
+            blstats[:, NLE_BL_HP],
+            title="HP",
+            xlim=xlim,
+            ax=ax,
+            ylim=(0, blstats[:, NLE_BL_HPMAX].max() + 1),
+        )
+    )
 
     # the in-game time-deltas
     ax = fig.add_subplot(gs[1, 2], sharex=ax)
-    artists.extend(plot_series(
-        np.ediff1d(blstats[:, NLE_BL_TIME], to_begin=0),
-        title='Timedelta', xlim=xlim, ax=ax
-    ))
+    artists.extend(
+        plot_series(
+            np.ediff1d(blstats[:, NLE_BL_TIME], to_begin=0),
+            title="Timedelta",
+            xlim=xlim,
+            ax=ax,
+        )
+    )
 
     # the in-game score
     ax = fig.add_subplot(gs[2, 0], sharex=ax)
-    artists.extend(plot_series(
-        blstats[:, NLE_BL_SCORE], title='Game Score', xlim=xlim, ax=ax
-    ))
+    artists.extend(
+        plot_series(blstats[:, NLE_BL_SCORE], title="Game Score", xlim=xlim, ax=ax)
+    )
 
     # the value estimates and the policy entropy
     ax = fig.add_subplot(gs[2, 1], sharex=ax)
-    artists.extend(plot_series(
-        ep.output.val['ext'], ep.output.val['int'],
-        title='State Value Ext', xlim=xlim, ax=ax, ylim=None,
-    ))
-    artists.extend(plot_series(
-        -(ep.output.pol * np.exp(ep.output.pol)).sum(-1),
-        xlim=xlim, ax=ax.twinx(), c='C2',
-        ylim=(0, math.log(len(proba))),
-    ))
+    artists.extend(
+        plot_series(
+            ep.output.val["ext"],
+            ep.output.val["int"],
+            title="State Value Ext",
+            xlim=xlim,
+            ax=ax,
+            ylim=None,
+        )
+    )
+    artists.extend(
+        plot_series(
+            -(ep.output.pol * np.exp(ep.output.pol)).sum(-1),
+            xlim=xlim,
+            ax=ax.twinx(),
+            c="C2",
+            ylim=(0, math.log(len(proba))),
+        )
+    )
 
     # plot the rewards
     ax = fig.add_subplot(gs[2, 2], sharex=ax)
-    artists.extend(plot_series(
-        rew_.cumsum(), title='Reward', xlim=xlim, ax=ax,
-    ))
+    artists.extend(
+        plot_series(
+            rew_.cumsum(),
+            title="Reward",
+            xlim=xlim,
+            ax=ax,
+        )
+    )
 
     for ax in fig.axes:
         if ax is not view:
-            artists.append(ax.axvline(t, c='r', zorder=+10))
+            artists.append(ax.axvline(t, c="r", zorder=+10))
 
     return artists

@@ -7,8 +7,7 @@ from ...utils.nn import multinomial as base_multinomial
 
 
 def multinomial(v, dim=-1):
-    """Sample a categorical r.v. from the unnormalized logits in the given dim.
-    """
+    """Sample a categorical r.v. from the unnormalized logits in the given dim."""
 
     return base_multinomial(v.detach().softmax(dim=dim), 1, dim).squeeze(dim)
 
@@ -64,7 +63,7 @@ def postproc(hx, *, mask=None, val, hlt, **heads):
     # mask the forbidden actions according to the chassis's aux info
     masked = heads.copy()  # a shallow copy of the heads container
     if mask is not None:
-        masked['micro'] = masked['micro'].masked_fill(mask, -float('inf'))
+        masked["micro"] = masked["micro"].masked_fill(mask, -float("inf"))
     # XXX masked_fill verifies that the mask data is binary {0, 1} and
     #  doesn't care about the exact integer dtype or bool. Does not work
     #  if the mask if a binary fp data though.
@@ -80,20 +79,25 @@ def postproc(hx, *, mask=None, val, hlt, **heads):
     # return composite actions: halt and the action itself
     # XXX we hardcode discrete action here
     return (
-        hlt.ge(tau).squeeze(-1),
-        plyr.suply(multinomial, masked),
-    ), hx, dict(val=val.squeeze(-1), hlt=hlt.squeeze(-1), **heads)
+        (
+            hlt.ge(tau).squeeze(-1),
+            plyr.suply(multinomial, masked),
+        ),
+        hx,
+        dict(val=val.squeeze(-1), hlt=hlt.squeeze(-1), **heads),
+    )
     # XXX `hlt` and `val` in the dict are expected to be T x B
 
 
 class NeuralActorModule(BaseActorModule):
     """Interface a module with rlplay."""
+
     def __init__(self, module):
         super().__init__()
         self.module = module
 
     def reset(self, hx, at):
-        reset = getattr(self.module, 'reset', super().reset)
+        reset = getattr(self.module, "reset", super().reset)
         return reset(hx, at)
 
     def forward(self, obs, mask, *, fin=None, hx=None):

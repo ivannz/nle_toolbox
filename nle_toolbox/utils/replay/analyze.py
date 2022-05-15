@@ -17,76 +17,31 @@ from ..env.defs import BLStats
 
 """The series we compute for each trace."""
 SERIES = {
-    'reward__total':
-        lambda rew, bls: float(
-            rew.sum()
-        ),
-
-    'reward__sparsity':
-        lambda rew, bls: float(
-            (rew == 0).mean()
-        ),
-
-    'blstats__hitpoints__mean':
-        lambda rew, bls: float(
-            bls.hitpoints.mean()
-        ),
-
-    'blstats__hitpoints__median':
-        lambda rew, bls: float(
-            numpy.median(bls.hitpoints)
-        ),
-
-    'blstats__hitpoints__std':
-        lambda rew, bls: float(
-            bls.hitpoints.std()
-        ),
-
-    'blstats__experience_points__max':
-        lambda rew, bls: float(
-            bls.experience_points.max()
-        ),
-
-    'blstats__level_number__max':
-        lambda rew, bls: float(
-            bls.level_number.max()
-        ),
-
-    'blstats__energy__mean':
-        lambda rew, bls: float(
-            bls.energy.mean()
-        ),
-
-    'blstats__energy__std':
-        lambda rew, bls: float(
-            bls.energy.std()
-        ),
-
-    'blstats__gold__total':
-        lambda rew, bls: float(
-            bls.gold.sum()
-        ),
-
-    'blstats__score__max':
-        lambda rew, bls: float(
-            bls.score.max()
-        ),
-
-    'blstats__score__per_time':
-        lambda rew, bls: float(
-            bls.score.max() / bls.time.max()
-        ),
-
+    "reward__total": lambda rew, bls: float(rew.sum()),
+    "reward__sparsity": lambda rew, bls: float((rew == 0).mean()),
+    "blstats__hitpoints__mean": lambda rew, bls: float(bls.hitpoints.mean()),
+    "blstats__hitpoints__median": lambda rew, bls: float(numpy.median(bls.hitpoints)),
+    "blstats__hitpoints__std": lambda rew, bls: float(bls.hitpoints.std()),
+    "blstats__experience_points__max": lambda rew, bls: float(
+        bls.experience_points.max()
+    ),
+    "blstats__level_number__max": lambda rew, bls: float(bls.level_number.max()),
+    "blstats__energy__mean": lambda rew, bls: float(bls.energy.mean()),
+    "blstats__energy__std": lambda rew, bls: float(bls.energy.std()),
+    "blstats__gold__total": lambda rew, bls: float(bls.gold.sum()),
+    "blstats__score__max": lambda rew, bls: float(bls.score.max()),
+    "blstats__score__per_time": lambda rew, bls: float(
+        bls.score.max() / bls.time.max()
+    ),
     # frequency of various hunger states
-    'blstats__hunger_state__counts':
-        lambda rew, bls: numpy.bincount(
-            bls.hunger_state,
-            minlength=7,
-        ).tolist(),
-    }
+    "blstats__hunger_state__counts": lambda rew, bls: numpy.bincount(
+        bls.hunger_state,
+        minlength=7,
+    ).tolist(),
+}
 
 
-def traces(path, ext='.pkl'):
+def traces(path, ext=".pkl"):
     """Get all replays in the specified folder."""
 
     path, _, snapshots = next(os.walk(os.path.abspath(path)))
@@ -112,7 +67,7 @@ def get_hash(seed, actions, **ignored):
 def read_one(trace):
     """Read a replay file and get its hash."""
 
-    state_dict = pickle.load(open(trace, 'rb'))
+    state_dict = pickle.load(open(trace, "rb"))
     return trace, get_hash(**state_dict), state_dict
 
 
@@ -121,16 +76,18 @@ def simulate_one(state_dict):
 
     data = []
     # XXX no options are overridden here!
-    with Replay(gym.make('NetHackChallenge-v0')) as env:
+    with Replay(gym.make("NetHackChallenge-v0")) as env:
         gen = env.replay(
-            state_dict['actions'],
-            seed=state_dict['seed'],
+            state_dict["actions"],
+            seed=state_dict["seed"],
         )
         for obs, act, rew, obs_, info in gen:
-            data.append((
-                rew,
-                tuple(obs['blstats'].tolist()),
-            ))
+            data.append(
+                (
+                    rew,
+                    tuple(obs["blstats"].tolist()),
+                )
+            )
 
     # collate stats
     rew, blstats, *ignored = zip(*data)
@@ -157,20 +114,20 @@ def evaluate_one(sh, trace, state_dict):
     return sh, dict(
         trace=trace,
         data={
-            **stats, **{'info__' + k: v for k, v in info.items()},
+            **stats,
+            **{"info__" + k: v for k, v in info.items()},
         },
     )
 
 
 def evaluate(folder, n_jobs=-1, verbose=10):
-    """Scan the specified folder for replay traces and compute missing stats.
-    """
+    """Scan the specified folder for replay traces and compute missing stats."""
     folder = os.path.abspath(folder)
 
     # open the jayson metadata
-    cache, filename = {}, os.path.join(folder, 'cache.json')
+    cache, filename = {}, os.path.join(folder, "cache.json")
     if os.path.isfile(filename):
-        cache = json.load(open(filename, 'rt'))
+        cache = json.load(open(filename, "rt"))
 
     unready = {}
     for trace, sh, state_dict in map(read_one, traces(folder)):
@@ -180,17 +137,19 @@ def evaluate(folder, n_jobs=-1, verbose=10):
             continue
 
         # make sure the data contains at least the series specified at the top
-        data = cache[sh]['data']
+        data = cache[sh]["data"]
         if data and (SERIES.keys() - data.keys()):
             unready[sh] = trace, state_dict
 
     if unready:
         # dump the newly computed stats into a jayson file
-        cache.update(Parallel(n_jobs=n_jobs, verbose=verbose)(
-            delayed(evaluate_one)(k, *v) for k, v in unready.items()
-        ))
+        cache.update(
+            Parallel(n_jobs=n_jobs, verbose=verbose)(
+                delayed(evaluate_one)(k, *v) for k, v in unready.items()
+            )
+        )
 
-        json.dump(cache, open(filename, 'wt'), indent=2)
+        json.dump(cache, open(filename, "wt"), indent=2)
 
     return cache
 
@@ -201,7 +160,7 @@ def series(cache, *names):
 
     data = []
     for rec in cache.values():
-        trace, stats = rec['trace'], rec['data']
+        trace, stats = rec["trace"], rec["data"]
         if not all(n in stats for n in names):
             continue
 
@@ -213,7 +172,7 @@ def series(cache, *names):
 
 def main(
     folder,
-    name='blstats__score__max',
+    name="blstats__score__max",
     q=0.1,
     aux=None,
     *,
@@ -238,7 +197,7 @@ def main(
         fig, ax = plt.subplots(1, 1, figsize=(4, 3), dpi=160)
         if aux:
             yaxis, *ignored = rest
-            ax.set_title('Scatter plot')
+            ax.set_title("Scatter plot")
             ax.scatter(main, yaxis, alpha=0.75)
             ax.set_ylabel(aux)
 
@@ -247,7 +206,7 @@ def main(
             ax.hist(main, bins=51, alpha=0.75)
 
         ax.set_xlabel(name)
-        ax.axvline(lo, c='k', zorder=10)
+        ax.axvline(lo, c="k", zorder=10)
         fig.tight_layout()
         fig.show()
 
@@ -255,46 +214,58 @@ def main(
         plt.ginput()
         plt.close()
 
-    return [
-        (sc, tr) for tr, sc in zip(traces, main) if sc <= lo
-    ]
+    return [(sc, tr) for tr, sc in zip(traces, main) if sc <= lo]
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import argparse
     import pprint as pp
 
     parser = argparse.ArgumentParser(
-        description='Interactively replay a recorded playthrough.',
-        add_help=True)
+        description="Interactively replay a recorded playthrough.", add_help=True
+    )
+
+    parser.add_argument("folder", type=str, help="The stored replay data.")
 
     parser.add_argument(
-        'folder', type=str,
-        help='The stored replay data.')
+        "--name",
+        type=str,
+        default="blstats__score__max",
+        required=False,
+        help="The score series to analyze.",
+    )
 
     parser.add_argument(
-        '--name', type=str, default='blstats__score__max', required=False,
-        help='The score series to analyze.')
+        "--aux",
+        type=str,
+        default=None,
+        required=False,
+        help="The auxiliary series on the y-axis of a scatter plot.",
+    )
 
     parser.add_argument(
-        '--aux', type=str, default=None, required=False,
-        help='The auxiliary series on the y-axis of a scatter plot.')
+        "--q",
+        type=float,
+        default=0.1,
+        required=False,
+        help="The quantile [0, 1] for the most underperforming.",
+    )
 
     parser.add_argument(
-        '--q', type=float, default=0.1, required=False,
-        help='The quantile [0, 1] for the most underperforming.')
-
-    parser.add_argument(
-        '--debug', required=False, dest='debug', action='store_true',
-        help='Enter trace mode.')
+        "--debug",
+        required=False,
+        dest="debug",
+        action="store_true",
+        help="Enter trace mode.",
+    )
 
     parser.set_defaults(
         q=0.1,
-        name='blstats__score__max',
+        name="blstats__score__max",
         aux=None,
         debug=False,
     )
 
     args, _ = parser.parse_known_args()
     pp.pprint(main(**vars(args), plot=True))
-    print('\n\n')
+    print("\n\n")

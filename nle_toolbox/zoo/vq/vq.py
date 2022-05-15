@@ -8,7 +8,7 @@ from torch.nn import Parameter
 
 from collections import namedtuple
 
-VQEOutput = namedtuple('VQEOutput', 'values,indices,vectors')
+VQEOutput = namedtuple("VQEOutput", "values,indices,vectors")
 VQEOutput.__doc__ += """
 
 Attributes
@@ -146,8 +146,7 @@ class VectorQuantizedVAE(nn.Module):
 
     @torch.no_grad()
     def lookup(self, input: Tensor) -> LongTensor:
-        """Lookup the index of the nearest embedding.
-        """
+        """Lookup the index of the nearest embedding."""
 
         # k(z) = \arg \min_k \|E_k - z\|^2
         #      = \arg \min_k \|E_k\|^2 - 2 E_k^\top z + \|z\|^2
@@ -156,12 +155,11 @@ class VectorQuantizedVAE(nn.Module):
 
         emb = self.weight
         sqr = (emb * emb).sum(dim=1)
-        cov = torch.einsum('...j, kj -> ...k', input, emb)
+        cov = torch.einsum("...j, kj -> ...k", input, emb)
         return torch.argmin(sqr.sub(cov, alpha=2), dim=-1)
 
     def fetch(self, indices: LongTensor, at: int = -1) -> Tensor:
-        """Fetch embeddings and put their dim at position `at`.
-        """
+        """Fetch embeddings and put their dim at position `at`."""
 
         dims = list(range(indices.ndim))
 
@@ -203,7 +201,7 @@ class VectorQuantizedVAE(nn.Module):
         )
 
     def extra_repr(self) -> str:
-        return f'{self.num_embeddings}, {self.embedding_dim}'
+        return f"{self.num_embeddings}, {self.embedding_dim}"
 
 
 class VQVAEEmbeddings(nn.Identity):
@@ -212,8 +210,7 @@ class VQVAEEmbeddings(nn.Identity):
     def __init__(self, module: VectorQuantizedVAE) -> None:
         if not isinstance(module, VectorQuantizedVAE):
             raise TypeError(
-                f"{type(self).__name__} wraps VQ"
-                f" layers directly. Got `{module}`."
+                f"{type(self).__name__} wraps VQ" f" layers directly. Got `{module}`."
             )
         super().__init__()
         self.wrapped = module
@@ -229,8 +226,7 @@ class VQVAEIntegerCodes(nn.Identity):
     def __init__(self, module: VectorQuantizedVAE) -> None:
         if not isinstance(module, VectorQuantizedVAE):
             raise TypeError(
-                f"{type(self).__name__} wraps VQ"
-                f" layers directly. Got `{module}`."
+                f"{type(self).__name__} wraps VQ" f" layers directly. Got `{module}`."
             )
         super().__init__()
         self.wrapped = module

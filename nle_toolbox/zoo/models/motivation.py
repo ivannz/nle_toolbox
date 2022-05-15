@@ -9,20 +9,20 @@ from collections import namedtuple
 from .basic import SimpleEncoder
 from ...utils.nn import trailing_lerp
 
-MotivatorObs = namedtuple('MotivatorObs', 'agent,obs')
+MotivatorObs = namedtuple("MotivatorObs", "agent,obs")
 
 
 class RNDNetwork(nn.Module):
-    """The function, which embeds the observations for RND.
-    """
+    """The function, which embeds the observations for RND."""
+
     def __init__(self, obs: dict, act: dict, sizes: list[int]) -> None:
         super().__init__()
 
         # the core embedding modules (observation and action)
         self.obs = SimpleEncoder(**obs)
         self.act = nn.Embedding(**act) if act is not None else None
-        n_features = obs['intermediate_size'] + (
-            act['embedding_dim'] if act is not None else 0
+        n_features = obs["intermediate_size"] + (
+            act["embedding_dim"] if act is not None else 0
         )
 
         layers = [nn.Linear(n_features, sizes[0], bias=True)]
@@ -46,22 +46,22 @@ class RNDNetwork(nn.Module):
         *,
         k: int = 3,
         bls: tuple[str] = (
-            'hp',
-            'hunger',
-            'condition',
+            "hp",
+            "hunger",
+            "condition",
         ),
         act: dict = None,
     ) -> dict:
         return {
             # symmetric ego-centric window of glyphs plus bottom line stats
-            'obs': {
-                'n_context': (k + 1 + k) * (k + 1 + k) + len(bls),
-                'embedding_dim': embedding_dim,
-                'intermediate_size': intermediate_size,
-                'dropout': 0.0,
+            "obs": {
+                "n_context": (k + 1 + k) * (k + 1 + k) + len(bls),
+                "embedding_dim": embedding_dim,
+                "intermediate_size": intermediate_size,
+                "dropout": 0.0,
             },
-            'act': act,
-            'sizes': sizes,
+            "act": act,
+            "sizes": sizes,
         }
 
 
@@ -108,6 +108,7 @@ class RNDModule(nn.Module):
        \partial_r \|r\|_2 = \frac{r}{\|r\|_2}
     $.
     """
+
     def __init__(
         self,
         embed: dict,
@@ -124,7 +125,7 @@ class RNDModule(nn.Module):
         self.online = RNDNetwork(**embed).requires_grad_(True).train()
 
         # RND does not have a runtime state, other than the networks' params
-        self.register_parameter('h0', None)
+        self.register_parameter("h0", None)
 
     def forward(self, obs, act=None, rew=None, fin=None, *, hx=None):
         assert isinstance(obs, MotivatorObs) and hx is None
@@ -140,7 +141,7 @@ class RNDModule(nn.Module):
             rew = err.detach() / math.sqrt(target.shape[-1])
 
         else:
-            err = F.mse_loss(online, target, reduction='none').sum(-1)
+            err = F.mse_loss(online, target, reduction="none").sum(-1)
             rew = err.detach() / target.shape[-1]
 
         # return the rewards and the errors
@@ -154,9 +155,9 @@ class RNDModule(nn.Module):
         root: bool = False,
     ) -> dict:
         return {
-            'cls': str(cls),
-            'embed': embed,
-            'root': root,
+            "cls": str(cls),
+            "embed": embed,
+            "root": root,
         }
 
 
@@ -178,12 +179,12 @@ class RIDEEmbedding(nn.Module):
         # set up learnable embedding of the terminal observation, which should
         # have the from `T x B x ...`
         if h0:
-            self.h0 = nn.Parameter(torch.randn(1, 1, obs['intermediate_size']))
+            self.h0 = nn.Parameter(torch.randn(1, 1, obs["intermediate_size"]))
 
         else:
-            self.register_parameter('h0', None)
+            self.register_parameter("h0", None)
 
-        self.out_features = obs['intermediate_size']
+        self.out_features = obs["intermediate_size"]
 
     def forward(self, obs, fin=None, *, hx=None):
         r"""
@@ -255,21 +256,21 @@ class RIDEEmbedding(nn.Module):
         *,
         k: int = 3,
         bls: tuple[str] = (
-            'hp',
-            'hunger',
-            'condition',
+            "hp",
+            "hunger",
+            "condition",
         ),
         h0: bool = True,
     ) -> dict:
         return {
             # symmetric ego-centric window of glyphs plus bottom line stats
-            'obs': {
-                'n_context': (k + 1 + k) * (k + 1 + k) + len(bls),
-                'embedding_dim': embedding_dim,
-                'intermediate_size': intermediate_size,
-                'dropout': 0.0,
+            "obs": {
+                "n_context": (k + 1 + k) * (k + 1 + k) + len(bls),
+                "embedding_dim": embedding_dim,
+                "intermediate_size": intermediate_size,
+                "dropout": 0.0,
             },
-            'h0': h0,
+            "h0": h0,
         }
 
 
@@ -316,22 +317,22 @@ class RIDEModule(nn.Module):
         # setup the forward and inverse models
         self.fwd = nn.Sequential(
             (Bilinear if bilinear else CatLinear)(
-                obs['intermediate_size'],
-                act['embedding_dim'],
+                obs["intermediate_size"],
+                act["embedding_dim"],
                 sizes[0],
             ),
             nn.GELU(),
-            nn.Linear(sizes[0], obs['intermediate_size']),
+            nn.Linear(sizes[0], obs["intermediate_size"]),
         )
 
         self.inv = nn.Sequential(
             CatLinear(
-                obs['intermediate_size'],
-                obs['intermediate_size'],
+                obs["intermediate_size"],
+                obs["intermediate_size"],
                 sizes[0],
             ),
             nn.GELU(),
-            nn.Linear(sizes[0], act['num_embeddings']),
+            nn.Linear(sizes[0], act["num_embeddings"]),
         )
 
         self.flip = flip
@@ -361,15 +362,15 @@ class RIDEModule(nn.Module):
         bilinear: bool = False,
         flip: bool = False,
     ) -> dict:
-        embedding_dim = embed['obs']['embedding_dim']
+        embedding_dim = embed["obs"]["embedding_dim"]
         return {
-            'cls': str(cls),
+            "cls": str(cls),
             **embed,
-            'sizes': sizes,
-            'act': {
-                'num_embeddings': n_actions,
-                'embedding_dim': embedding_dim,
+            "sizes": sizes,
+            "act": {
+                "num_embeddings": n_actions,
+                "embedding_dim": embedding_dim,
             },
-            'bilinear': bilinear,
-            'flip': flip,
+            "bilinear": bilinear,
+            "flip": flip,
         }

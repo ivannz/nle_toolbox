@@ -21,11 +21,11 @@ def input(prompt=None, *, _input=__builtins__.input):
     if prompt is None:
         return _input()
 
-    return _input('\033[29;0H\033[2K\r\033[39m\033[m' + str(prompt))
+    return _input("\033[29;0H\033[2K\r\033[39m\033[m" + str(prompt))
 
 
 def flush(line=30):
-    sys.stdout.write(f'\033[{line};0H\033[2K\r\033[J\033[37m')
+    sys.stdout.write(f"\033[{line};0H\033[2K\r\033[J\033[37m")
 
 
 class AutoNLEControls:
@@ -37,6 +37,7 @@ class AutoNLEControls:
     Replay actions backward/forward by one `, .` by ten `< >` in playback
     mode, `signed integer` moves to position from beginning/end.
     """
+
     playback, debug, handler, pos = True, False, None, 0
 
     def __init__(self, env, trace=()):
@@ -52,12 +53,12 @@ class AutoNLEControls:
             # integers are used for wraparound indexing
             pos = (len(self.trace) + 1) + act if act < 0 else act
 
-        elif act in ' ,.<>':
-            if act in ',<':
-                delta = -1 if act == ',' else -10
+        elif act in " ,.<>":
+            if act in ",<":
+                delta = -1 if act == "," else -10
 
-            elif act in '.>':
-                delta = +1 if act == '.' else +10
+            elif act in ".>":
+                delta = +1 if act == "." else +10
 
             else:
                 delta = 0
@@ -70,7 +71,7 @@ class AutoNLEControls:
 
         self.pos = min(max(pos, 0), len(self.trace))
         for _, _, _, obs, _ in self.env.replay(
-            self.trace[:self.pos],
+            self.trace[: self.pos],
             seed=self.env._seed,
         ):
             pass
@@ -84,11 +85,11 @@ class AutoNLEControls:
             self.restore()
 
             # get the user control, while showing the previous user input
-            prev_ui = ui or ''
+            prev_ui = ui or ""
             try:
-                status = 'A' if self.playback else 'U'
-                status += 'D' if self.debug else ' '
-                extra = f' {{{prev_ui}}}' if prev_ui else ''
+                status = "A" if self.playback else "U"
+                status += "D" if self.debug else " "
+                extra = f" {{{prev_ui}}}" if prev_ui else ""
 
                 # prompt for user input or intercept a ctrl+C
                 ui = input(f"([{self.pos:5d} {status:2s}] {extra}) > ")
@@ -104,10 +105,10 @@ class AutoNLEControls:
 
             # replace the user input with the one logged in the history
             #  on up/down keys
-            if ui.startswith(('\x1b[A', '\x1b[B')):
-                hix = hix + (-1 if ui == '\x1b[A' else +1)
+            if ui.startswith(("\x1b[A", "\x1b[B")):
+                hix = hix + (-1 if ui == "\x1b[A" else +1)
                 hix = max(0, min(len(history) - 1, hix))
-                ui = history[hix] if history else ''
+                ui = history[hix] if history else ""
                 continue
 
             if ui and (not history or history[-1] != ui):
@@ -144,9 +145,7 @@ class AutoNLEControls:
 
         while True:
             # auto play until interrupted or exhausted the trace
-            while self.playback and not self.standby and (
-                self.pos < len(self.trace)
-            ):
+            while self.playback and not self.standby and (self.pos < len(self.trace)):
                 obs, rew, fin, nfo = self.env.step(self.trace[self.pos])
                 self.pos += 1
 
@@ -168,19 +167,19 @@ class AutoNLEControls:
                 # if the user has spoiled the env state by interacting with it
                 #  force reset it to the current playback position.
                 if self._dirty:
-                    obs = self.step(' ')
+                    obs = self.step(" ")
                     self._dirty = False
 
                 self.playback = True
                 continue
 
             # special commands are prefixed with double-escape in control mode
-            if self.playback or ui.startswith('\033\033\033'):
-                if ui.startswith('\033\033\033'):
+            if self.playback or ui.startswith("\033\033\033"):
+                if ui.startswith("\033\033\033"):
                     ui = ui[3:]
 
                 # toggle game/playback control on zero byte
-                if not ui or 'play'.startswith(ui):
+                if not ui or "play".startswith(ui):
                     # if we're in freeplay mode, then copy the taken actions
                     if not self.playback and self.is_freeplay:
                         self.trace = self.env._actions[:]
@@ -190,24 +189,24 @@ class AutoNLEControls:
                     continue  # ignore the rest of the input on mode switch
 
                 # debug mode toggle
-                elif 'debug'.startswith(ui):
+                elif "debug".startswith(ui):
                     self.debug = not self.debug
                     continue
 
                 # display a helpful message
-                elif 'help'.startswith(ui):
+                elif "help".startswith(ui):
                     flush(30)
                     print(self.__doc__)
                     continue
 
                 # clear screen
-                elif 'seed'.startswith(ui):
+                elif "seed".startswith(ui):
                     flush(30)
                     print(self.env._seed)
                     continue
 
                 # clear screen
-                elif 'clear'.startswith(ui):
+                elif "clear".startswith(ui):
                     flush(1)
                     yield obs
                     continue
@@ -244,7 +243,7 @@ class AutoNLEControls:
 
             # the user might have potentially spoiled the state
             self._dirty = not self.playback
-            for c in bytes(ui, 'utf8').decode('unicode-escape'):
+            for c in bytes(ui, "utf8").decode("unicode-escape"):
                 try:
                     # playback controls
                     if self.playback:
@@ -258,7 +257,7 @@ class AutoNLEControls:
 
                 except (KeyError, ValueError):
                     # abort on invalid command
-                    if input('Invalid command. abort? [yn] (y)') != 'n':
+                    if input("Invalid command. abort? [yn] (y)") != "n":
                         return
 
                     break
@@ -275,7 +274,7 @@ def replay(filename, delay=0.06, debug=False, seed=None):
     breakpoint() if debug else None
 
     # create the replayable env
-    env = Replay(gym.make('NetHackChallenge-v0'))
+    env = Replay(gym.make("NetHackChallenge-v0"))
     # XXX in case we want to try out different scenaria see how a map is made
     #  in `minihack.envs.fightcorridor.MiniHackFightCorridor`.
     # from minihack.base import MiniHack
@@ -290,13 +289,13 @@ def replay(filename, delay=0.06, debug=False, seed=None):
         seed, trace = seed, []
 
     else:
-        state_dict = pickle.load(open(filename, 'rb'))
+        state_dict = pickle.load(open(filename, "rb"))
         sys.stdout.write(
             "\033[2J\033[0;0H replaying recording `{os.path.basename(filename)}`"
             f" from `{state_dict['__dttm__']}`\nwith seeds {state_dict['seed']}."
         )
 
-        seed, trace = state_dict['seed'], state_dict['actions']
+        seed, trace = state_dict["seed"], state_dict["actions"]
 
     # the player and game controls
     env.seed(seed=seed)
@@ -312,43 +311,57 @@ def replay(filename, delay=0.06, debug=False, seed=None):
             break
 
         # an extra prompt to break out from the loop
-        if input('restart? [yn] (n)') != 'y':
+        if input("restart? [yn] (n)") != "y":
             break
 
     if not os.path.isfile(filename):
         # save into the specified `filename`
-        pickle.dump(env.state_dict(), open(filename, 'wb'))
+        pickle.dump(env.state_dict(), open(filename, "wb"))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(
-        description='Interactively replay a recorded playthrough.',
-        add_help=True)
-
-    parser.add_argument(
-        'filename', type=str,
-        help="The stored replay data. If the file does not exist, enter"
-             " freeplay mode, which records gameplay to the specified file.")
-
-    parser.add_argument(
-        '--delay', type=float, default=0.06, required=False, dest='delay',
-        help="Delay between steps during replay.")
-
-    parser.add_argument(
-        '--seed', required=False, type=int, nargs=2,
-        help="the seed pair to use, when free playing to a file."
-             "\nValkyrie `--seed 14278027783296323177 11038440290352864458`"
-             "\nPriestess `--seed 5009195464289726085 12625175316870653325`"
-             "\nWizard `--seed 12604736832047991440 12469632217503715839`"
-             # ';j:' # a paragraph about a cat
-             # 'acy' # break a wand "of slow" and blow up
+        description="Interactively replay a recorded playthrough.", add_help=True
     )
 
     parser.add_argument(
-        '--debug', required=False, dest='debug', action='store_true',
-        help="Enter trace mode.")
+        "filename",
+        type=str,
+        help="The stored replay data. If the file does not exist, enter"
+        " freeplay mode, which records gameplay to the specified file.",
+    )
+
+    parser.add_argument(
+        "--delay",
+        type=float,
+        default=0.06,
+        required=False,
+        dest="delay",
+        help="Delay between steps during replay.",
+    )
+
+    parser.add_argument(
+        "--seed",
+        required=False,
+        type=int,
+        nargs=2,
+        help="the seed pair to use, when free playing to a file."
+        "\nValkyrie `--seed 14278027783296323177 11038440290352864458`"
+        "\nPriestess `--seed 5009195464289726085 12625175316870653325`"
+        "\nWizard `--seed 12604736832047991440 12469632217503715839`"
+        # ';j:' # a paragraph about a cat
+        # 'acy' # break a wand "of slow" and blow up
+    )
+
+    parser.add_argument(
+        "--debug",
+        required=False,
+        dest="debug",
+        action="store_true",
+        help="Enter trace mode.",
+    )
 
     parser.set_defaults(delay=0.06, debug=False)
 

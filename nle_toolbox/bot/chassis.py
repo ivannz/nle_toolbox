@@ -175,8 +175,8 @@ rx_prompt_options = re.compile(
 
 
 GUIModalWindow = namedtuple(
-    'GUIModalWindow',
-    'is_message,n_row,data,n_pages,n_page',
+    "GUIModalWindow",
+    "is_message,n_row,data,n_pages,n_page",
 )
 
 
@@ -234,7 +234,7 @@ def extract_modal_window(obs):
     for [dmore](./nle/win/tty/wintty.c#L1698-1717), which most likely has
     `defmorestr` in `cw->morestr`.
     """
-    lines = obs['tty_chars'].view('S80')[:, 0]
+    lines = obs["tty_chars"].view("S80")[:, 0]
 
     # detect the lower left corner of the modal box by looking for a signature
     col, row, match = 80, 0, None
@@ -252,11 +252,11 @@ def extract_modal_window(obs):
         return lines, None
 
     # get the pagination info and the menu contents, leaving out the signature
-    n_page, n_pages = match.group('cur', 'tot')
+    n_page, n_pages = match.group("cur", "tot")
     content = tuple([ll[col:].rstrip() for ll in lines[:row]])
     return lines, GUIModalWindow(
         # let the rx do the detection for the `is_message` flag
-        match.group('has_more') is not None,
+        match.group("has_more") is not None,
         # we need the row number to tell a multi-part message form a log
         row,
         # the lines from the modal box, including empty ones
@@ -269,8 +269,8 @@ def extract_modal_window(obs):
 
 
 GUIMenuPage = namedtuple(
-    'GUIMenuPage',
-    'n_page,n_pages,title,items,letters',
+    "GUIMenuPage",
+    "n_page,n_pages,title,items,letters",
 )
 
 
@@ -286,11 +286,11 @@ def parse_menu_page(page):
     # extract menu items
     # XXX to make parsing more robust, `.decode('ascii')` was dropped,
     #  see `fetch_message()`
-    title, items, letters = b'', [], {}
+    title, items, letters = b"", [], {}
     for entry in page.data:
         m = rx_menu_item.match(entry)
         if m is not None:
-            lt, it = m.group('letter', 'item')
+            lt, it = m.group("letter", "item")
             items.append(it)
             if lt is not None:
                 letters[lt] = it
@@ -303,7 +303,8 @@ def parse_menu_page(page):
     # return the parsed menu
     return GUIMenuPage(
         # the current page and the total number of pages
-        page.n_page, page.n_pages,
+        page.n_page,
+        page.n_pages,
         # the title of the menu (empty if not the first page)
         title,
         # the line-by-line content of the menu's page
@@ -314,8 +315,8 @@ def parse_menu_page(page):
 
 
 GUIMenu = namedtuple(
-    'GUIMenu',
-    'title,n_page,n_pages,content,letters',
+    "GUIMenu",
+    "title,n_page,n_pages,content,letters",
 )
 
 
@@ -385,7 +386,8 @@ def join_menu_pages(pages, *, menu=None):
         #  the current menu.
         next(filter(bool, (pg.title for pg in pages)), None),
         # the current page and the total number
-        pages[-1].n_page, pages[-1].n_pages,
+        pages[-1].n_page,
+        pages[-1].n_pages,
         # the page content
         {pg.n_page: pg.items for pg in pages},
         # cache the letters from the current page
@@ -401,7 +403,8 @@ def join_menu_pages(pages, *, menu=None):
         # the title stays with us from the very first page
         menu.title,
         # the number of the page currently being displayed
-        new.n_page, menu.n_pages,
+        new.n_page,
+        menu.n_pages,
         # update the current menu's pages with the skipped content
         menu.content | new.content,  # {**menu.content, **new.content}
         # new letters override the older irrelevant ones
@@ -427,17 +430,17 @@ def fetch_messages(obs, split=False, top=False):
     if top:
         warn("Top-line message extraction is deprecated.", RuntimeWarning)
 
-        topl = obs['tty_chars'].view('S80')[:2, 0]
-        message = b' '.join(map(bytes.strip, topl))
-        if message.endswith(b'--More--'):
+        topl = obs["tty_chars"].view("S80")[:2, 0]
+        message = b" ".join(map(bytes.strip, topl))
+        if message.endswith(b"--More--"):
             message = message[:-8].rstrip()
 
     else:
-        message = bytes(obs['message'].view('S256')[0])
+        message = bytes(obs["message"].view("S256")[0])
         message = message.rstrip()
 
     # message = message.decode('ascii')
-    return message.split(b'  ') if split else [message]
+    return message.split(b"  ") if split else [message]
 
 
 class InteractiveWrapper(Wrapper):
@@ -446,11 +449,15 @@ class InteractiveWrapper(Wrapper):
     data. It also is allowed, but not obliged to interact with the env, while
     intercepting the observations.
     """
+
     def reset(self):
-        self.method_ = 'reset'
+        self.method_ = "reset"
         try:
             obs, rew, done, info = self.update(
-                self.env.reset(), 0., False, None,
+                self.env.reset(),
+                0.0,
+                False,
+                None,
             )
             return obs
 
@@ -458,14 +465,14 @@ class InteractiveWrapper(Wrapper):
             self.method_ = None
 
     def step(self, action):
-        self.method_ = 'step'
+        self.method_ = "step"
         try:
             return self.update(*self.env.step(action))
 
         finally:
             self.method_ = None
 
-    def update(self, obs, rew=0., done=False, info=None):
+    def update(self, obs, rew=0.0, done=False, info=None):
         """Perform the necessary updates and environment interactions based
         on the data, intercepted from `.env.step` in response to the action
         most recently sent by the downstream user via our `.step` method.
@@ -522,18 +529,22 @@ class Chassis(InteractiveWrapper):
         with an interactible page. Typically the flag is False, because it is
         set when 'letters' in `.menu` is non-empty.
     """
-    def __init__(self, env, *, split=True, space=' '):
+
+    def __init__(self, env, *, split=True, space=" "):
         # make sure that the wrapped env has all the necessary fields
         #  and their dtype is correct. `message` must be np.uint8, since
         #  we use .view('S') to convert to bytes.
-        if not ({'message', 'misc'} <= set(env.observation_space)):
-            raise RuntimeError("Chassis requires `message` and `misc`"
-                               " fields in the observation dict.")
+        if not ({"message", "misc"} <= set(env.observation_space)):
+            raise RuntimeError(
+                "Chassis requires `message` and `misc`"
+                " fields in the observation dict."
+            )
 
-        msg = env.observation_space['message']
+        msg = env.observation_space["message"]
         if msg.dtype != np.uint8:
-            raise RuntimeError("NLE's `message` field must have"
-                               f" `uint8` dtype. Got `{msg.dtype}`.")
+            raise RuntimeError(
+                "NLE's `message` field must have" f" `uint8` dtype. Got `{msg.dtype}`."
+            )
 
         super().__init__(env)
 
@@ -566,13 +577,11 @@ class Chassis(InteractiveWrapper):
         """
 
         # we expect this to fail if the `obs['misc']` spec changes upstream
-        (
-            self.in_yn_function,
-            self.in_getlin,
-            self.xwaitingforspace
-        ) = map(bool, obs['misc'])
+        (self.in_yn_function, self.in_getlin, self.xwaitingforspace) = map(
+            bool, obs["misc"]
+        )
 
-    def update(self, obs, rew=0., done=False, info=None):
+    def update(self, obs, rew=0.0, done=False, info=None):
         """Detect whether NetHack expects a text input form the user, a pick
         in a yes/no or a multiple choice question, an acknowledgment of
         a multi-part message, or an interaction with a menu's page.
@@ -657,7 +666,7 @@ class Chassis(InteractiveWrapper):
 
             # the topline message is a zero-terminated ascii string, so we
             #  can trivially test if it is empty.
-            is_topl_msg_nonempty = obs['message'][0] != 0
+            is_topl_msg_nonempty = obs["message"][0] != 0
             # XXX In fact [the docs](./nle/doc/window.doc#L46-48) state that
             #  menu/message are mutually exclusive, and forbid using `putstr`
             #  after [start_menu](./nle/doc/window.doc#L306-310).
@@ -704,7 +713,7 @@ class Chassis(InteractiveWrapper):
             # XXX we should use the unsplit message when detecting the prompt
 
             # `getlin` is not triggered when an extended command is being input
-            self.in_getlin = self.in_getlin or messages[-1].startswith(b'#')
+            self.in_getlin = self.in_getlin or messages[-1].startswith(b"#")
             # XXX This due to [doextcmd](./nle/src/cmd.c#L339-367) turning to
             #  `.win_get_ext_cmd`, that in the NLE is ultimately mapped to
             #  [NetHackRL::rl_get_ext_cmd()](./nle/win/rl/winrl.cc#L1034-1040).
@@ -717,7 +726,7 @@ class Chassis(InteractiveWrapper):
                 message = messages.pop()
                 match = rx_is_prompt.search(message)
                 if match is not None:
-                    self.prompt = match.groupdict('')
+                    self.prompt = match.groupdict("")
 
                 else:
                     raise ValueError(
@@ -729,9 +738,7 @@ class Chassis(InteractiveWrapper):
 
         # decide if the menus should be joined
         if pages:
-            self.menu = join_menu_pages(
-                pages, menu=getattr(self, 'menu', None)
-            )
+            self.menu = join_menu_pages(pages, menu=getattr(self, "menu", None))
 
         else:
             # no new pages means no menu on screen
@@ -756,7 +763,7 @@ def get_wrapper(env, cls=Chassis):
     )
 
 
-def decompactify(text, defaults=b'\033'):
+def decompactify(text, defaults=b"\033"):
     """Unpacks sorted letter spans ?-? in bytes-objects into a frozenset.
 
     Sort of inverse to [compactify](./nle/src/invent.c#1353-1359).
@@ -764,7 +771,7 @@ def decompactify(text, defaults=b'\033'):
     assert isinstance(text, bytes)
     letters = list(defaults)
 
-    lead, und, text = text.partition(b'-')
+    lead, und, text = text.partition(b"-")
     while und:
         letters.extend(lead[:-1])
         # we've got r"^-.*$" -- this means bare hands
@@ -774,7 +781,7 @@ def decompactify(text, defaults=b'\033'):
         else:
             letters.extend(range(ord(lead[-1:]), ord(text[:1])))
 
-        lead, und, text = text.partition(b'-')
+        lead, und, text = text.partition(b"-")
 
     letters.extend(lead)
 
@@ -785,189 +792,164 @@ class ActionMasker(InteractiveWrapper):
     from nle.nethack import ACTIONS as _raw_nethack_actions
 
     # carriage return, line feed or escape
-    _esc_crlf = frozenset(map(ord, '\033\015\r\n'))
+    _esc_crlf = frozenset(map(ord, "\033\015\r\n"))
 
     # carriage return, line feed, space or escape
-    _spc_esc_crlf = frozenset(map(ord, ' ')) | _esc_crlf
+    _spc_esc_crlf = frozenset(map(ord, " ")) | _esc_crlf
 
     # cardinal directions, esc, cr, and lf
-    _directions = frozenset(map(ord, 'ykuh.ljbn'))
+    _directions = frozenset(map(ord, "ykuh.ljbn"))
     _directions_esc_crlf = _directions | _esc_crlf
 
     # the letters below are always forbidden for neural actors, because they
     #  either have no effect or are useless, given the data in obs, or outright
     #  dangerous.
-    _prohibited = frozenset([
-        # XXX gym-ids are subject to change depending on the NLE
-        # ascii  # char    gym-id  class                   name
-        15,      # \\x0f   59      Command                 OVERVIEW
-        18,      # \\x12   68      Command                 REDRAW
-        33,      # !       85      Command                 SHELL
-        246,     # \\xf6   89      Command                 VERSION
-
-        # win by quitting!
-        241,     # \\xf1   65      Command                 QUIT
-
-        # we let the chassis handle mores, ESCs and spaces
-        13,      # \\r     19      MiscAction              MORE
-        27,      # \\x1b   36      Command                 ESC
-        32,      # \\x20   99      TextCharacters          SPACE
-
-        # we get attribs from the BLS (although it might be useful to know
-        #  our deity, alignment and mission)
-        24,      # \\x18   25      Command                 ATTRIBUTES
-
-        # extended commands are handled as composite actions
-        35,      # #       20      Command                 EXTCMD
-
-        # these shortcuts are present in `inv_*` fields of the observation
-        # XXX but they may be useful for grouping (as they report correct
-        #     letter binding).
-        34,      # "       77      Command                 SEEAMULET
-        40,      # (       82      Command                 SEETOOLS
-        41,      # )       84      Command                 SEEWEAPON
-        61,      # =       80      Command                 SEERINGS
-        91,      # [       78      Command                 SEEARMOR
-
-        # we know our gold from the BLS
-        36,      # $       112     TextCharacters          DOLLAR
-        36,      # $       79      Command                 SEEGOLD
-
-        # spells can be enumerated from CAST command `Z`, and neural bots
-        #  do not need to rebind spell-key mappings
-        43,      # +       81      Command                 SEESPELLS
-        43,      # +       97      TextCharacters          PLUS
-
-        38,      # &       92      Command                 WHATDOES
-        42,      # *       76      Command                 SEEALL
-        47,      # /       93      Command                 WHATIS
-
-        # The SEETRAP command simply shows the type of an adjacent trap and
-        #  does not `Find traps`. Detecting them is achieved by searching
-        #  around for a while with `[0-9]s` (see `SEARCH`).
-        94,      # ^       83      Command                 SEETRAP
-
-        # No need for FARLOOK
-        59,      # ;       42      Command                 GLANCE
-        64,      # @       26      Command                 AUTOPICKUP
-        67,      # C       27      Command                 CALL
-        68,      # D       34      Command                 DROPTYPE
-
-        # we use engrave in composite commands only
-        69,      # E       37      Command                 ENGRAVE
-        71,      # G       73      Command                 RUSH2
-        73,      # I       45      Command                 INVENTTYPE
-        77,      # M       55      Command                 MOVEFAR
-        79,      # O       58      Command                 OPTIONS
-        82,      # R       69      Command                 REMOVE
-        83,      # S       74      Command                 SAVE
-        86,      # V       43      Command                 HISTORY
-        92,      # \       49      Command                 KNOWN
-
-        # NetHack travels by landmarks, but consumes two actions `_:`
-        95,      # _       85      Command                 TRAVEL
-
-        96,      # `       50      Command                 KNOWNCLASS
-        103,     # g       72      Command                 RUSH
-        105,     # i       44      Command                 INVENTORY
-        109,     # m       54      Command                 MOVE
-        118,     # v       90      Command                 VERSIONSHORT
-        191,     # \\xbf   21      Command                 EXTLIST
-        193,     # \\xc1   23      Command                 ANNOTATE
-        195,     # \\xc3   31      Command                 CONDUCT
-        225,     # \\xe1   22      Command                 ADJUST
-
-        # jumping is altogether very confusing
-        234,     # \\xea   47      Command                 JUMP
-
-        # as with others, the following commands are useful in special prompts
-        34,      # "       101     TextCharacters          QUOTE
-        39,      # '       100     TextCharacters          APOS
-        45,      # -       98      TextCharacters          MINUS
-
-        # numeric inputs are for specific commands only
-        48,      # 0       102     TextCharacters          NUM_0
-        49,      # 1       103     TextCharacters          NUM_1
-        50,      # 2       104     TextCharacters          NUM_2
-        51,      # 3       105     TextCharacters          NUM_3
-        52,      # 4       106     TextCharacters          NUM_4
-        53,      # 5       107     TextCharacters          NUM_5
-        54,      # 6       108     TextCharacters          NUM_6
-        55,      # 7       109     TextCharacters          NUM_7
-        56,      # 8       110     TextCharacters          NUM_8
-        57,      # 9       111     TextCharacters          NUM_9
-
-        # special actions
-        233,     # \\xe9   46      Command                 INVOKE
-        239,     # \\xef   56      Command                 OFFER
-        240,     # \\xf0   62      Command                 PRAY
-
-    ])
+    _prohibited = frozenset(
+        [
+            # XXX gym-ids are subject to change depending on the NLE
+            # ascii  # char    gym-id  class                   name
+            15,  # \\x0f   59      Command                 OVERVIEW
+            18,  # \\x12   68      Command                 REDRAW
+            33,  # !       85      Command                 SHELL
+            246,  # \\xf6   89      Command                 VERSION
+            # win by quitting!
+            241,  # \\xf1   65      Command                 QUIT
+            # we let the chassis handle mores, ESCs and spaces
+            13,  # \\r     19      MiscAction              MORE
+            27,  # \\x1b   36      Command                 ESC
+            32,  # \\x20   99      TextCharacters          SPACE
+            # we get attribs from the BLS (although it might be useful to know
+            #  our deity, alignment and mission)
+            24,  # \\x18   25      Command                 ATTRIBUTES
+            # extended commands are handled as composite actions
+            35,  # #       20      Command                 EXTCMD
+            # these shortcuts are present in `inv_*` fields of the observation
+            # XXX but they may be useful for grouping (as they report correct
+            #     letter binding).
+            34,  # "       77      Command                 SEEAMULET
+            40,  # (       82      Command                 SEETOOLS
+            41,  # )       84      Command                 SEEWEAPON
+            61,  # =       80      Command                 SEERINGS
+            91,  # [       78      Command                 SEEARMOR
+            # we know our gold from the BLS
+            36,  # $       112     TextCharacters          DOLLAR
+            36,  # $       79      Command                 SEEGOLD
+            # spells can be enumerated from CAST command `Z`, and neural bots
+            #  do not need to rebind spell-key mappings
+            43,  # +       81      Command                 SEESPELLS
+            43,  # +       97      TextCharacters          PLUS
+            38,  # &       92      Command                 WHATDOES
+            42,  # *       76      Command                 SEEALL
+            47,  # /       93      Command                 WHATIS
+            # The SEETRAP command simply shows the type of an adjacent trap and
+            #  does not `Find traps`. Detecting them is achieved by searching
+            #  around for a while with `[0-9]s` (see `SEARCH`).
+            94,  # ^       83      Command                 SEETRAP
+            # No need for FARLOOK
+            59,  # ;       42      Command                 GLANCE
+            64,  # @       26      Command                 AUTOPICKUP
+            67,  # C       27      Command                 CALL
+            68,  # D       34      Command                 DROPTYPE
+            # we use engrave in composite commands only
+            69,  # E       37      Command                 ENGRAVE
+            71,  # G       73      Command                 RUSH2
+            73,  # I       45      Command                 INVENTTYPE
+            77,  # M       55      Command                 MOVEFAR
+            79,  # O       58      Command                 OPTIONS
+            82,  # R       69      Command                 REMOVE
+            83,  # S       74      Command                 SAVE
+            86,  # V       43      Command                 HISTORY
+            92,  # \       49      Command                 KNOWN
+            # NetHack travels by landmarks, but consumes two actions `_:`
+            95,  # _       85      Command                 TRAVEL
+            96,  # `       50      Command                 KNOWNCLASS
+            103,  # g       72      Command                 RUSH
+            105,  # i       44      Command                 INVENTORY
+            109,  # m       54      Command                 MOVE
+            118,  # v       90      Command                 VERSIONSHORT
+            191,  # \\xbf   21      Command                 EXTLIST
+            193,  # \\xc1   23      Command                 ANNOTATE
+            195,  # \\xc3   31      Command                 CONDUCT
+            225,  # \\xe1   22      Command                 ADJUST
+            # jumping is altogether very confusing
+            234,  # \\xea   47      Command                 JUMP
+            # as with others, the following commands are useful in special prompts
+            34,  # "       101     TextCharacters          QUOTE
+            39,  # '       100     TextCharacters          APOS
+            45,  # -       98      TextCharacters          MINUS
+            # numeric inputs are for specific commands only
+            48,  # 0       102     TextCharacters          NUM_0
+            49,  # 1       103     TextCharacters          NUM_1
+            50,  # 2       104     TextCharacters          NUM_2
+            51,  # 3       105     TextCharacters          NUM_3
+            52,  # 4       106     TextCharacters          NUM_4
+            53,  # 5       107     TextCharacters          NUM_5
+            54,  # 6       108     TextCharacters          NUM_6
+            55,  # 7       109     TextCharacters          NUM_7
+            56,  # 8       110     TextCharacters          NUM_8
+            57,  # 9       111     TextCharacters          NUM_9
+            # special actions
+            233,  # \\xe9   46      Command                 INVOKE
+            239,  # \\xef   56      Command                 OFFER
+            240,  # \\xf0   62      Command                 PRAY
+        ]
+    )
 
     # The following actions, identified by their ASCII code, are the ones that
     #  we allow to the neural agents in the general non-GUI interaction mode (
     #  except for prompt and menu letter interactions).
-    _allowed = frozenset([
-        # XXX gym-ids are subject to change depending on the NLE
-        # ascii ,  # char    gym-id  class                   name
-
-        # inventory management
-        65,      # A       89      Command                 TAKEOFFALL
-        44,      # ,       61      Command                 PICKUP
-        80,      # P       63      Command                 PUTON
-        84,      # T       88      Command                 TAKEOFF
-        87,      # W       99      Command                 WEAR
-        100,     # d       33      Command                 DROP
-        236,     # \\xec   52      Command                 LOOT
-
-        # scrolls are consumables, books aren't, but can become useless
-        114,     # r       67      Command                 READ
-        101,     # e       35      Command                 EAT
-        113,     # q       64      Command                 QUAFF
-
-        4,       # \\x04   48      Command                 KICK
-        20,      # \\x14   90      Command                 TELEPORT
-        58,      # :       51      Command                 LOOK
-        70,      # F       39      Command                 FIGHT
-        99,      # c       30      Command                 CLOSE
-        111,     # o       57      Command                 OPEN
-        245,     # \\xf5   96      Command                 UNTRAP
-        115,     # s       75      Command                 SEARCH
-
-        # weapon management dual wield, cycle, select and recharge
-        88,      # X       95      Command                 TWOWEAPON
-        120,     # x       87      Command                 SWAP
-        119,     # w       102     Command                 WIELD
-        81,      # Q       66      Command                 QUIVER
-
-
-        # fire readied ammunition from quiver
-        102,     # f       40      Command                 FIRE
-
-        # cast a spell from a book
-        90,      # Z       28      Command                 CAST
-
-        # use a wand from the inventory z*
-        122,     # z       104     Command                 ZAP
-
-        116,     # t       91      Command                 THROW
-        237,     # \\xed   53      Command                 MONSTER
-        244,     # \\xf4   94      Command                 TURN
-
-        # adventure mode actions
-        229,     # \\xe5   37      Command                 ENHANCE
-        97,      # a       24      Command                 APPLY
-        228,     # \\xe4   32      Command                 DIP
-        242,     # \\xf2   71      Command                 RUB
-        212,     # \\xd4   92      Command                 TIP
-        247,     # \\xf7   103     Command                 WIPE
-        210,     # \\xd2   70      Command                 RIDE
-        227,     # \\xe3   29      Command                 CHAT
-        230,     # \\xe6   41      Command                 FORCE
-        243,     # \\xf3   86      Command                 SIT
-        112,     # p       60      Command                 PAY
-
-    ])
+    _allowed = frozenset(
+        [
+            # XXX gym-ids are subject to change depending on the NLE
+            # ascii ,  # char    gym-id  class                   name
+            # inventory management
+            65,  # A       89      Command                 TAKEOFFALL
+            44,  # ,       61      Command                 PICKUP
+            80,  # P       63      Command                 PUTON
+            84,  # T       88      Command                 TAKEOFF
+            87,  # W       99      Command                 WEAR
+            100,  # d       33      Command                 DROP
+            236,  # \\xec   52      Command                 LOOT
+            # scrolls are consumables, books aren't, but can become useless
+            114,  # r       67      Command                 READ
+            101,  # e       35      Command                 EAT
+            113,  # q       64      Command                 QUAFF
+            4,  # \\x04   48      Command                 KICK
+            20,  # \\x14   90      Command                 TELEPORT
+            58,  # :       51      Command                 LOOK
+            70,  # F       39      Command                 FIGHT
+            99,  # c       30      Command                 CLOSE
+            111,  # o       57      Command                 OPEN
+            245,  # \\xf5   96      Command                 UNTRAP
+            115,  # s       75      Command                 SEARCH
+            # weapon management dual wield, cycle, select and recharge
+            88,  # X       95      Command                 TWOWEAPON
+            120,  # x       87      Command                 SWAP
+            119,  # w       102     Command                 WIELD
+            81,  # Q       66      Command                 QUIVER
+            # fire readied ammunition from quiver
+            102,  # f       40      Command                 FIRE
+            # cast a spell from a book
+            90,  # Z       28      Command                 CAST
+            # use a wand from the inventory z*
+            122,  # z       104     Command                 ZAP
+            116,  # t       91      Command                 THROW
+            237,  # \\xed   53      Command                 MONSTER
+            244,  # \\xf4   94      Command                 TURN
+            # adventure mode actions
+            229,  # \\xe5   37      Command                 ENHANCE
+            97,  # a       24      Command                 APPLY
+            228,  # \\xe4   32      Command                 DIP
+            242,  # \\xf2   71      Command                 RUB
+            212,  # \\xd4   92      Command                 TIP
+            247,  # \\xf7   103     Command                 WIPE
+            210,  # \\xd2   70      Command                 RIDE
+            227,  # \\xe3   29      Command                 CHAT
+            230,  # \\xe6   41      Command                 FORCE
+            243,  # \\xf3   86      Command                 SIT
+            112,  # p       60      Command                 PAY
+        ]
+    )
 
     # _raw_nethack_actions > _allowed + _prohibited, since compass directions
     #  are automatically accounted for
@@ -985,9 +967,9 @@ class ActionMasker(InteractiveWrapper):
         ]
 
         # cache the id of the most essential action -- ESCAPE
-        self.escape = next((
-            a for a, c in self.ascii_to_action if chr(c) == '\033'
-        ), None)
+        self.escape = next(
+            (a for a, c in self.ascii_to_action if chr(c) == "\033"), None
+        )
         if self.escape is None:
             warn(
                 f"NLE `{self.unwrapped}` does not have a bound ESCAPE action.",
@@ -995,32 +977,32 @@ class ActionMasker(InteractiveWrapper):
             )
 
         # precompute the common masks
-        self._allowed_actions = np.array([
-            c in self._prohibited for a, c in self.ascii_to_action
-        ], dtype=np.int8)
+        self._allowed_actions = np.array(
+            [c in self._prohibited for a, c in self.ascii_to_action], dtype=np.int8
+        )
 
         # printable text and controls
-        self._printable_only = np.array([
-            not (
-                (32 <= c < 128) or c in self._spc_esc_crlf
-            ) for a, c in self.ascii_to_action
-        ], dtype=np.int8)
+        self._printable_only = np.array(
+            [
+                not ((32 <= c < 128) or c in self._spc_esc_crlf)
+                for a, c in self.ascii_to_action
+            ],
+            dtype=np.int8,
+        )
 
         # directions and escapes
-        self._directions_only = np.array([
-            c not in self._directions_esc_crlf
-            for a, c in self.ascii_to_action
-        ], dtype=np.int8)
+        self._directions_only = np.array(
+            [c not in self._directions_esc_crlf for a, c in self.ascii_to_action],
+            dtype=np.int8,
+        )
 
         # properly augment the observation space (assuming the wrapped env is
         #  the NLE). the action space is unchanged.
-        if 'action_mask' in self.observation_space.keys():
-            raise RuntimeError(
-                f"`action_mask` is already declared by `{self.env}`."
-            )
+        if "action_mask" in self.observation_space.keys():
+            raise RuntimeError(f"`action_mask` is already declared by `{self.env}`.")
 
         space = spaces.MultiBinary(len(self.ascii_to_action))
-        self.observation_space['action_mask'] = space
+        self.observation_space["action_mask"] = space
         # XXX `MultiBinary` has `int8` dtype, which is not exactly `bool`.
 
         # cache the direction and self action ids
@@ -1028,7 +1010,7 @@ class ActionMasker(InteractiveWrapper):
             chr(c): a for a, c in self.ascii_to_action if c in self._directions
         }
 
-    def update(self, obs, rew=0., done=False, info=None):
+    def update(self, obs, rew=0.0, done=False, info=None):
         # after all the possible menu/message interactions have been complete
         #  compute the mask of allowed actions and inject into the `obs`.
         # XXX the mask never forbids the ESC action
@@ -1036,13 +1018,11 @@ class ActionMasker(InteractiveWrapper):
         cha = self.chassis
         if cha.in_menu:  # or cha.xwaitingforspace
             # allow escape, space, and the letters
-            letters = frozenset(
-                chain(self._spc_esc_crlf, map(ord, cha.menu.letters))
-            )
+            letters = frozenset(chain(self._spc_esc_crlf, map(ord, cha.menu.letters)))
 
-            mask = np.array([
-                c not in letters for a, c in self.ascii_to_action
-            ], dtype=np.int8)
+            mask = np.array(
+                [c not in letters for a, c in self.ascii_to_action], dtype=np.int8
+            )
 
         elif cha.in_getlin:
             # free-form prompt allow all well-behaving chars, ESC and CR
@@ -1051,20 +1031,20 @@ class ActionMasker(InteractiveWrapper):
             #  flag, and instead raise `in_yn_function` for some reason.
 
         elif cha.in_yn_function:
-            match = rx_prompt_options.search(cha.prompt['tail'])
+            match = rx_prompt_options.search(cha.prompt["tail"])
             if match is not None:  # prompt with [...] options
                 # [getobj()](./nle/src/invent.c#L1416-1829) prompts always
                 #  have a list of options in the tail
                 # fetch letters and produce a mask
-                letters = decompactify(match.group('options'), b'\033')
-                mask = np.array([
-                    c not in letters for a, c in self.ascii_to_action
-                ], dtype=np.int8)
+                letters = decompactify(match.group("options"), b"\033")
+                mask = np.array(
+                    [c not in letters for a, c in self.ascii_to_action], dtype=np.int8
+                )
 
-            elif rx_prompt_what_direction.search(cha.prompt['full']):
+            elif rx_prompt_what_direction.search(cha.prompt["full"]):
                 mask = self._directions_only.copy()
 
-            elif rx_prompt_printable_only.search(cha.prompt['full']):
+            elif rx_prompt_printable_only.search(cha.prompt["full"]):
                 mask = self._printable_only.copy()
 
             else:
@@ -1079,20 +1059,19 @@ class ActionMasker(InteractiveWrapper):
 
         # a numpy mask indicating actions, that SHOULD NOT be taken
         # i.e. masked or forbidden. (0 -- allowed, 1 -- forbidden)
-        obs['action_mask'] = mask
+        obs["action_mask"] = mask
         return obs, rew, done, info
 
 
 class RecentMessageLog(InteractiveWrapper):
-    """A non-interactive wrapper that adds a message log to the observations.
-    """
+    """A non-interactive wrapper that adds a message log to the observations."""
 
     def __new__(cls, env, *, n_recent=0):
         # bypass self if no history is required
         if n_recent < 1:
             return env
 
-        space = env.observation_space['message']
+        space = env.observation_space["message"]
         assert space.dtype == np.uint8
 
         return object.__new__(cls)
@@ -1106,23 +1085,25 @@ class RecentMessageLog(InteractiveWrapper):
         self.messages = deque([], n_recent)
 
         # declare the message log observation
-        shape = env.observation_space['message'].shape
-        self.space = self.observation_space['message_log'] = spaces.Box(
-            low=np.iinfo(np.uint8).min, high=np.iinfo(np.uint8).max,
-            shape=(n_recent,) + shape, dtype=np.uint8,
+        shape = env.observation_space["message"].shape
+        self.space = self.observation_space["message_log"] = spaces.Box(
+            low=np.iinfo(np.uint8).min,
+            high=np.iinfo(np.uint8).max,
+            shape=(n_recent,) + shape,
+            dtype=np.uint8,
         )
 
-    def update(self, obs, rew=0., fin=False, nfo=None):
+    def update(self, obs, rew=0.0, fin=False, nfo=None):
         # flush the message log
-        if self.method_ == 'reset':
-            self.messages.extend((b'',) * self.messages.maxlen)
+        if self.method_ == "reset":
+            self.messages.extend((b"",) * self.messages.maxlen)
 
         # get the messages from the Chassis, making sure to include
         #  the empty ones, when there were no messages
-        self.messages.extend(self.chassis.messages or (b'',))
+        self.messages.extend(self.chassis.messages or (b"",))
 
         # form the log, convert it to uint8, and add to dict
-        log = np.array(self.messages, np.dtype('S256'))
-        obs['message_log'] = log[:, np.newaxis].view(np.uint8)
+        log = np.array(self.messages, np.dtype("S256"))
+        obs["message_log"] = log[:, np.newaxis].view(np.uint8)
 
         return obs, rew, fin, nfo

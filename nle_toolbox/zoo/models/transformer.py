@@ -14,8 +14,8 @@ from ...utils.nn import masked_rnn, apply_mask, masked_multinomial
 
 
 class NLEHITNeuralAgent(nn.Module):
-    """A highway transformer agent.
-    """
+    """A highway transformer agent."""
+
     def __init__(
         self,
         n_context: int,
@@ -25,7 +25,7 @@ class NLEHITNeuralAgent(nn.Module):
         n_cls: int = 4,
         n_io: int = 8,
         head_size: int = None,
-        dropout: float = 0.,
+        dropout: float = 0.0,
         n_layers: int = 1,
         *,
         pol: dict,
@@ -36,16 +36,27 @@ class NLEHITNeuralAgent(nn.Module):
     ):
         super().__init__()
 
-        self.features = ModuleDict(dict(
-            # XXX ignores kwargs not declared at `__init__` or set to `None`
-            obs=ObsEmbedding(embedding_dim),
-            act=nn.Sequential(
-                nn.Embedding(**act),
-                nn.Unflatten(-1, (1, -1,)),  # `.unsqueeze(-2)`
-            ) if act else None,
-            rew=None,
-            fin=None,
-        ), dim=-2)
+        self.features = ModuleDict(
+            dict(
+                # XXX ignores kwargs not declared at `__init__` or set to `None`
+                obs=ObsEmbedding(embedding_dim),
+                act=nn.Sequential(
+                    nn.Embedding(**act),
+                    nn.Unflatten(
+                        -1,
+                        (
+                            1,
+                            -1,
+                        ),
+                    ),  # `.unsqueeze(-2)`
+                )
+                if act
+                else None,
+                rew=None,
+                fin=None,
+            ),
+            dim=-2,
+        )
 
         self.core = HiT(
             n_context + (1 if act else 0),
@@ -62,7 +73,7 @@ class NLEHITNeuralAgent(nn.Module):
         if h0:
             self.h0 = nn.Parameter(torch.zeros(self.core.iox.shape))
         else:
-            self.register_parameter('h0', None)
+            self.register_parameter("h0", None)
 
         # actor-critic and temperature heads
         self.pol = LinearSplitter(**pol)
@@ -95,16 +106,20 @@ class NLEHITNeuralAgent(nn.Module):
             tau = plyr.apply(F.softplus, self.tau(out))
             pol = plyr.apply(torch.mul, pol, tau)
 
-        if 'action_mask' in obs:
-            pol = plyr.apply(apply_mask, pol, obs['action_mask'], value=-10.)
+        if "action_mask" in obs:
+            pol = plyr.apply(apply_mask, pol, obs["action_mask"], value=-10.0)
 
         act = plyr.apply(masked_multinomial, pol, mask=None)
 
         # act, (val, pol), hx
-        return act, ValPolPair(
-            plyr.apply(torch.squeeze, self.val(out), dim=-1),
-            plyr.apply(F.log_softmax, pol, dim=-1),
-        ), hx
+        return (
+            act,
+            ValPolPair(
+                plyr.apply(torch.squeeze, self.val(out), dim=-1),
+                plyr.apply(F.log_softmax, pol, dim=-1),
+            ),
+            hx,
+        )
 
     @staticmethod
     def default_recipe(
@@ -119,48 +134,50 @@ class NLEHITNeuralAgent(nn.Module):
         num_layers: int = 1,
         k: int = 3,
         bls: tuple[str] = (
-            'hp',
-            'hunger',
-            'condition',
+            "hp",
+            "hunger",
+            "condition",
         ),
         learn_tau: bool = False,
     ) -> dict:
         # compile the recipe (see `HiT`)
         recipe = {
             # 7 x 7 is window of glyphs plus blstats
-            'n_context': (k + 1 + k) * (k + 1 + k) + len(bls),
-            'embedding_dim': embedding_dim,
-            'num_attention_heads': num_attention_heads,
-            'intermediate_size': intermediate_size,
-            'n_cls': n_cls,
-            'n_io': n_io,
-            'head_size': head_size,
-            'dropout': 0.0,
-            'n_layers': num_layers,
+            "n_context": (k + 1 + k) * (k + 1 + k) + len(bls),
+            "embedding_dim": embedding_dim,
+            "num_attention_heads": num_attention_heads,
+            "intermediate_size": intermediate_size,
+            "n_cls": n_cls,
+            "n_io": n_io,
+            "head_size": head_size,
+            "dropout": 0.0,
+            "n_layers": num_layers,
         }
 
         # pervious action `act` and reset flag `fin` are optional
-        recipe['act'] = {
-            'num_embeddings': n_actions,
-            'embedding_dim': embedding_dim,
+        recipe["act"] = {
+            "num_embeddings": n_actions,
+            "embedding_dim": embedding_dim,
         }
 
         # join with the kwargs for two `LinearSplitter` heads
         return {
             **recipe,
-            'val': {
-                'in_features': n_cls * embedding_dim,
-                'out_features': {
-                    'ext': 1,
-                    'int': 1,
+            "val": {
+                "in_features": n_cls * embedding_dim,
+                "out_features": {
+                    "ext": 1,
+                    "int": 1,
                 },
             },
-            'pol': {
-                'in_features': n_cls * embedding_dim,
-                'out_features': n_actions,
+            "pol": {
+                "in_features": n_cls * embedding_dim,
+                "out_features": n_actions,
             },
-            'tau': {
-                'in_features': n_cls * embedding_dim,
-                'out_features': 1,
-            } if learn_tau else None,
+            "tau": {
+                "in_features": n_cls * embedding_dim,
+                "out_features": 1,
+            }
+            if learn_tau
+            else None,
         }

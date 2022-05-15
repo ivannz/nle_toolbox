@@ -10,7 +10,7 @@ from inspect import isgenerator
 # 2. the interaction logic with gym's envs is designed for agents, operating in
 #  the closed loop mode.
 # 3. Essentially, the bot must accept feedback by default. Hence, the open loop
-#  must just be the programmer's choice to ignore the responses form the env 
+#  must just be the programmer's choice to ignore the responses form the env
 #  being interacted with.
 # Format of the bot's internal responses
 # 1. we can use a global serial bus (a queue) onto which the bot's logic pushes
@@ -31,8 +31,7 @@ def is_suspended(gen):
 
 
 def yield_from_nested(gen, *, response=None):
-    """a version of `yield from` for the coroutines that can yield generators.
-    """
+    """a version of `yield from` for the coroutines that can yield generators."""
     # make sure we deal with the original generator properly
     is_starting, response_ = not is_suspended(gen), response
     if is_starting:

@@ -40,12 +40,12 @@ def fixup_tty(
     #   """Raising your wand of slow monster high above your head,
     #   you break it in two!"""
     # which fits on the top line, yet is a multi-part message.
-    text = message.view('S256')[0]
+    text = message.view("S256")[0]
     if not has_any_lf and len(text) > 72:
         # we immediately go the the second line and slice from
         # the proper row, since lf had no cr.
-        topl = bytes(tty_chars.view('S80')[1:3, 0])[len(text):]
-        has_any_lf = b'--More--' in topl
+        topl = bytes(tty_chars.view("S80")[1:3, 0])[len(text) :]
+        has_any_lf = b"--More--" in topl
 
     misc = Misc(*misc.astype(bool))
     if has_any_lf and misc.xwaitingforspace:
@@ -53,8 +53,8 @@ def fixup_tty(
         message = np.where(lf_mask, 0x20, message)
 
         # properly wrap the text at 80
-        text = message.view('S256')[0].decode('ascii')
-        pieces = wrap(text + '--More--', 80, break_on_hyphens=False)
+        text = message.view("S256")[0].decode("ascii")
+        pieces = wrap(text + "--More--", 80, break_on_hyphens=False)
         # XXX in the case when multiple engravings are appended to each other
         #  at the same location the message may get so long as to span across
         #  up to four top lines. This is why the check for the number of pieces
@@ -78,9 +78,9 @@ def fixup_tty(
 
         # patch the top two lines. We may assume the colors are correct, since
         #  the original tty_chars had at least three top lines affected.
-        vw_new_tty_chars = new_tty_chars.view('S80')
+        vw_new_tty_chars = new_tty_chars.view("S80")
         for r, line in enumerate(pieces):
-            vw_new_tty_chars[r] = bytes(f'{line:<80s}', encoding='ascii')
+            vw_new_tty_chars[r] = bytes(f"{line:<80s}", encoding="ascii")
 
             # use black for whitespace
             new_tty_colors[r] = np.where(new_tty_chars[r] == 32, 0, 7)
@@ -110,8 +110,7 @@ def fixup_message(
     misc,
     **ignore,
 ):
-    """Replace line feeds (\\x0a) in the message with whitespace (\\x20).
-    """
+    """Replace line feeds (\\x0a) in the message with whitespace (\\x20)."""
 
     # message containing an LF means that originally it did not fit 80 cols
     lf_mask = message == 0x0A
@@ -151,7 +150,7 @@ def render(
     tty_colors = tty_colors.view(np.uint8)
 
     # position the cursor at (1, 4) with \033[<L>;<C>H
-    ansi = '\033[1;1H\033[2J'
+    ansi = "\033[1;1H\033[2J"
     for i in range(rows):
         for j in range(cols):
             cl, ch = tty_colors[i, j], tty_chars[i, j]
@@ -166,23 +165,22 @@ def render(
                 #  https://man7.org/linux/man-pages/man4/console_codes.4.html
                 if bool(cl & 0x80):
                     # Use 8-bit foreground colors
-                    ansi += f'\033[38;5;{cl&0x7f:d}m{ch:c}'
+                    ansi += f"\033[38;5;{cl&0x7f:d}m{ch:c}"
 
                 else:
                     # set 3-bit foreground color \033[<bold?>;3<3-bit color>m
-                    ansi += f'\033[{bool(cl&8):d};3{cl&7:d}m{ch:c}'
+                    ansi += f"\033[{bool(cl&8):d};3{cl&7:d}m{ch:c}"
 
-        ansi += '\n'
+        ansi += "\n"
 
     # reset the color back to normal, place the cursor
-    ansi += f'\033[m\033[{1+r};{1+c}H'
+    ansi += f"\033[m\033[{1+r};{1+c}H"
 
     return ansi
 
 
 def load_minihack_tileset():
-    """Get the tileset provided by minihack.
-    """
+    """Get the tileset provided by minihack."""
 
     import pickle
     from pkg_resources import resource_filename
@@ -196,8 +194,8 @@ def load_minihack_tileset():
         glyph2tile = np.array(glyph2tile + [-1] * n_extra)
 
         # array of keys into the tileset dict
-        res = resource_filename('minihack.tiles', 'tiles.pkl')
-        return glyph2tile, pickle.load(open(res, 'rb'))
+        res = resource_filename("minihack.tiles", "tiles.pkl")
+        return glyph2tile, pickle.load(open(res, "rb"))
 
     except ImportError:
         return None
@@ -207,8 +205,7 @@ default_tileset = load_minihack_tileset()
 
 
 def render_to_rgb(glyphs, *, tileset=default_tileset):
-    """Render glyphs with the specified tileset.
-    """
+    """Render glyphs with the specified tileset."""
     if glyphs.ndim < 2:
         raise TypeError("`glyphs` array must be at least two-dimensional.")
 
@@ -217,9 +214,9 @@ def render_to_rgb(glyphs, *, tileset=default_tileset):
 
     # the renderer is just a sparse lookup table
     void = np.zeros_like(next(iter(tile2image.values())))
-    tiles = np.stack([
-        tile2image.get(tile, void) for tile in glyph2tile[glyphs.flat]
-    ], axis=0)
+    tiles = np.stack(
+        [tile2image.get(tile, void) for tile in glyph2tile[glyphs.flat]], axis=0
+    )
 
     # restore geometry of each frame
     ph, pw, col = void.shape

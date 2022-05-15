@@ -89,7 +89,7 @@ def write(tensor: Tensor, filename: str, *, at: int = None) -> None:
     assert at is None or at >= 0
 
     # 'r+b' opens the file for binary read/write with no truncation
-    with open(filename, 'r+b') as f:
+    with open(filename, "r+b") as f:
         # append or write at the specified position
         f.seek(0, 2) if at is None else f.seek(at, 0 if at >= 0 else 2)
         write_file(tensor, f, save_size=False)
@@ -135,7 +135,7 @@ def from_file(
     As of pytorch 1.11 memory mapped storage is supported for CPU only.
     """
     if isinstance(shape, int):
-        shape = shape,
+        shape = (shape,)
 
     if isinstance(shape, (tuple, list)):
         shape = Size(shape)

@@ -27,7 +27,6 @@ from pkg_resources import resource_filename
 BASE_ACTIONS = (
     *nethack.CompassDirection,
     nethack.MiscDirection.WAIT,
-
     # these service actions are for GUI
     nethack.MiscAction.MORE,  # \015
     nethack.TextCharacters.SPACE,  # \040
@@ -66,6 +65,7 @@ class MiniHackFightCorridorDarkRandomRats(MiniHackNavigation):
     [All Rats]
     Let's see what kind of trouble we can get ourselves into
     """
+
     def __init__(
         self,
         *args,
@@ -96,7 +96,8 @@ class MiniHackFightCorridorDarkRandomRats(MiniHackNavigation):
             n_rats_expr = str(n_giant_rats)
         else:
             n_rats_expr = f"1d{n_giant_rats + 1} + (-1)"
-        lvl_gen.add_line(f"""
+        lvl_gen.add_line(
+            f"""
             $spawn = selection: fillrect(30, 1, 31, 3)
             $n_giant_rats = {n_rats_expr}
             IF [$n_giant_rats > 0] {{
@@ -104,11 +105,12 @@ class MiniHackFightCorridorDarkRandomRats(MiniHackNavigation):
                     MONSTER: "giant rat", rndcoord($spawn)
                 }}
             }}
-        """)
+        """
+        )
 
         # spawn certain extra rats at random locations
         for _ in range(n_extra_rats):
-            lvl_gen.add_monster(name='giant rat', place='random')
+            lvl_gen.add_monster(name="giant rat", place="random")
 
         super().__init__(
             *args,
@@ -120,8 +122,8 @@ class MiniHackFightCorridorDarkRandomRats(MiniHackNavigation):
 
 
 register(
-    id='MiniHack-CorridorBattle-Dark-v1',
-    entry_point='minihack.envs.fightcorridor:MiniHackFightCorridorDark',
+    id="MiniHack-CorridorBattle-Dark-v1",
+    entry_point="minihack.envs.fightcorridor:MiniHackFightCorridorDark",
     kwargs=dict(
         reward_win=+1,  # default value as in the base class
         reward_lose=-1,  # <<-- reward for death, used to be 0.
@@ -131,7 +133,7 @@ register(
 # A dark corridor battle with six additional randomly placed rats.
 # XXX We have observed that the difficulty spike diminishes with more rats.
 register(
-    id='MiniHack-CorridorBattle-Dark-MoreRats-v0',
+    id="MiniHack-CorridorBattle-Dark-MoreRats-v0",
     entry_point=MiniHackFightCorridorDarkRandomRats,
     kwargs=dict(
         # -- More rats will change everything.
@@ -147,7 +149,7 @@ register(
 )
 
 register(
-    id='MiniHack-CorridorBattle-Dark-RandomRats-v0',
+    id="MiniHack-CorridorBattle-Dark-RandomRats-v0",
     entry_point=MiniHackFightCorridorDarkRandomRats,
     kwargs=dict(
         n_giant_rats=10,  # 0-10 rats
@@ -158,26 +160,26 @@ register(
 )
 
 register(
-    id='MiniHack-Room-Ultimate-15x15-v1',
-    entry_point='minihack.envs.room:MiniHackRoom15x15Ultimate',
+    id="MiniHack-Room-Ultimate-15x15-v1",
+    entry_point="minihack.envs.room:MiniHackRoom15x15Ultimate",
     kwargs=dict(reward_win=+1, reward_lose=-1),
 )
 
 register(
-    id='MiniHack-HideNSeek-Big-v1',
-    entry_point='minihack.envs.hidenseek:MiniHackHideAndSeekBig',
+    id="MiniHack-HideNSeek-Big-v1",
+    entry_point="minihack.envs.hidenseek:MiniHackHideAndSeekBig",
     kwargs=dict(reward_win=+1, reward_lose=-1),
 )
 
 register(
-    id='MiniHack-Memento-F4-v1',
-    entry_point='minihack.envs.memento:MiniHackMementoF4',
+    id="MiniHack-Memento-F4-v1",
+    entry_point="minihack.envs.memento:MiniHackMementoF4",
     kwargs=dict(reward_win=+1, reward_lose=-1),
 )
 
 register(
-    id='MiniHack-CorridorBattle-Dark-MoreActions-v0',
-    entry_point='minihack.envs.fightcorridor:MiniHackFightCorridorDark',
+    id="MiniHack-CorridorBattle-Dark-MoreActions-v0",
+    entry_point="minihack.envs.fightcorridor:MiniHackFightCorridorDark",
     kwargs=dict(
         reward_win=+1,
         reward_lose=-1,
@@ -186,8 +188,8 @@ register(
 )
 
 register(
-    id='MiniHack-Room-Ultimate-15x15-MoreActions-v0',
-    entry_point='minihack.envs.room:MiniHackRoom15x15Ultimate',
+    id="MiniHack-Room-Ultimate-15x15-MoreActions-v0",
+    entry_point="minihack.envs.room:MiniHackRoom15x15Ultimate",
     kwargs=dict(
         reward_win=+1,
         reward_lose=-1,
@@ -196,8 +198,8 @@ register(
 )
 
 register(
-    id='MiniHack-HideNSeek-Big-MoreActions-v0',
-    entry_point='minihack.envs.hidenseek:MiniHackHideAndSeekBig',
+    id="MiniHack-HideNSeek-Big-MoreActions-v0",
+    entry_point="minihack.envs.hidenseek:MiniHackHideAndSeekBig",
     kwargs=dict(
         reward_win=+1,
         reward_lose=-1,
@@ -206,7 +208,7 @@ register(
 )
 
 register(
-    id='MiniHack-CorridorBattle-Dark-MoreRats-MoreActions-v0',
+    id="MiniHack-CorridorBattle-Dark-MoreRats-MoreActions-v0",
     entry_point=MiniHackFightCorridorDarkRandomRats,
     kwargs=dict(
         n_extra_rats=6,
@@ -217,7 +219,7 @@ register(
 )
 
 register(
-    id='MiniHack-CorridorBattle-Dark-RandomRats-MoreActions-v0',
+    id="MiniHack-CorridorBattle-Dark-RandomRats-MoreActions-v0",
     entry_point=MiniHackFightCorridorDarkRandomRats,
     kwargs=dict(
         n_giant_rats=10,  # 0-10 rats
@@ -240,7 +242,7 @@ class MiniHackFightCustomCorridorDark(MiniHackNavigation):
         # remaining kwargs (see `MiniHackNavigation`)
         **other,
     ):
-        with open(resource_filename(__name__, 'corridor.des'), 'rt') as f:
+        with open(resource_filename(__name__, "corridor.des"), "rt") as f:
             des_file = f.read()
 
         super().__init__(
@@ -253,7 +255,7 @@ class MiniHackFightCustomCorridorDark(MiniHackNavigation):
 
 
 register(
-    id='MiniHack-FightCustomCorridor-Dark-v0',
+    id="MiniHack-FightCustomCorridor-Dark-v0",
     entry_point=MiniHackFightCustomCorridorDark,
     kwargs=dict(
         reward_win=+1,

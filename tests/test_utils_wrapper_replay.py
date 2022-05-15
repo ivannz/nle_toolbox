@@ -27,15 +27,12 @@ def replay(env, actions, *, seed):
 
 
 def collate(records):
-    return {
-        k: numpy.array([
-            rec[k] for rec in records
-        ]) for k in records[0]
-    }
+    return {k: numpy.array([rec[k] for rec in records]) for k in records[0]}
 
 
 @pytest.mark.parametrize(
-    "k", [1, 10, 50, 100, 10000],
+    "k",
+    [1, 10, 50, 100, 10000],
 )
 def test_utils_seeding_set_seed(k):
     # the first 20 actions are 8+8 navigation, up/down, wait, and next
@@ -51,15 +48,13 @@ def test_utils_seeding_set_seed(k):
     with Replay(gym.make("NetHackChallenge-v0")) as env:
         obs = env.load_state_dict(state_dict)
 
-    assert all(
-        (obs[k] == ref[k]).all() for k in obs.keys() | ref.keys()
-    )
+    assert all((obs[k] == ref[k]).all() for k in obs.keys() | ref.keys())
 
     with Replay(gym.make("NetHackChallenge-v0")) as env:
         history, remaining2 = replay(
             env,
-            state_dict['actions'],
-            seed=state_dict['seed'],
+            state_dict["actions"],
+            seed=state_dict["seed"],
         )
         obs_trace2 = collate(history)
 

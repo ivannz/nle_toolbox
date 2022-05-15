@@ -8,8 +8,7 @@ def trailing_broadcast(
     what: Tensor,
     to: Tensor,
 ) -> Tensor:
-    """Add extra trailing unitary dims to `what` for broadcasting it to `to`.
-    """
+    """Add extra trailing unitary dims to `what` for broadcasting it to `to`."""
     return what.reshape(what.shape + (1,) * max(to.ndim - what.ndim, 0))
 
 
@@ -37,7 +36,7 @@ def gamma(
         gam_ = trailing_broadcast(gam, rew).clone()
 
     # annihilate the discounts according to the termination mask
-    return fin_, gam_.masked_fill_(fin_, 0.)
+    return fin_, gam_.masked_fill_(fin_, 0.0)
 
 
 def pyt_ret_gae(
@@ -105,11 +104,11 @@ def pyt_ret_gae(
         # GAE [O(B F)] A_t = \delta_t + \lambda \gamma A_{t+1} 1_{\neg f_{t+1}}
         # gae[t] = delta[t] + gamma * C * fin[t] * gae[t+1], t=0..T-1
         # XXX `gam_` is already zeroed according to the `fin` mask!
-        torch.addcmul(delta[-j], gam_[-j], gae[-j], value=lam, out=gae[-j-1])
+        torch.addcmul(delta[-j], gam_[-j], gae[-j], value=lam, out=gae[-j - 1])
 
         # RET [O(B F)] G_t = r_{t+1} + \gamma G_{t+1} 1_{\neg f_{t+1}}
         # ret[t] = rew[t] + gamma * fin[t] * ret[t+1], t=0..T-1
-        torch.addcmul(rew[-j], gam_[-j], ret[-j], out=ret[-j-1])
+        torch.addcmul(rew[-j], gam_[-j], ret[-j], out=ret[-j - 1])
 
     return ret[:-1], gae[:-1]
 
@@ -121,8 +120,8 @@ def pyt_vtrace(
     rho: Tensor,
     *,
     gam: Union[float, Tensor],
-    r_bar: float = float('+inf'),
-    c_bar: float = float('+inf'),
+    r_bar: float = float("+inf"),
+    c_bar: float = float("+inf"),
 ) -> Tensor:
     r"""Compute the V-trace state-value estimate.
 
@@ -191,7 +190,7 @@ def pyt_vtrace(
         #         \hat{a}_t = \rho_t \delta_t
         #                   + \gamma c_t 1_{\neg f_{t+1}} \hat{a}_{t+1}
         # adv[t] = rho[t] * delta[t] + gamma * (~fin[t]) * see[t] * adv[t+1]
-        torch.addcmul(delta[-j], seegam[-j], adv[-j], out=adv[-j-1])
+        torch.addcmul(delta[-j], seegam[-j], adv[-j], out=adv[-j - 1])
 
     return adv + val
 
@@ -375,8 +374,7 @@ def pyt_q_targets(
     double: bool = True,
     n_lookahead: int = 1,
 ) -> Tensor:
-    r"""Compute the multistep lookahead Double-DQN targets.
-    """
+    """Compute the multistep lookahead Double-DQN targets."""
 
     # get the state value estimates from the q-values
     val = pyt_q_values(qon, qtg, double=double)

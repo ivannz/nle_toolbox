@@ -18,25 +18,31 @@ from ..utils.env.defs import glyphlut, glyph_group, MAX_ENTITY
 
 
 class GlyphEmbedding(nn.Module):
-    """A generic glyph embedder.
-    """
+    """A generic glyph embedder."""
+
     def __init__(self, embedding_dim):
         super().__init__()
 
         # glyph-to-entity embedding
         self.entity = nn.Embedding(
-            MAX_ENTITY + 1, embedding_dim, padding_idx=MAX_ENTITY,
+            MAX_ENTITY + 1,
+            embedding_dim,
+            padding_idx=MAX_ENTITY,
         )
         self.entity.register_buffer(
-            'lut', torch.tensor(glyphlut.entity).clone(),
+            "lut",
+            torch.tensor(glyphlut.entity).clone(),
         )
 
         # glyph-to-group embedding
         self.group = nn.Embedding(
-            glyph_group.MAX + 1, embedding_dim, padding_idx=glyph_group.MAX,
+            glyph_group.MAX + 1,
+            embedding_dim,
+            padding_idx=glyph_group.MAX,
         )
         self.group.register_buffer(
-            'lut', torch.tensor(glyphlut.group).clone(),
+            "lut",
+            torch.tensor(glyphlut.group).clone(),
         )
 
     def forward(self, glyphs):
@@ -53,6 +59,7 @@ class EgoCentricEmbedding(nn.Module):
     """Learnable additive embedding to the centre of the ego-centric symmetric
     glpyh view into the map.
     """
+
     def __init__(self, embedding_dim):
         super().__init__()
 
@@ -77,6 +84,7 @@ class GlyphFeatureExtractor(nn.Module):
     the screen glyphs. From the latter it extracts a vicinity of the specified
     radius about the coordinates given in the bottom line stats.
     """
+
     def __init__(self, glyphs, window=1):
         super().__init__()
         self.glyphs = glyphs
@@ -87,7 +95,7 @@ class GlyphFeatureExtractor(nn.Module):
 
         # turn T x B x R x C into `T x B x (k+R+k) x (k+C+k) x ...`
         #  by pading symmetrically with invalid glyphs and embedding.
-        glyphs = obs['glyphs']
+        glyphs = obs["glyphs"]
         gl_padded = self.glyphs(F.pad(glyphs, (k,) * 4, value=MAX_GLYPH))
         # XXX we embed extra 2(R + C) + 4 glyphs, i.e. about 13% overhead
 
@@ -100,14 +108,13 @@ class GlyphFeatureExtractor(nn.Module):
         s_seq, s_batch, s_rows, s_cols, *s_features = gl_padded.stride()
         gl_windows = gl_padded.as_strided(
             # fold R x C into 2d windows in dims after F
-            (n_seq, n_batch, n_rows, n_cols, *n_features, k+1+k, k+1+k),
-
+            (n_seq, n_batch, n_rows, n_cols, *n_features, k + 1 + k, k + 1 + k),
             # when mul-ing dims in shape use the lowest stride!
             (s_seq, s_batch, s_rows, s_cols, *s_features, s_rows, s_cols),
         )
 
         # extract vicinities around the row-col coordinates, specified in bls
-        bls = obs['blstats']
+        bls = obs["blstats"]
         gl_vicinity = bselect(
             gl_windows,
             bls[..., NLE_BL_Y],
@@ -116,13 +123,13 @@ class GlyphFeatureExtractor(nn.Module):
         )
 
         # now permute the embedded glyphs to T x B x ... x R x C
-        gl_screen = rearrange(gl_padded[:, :, k:-k, k:-k],
-                              'T B R C ... -> T B ... R C')
+        gl_screen = rearrange(gl_padded[:, :, k:-k, k:-k], "T B R C ... -> T B ... R C")
 
         # embed inventory glyphs
         # XXX need to replace NO_GLYPH with MAX_GLYPH, unless they coincide.
-        gl_inventory = rearrange(self.glyphs(obs['inv_glyphs']),
-                                 'T B N ... -> T B ... N')
+        gl_inventory = rearrange(
+            self.glyphs(obs["inv_glyphs"]), "T B N ... -> T B ... N"
+        )
 
         # final touch is to extract the embedding of `self` on the map
         gl_self = gl_vicinity[..., k, k]

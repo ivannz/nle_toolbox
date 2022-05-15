@@ -10,8 +10,9 @@ from nle._pynethack import Nethack as cNethack
 
 def is_seedable():
     """Check if the low-level NEthack env supports seeding."""
-    return getattr(nethack, 'NLE_ALLOW_SEEDING', False) \
-        and getattr(cNethack, 'set_initial_seeds', False)
+    return getattr(nethack, "NLE_ALLOW_SEEDING", False) and getattr(
+        cNethack, "set_initial_seeds", False
+    )
 
 
 def pyroot(env):

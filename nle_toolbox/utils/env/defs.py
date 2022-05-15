@@ -46,21 +46,20 @@ from nle.nethack import (
 
 # offsets
 from nle.nethack import (
-    GLYPH_MON_OFF,      # a monster
-    GLYPH_PET_OFF,      # a pet
-    GLYPH_INVIS_OFF,    # invisible
-    GLYPH_DETECT_OFF,   # mon detect
-    GLYPH_BODY_OFF,     # a corpse
-    GLYPH_RIDDEN_OFF,   # mon ridden
-    GLYPH_OBJ_OFF,      # object
-    GLYPH_CMAP_OFF,     # cmap
+    GLYPH_MON_OFF,  # a monster
+    GLYPH_PET_OFF,  # a pet
+    GLYPH_INVIS_OFF,  # invisible
+    GLYPH_DETECT_OFF,  # mon detect
+    GLYPH_BODY_OFF,  # a corpse
+    GLYPH_RIDDEN_OFF,  # mon ridden
+    GLYPH_OBJ_OFF,  # object
+    GLYPH_CMAP_OFF,  # cmap
     GLYPH_EXPLODE_OFF,  # explosion
-    GLYPH_ZAP_OFF,      # zap beam
+    GLYPH_ZAP_OFF,  # zap beam
     GLYPH_SWALLOW_OFF,  # swallow
     GLYPH_WARNING_OFF,  # warn flash
-    GLYPH_STATUE_OFF,   # a statue
-
-    MAX_GLYPH,          # (end)
+    GLYPH_STATUE_OFF,  # a statue
+    MAX_GLYPH,  # (end)
 )
 
 # sizes of different glyph groups
@@ -84,45 +83,50 @@ from nle.nethack import (
 
 # the number of distinct entities that glyphs actually correspond to
 MAX_ENTITY = (
-    NUMMONS                      # normal monsters
-    + 0                          # pets: mapped to normal monsters
-    + 1                          # single invisible monster placeholder
-    + 0                          # detected (?) monsters: mapped to normal
-    + 0                          # coprses: mapped to normal (not undead)
-    + 0                          # mounts: mapped to monsters
-    + NUM_OBJECTS                # in-game items
+    NUMMONS  # normal monsters
+    + 0  # pets: mapped to normal monsters
+    + 1  # single invisible monster placeholder
+    + 0  # detected (?) monsters: mapped to normal
+    + 0  # coprses: mapped to normal (not undead)
+    + 0  # mounts: mapped to monsters
+    + NUM_OBJECTS  # in-game items
     + (MAXPCHARS - MAXEXPCHARS)  # level topology, walls, corridors, doors etc.
-    + EXPL_MAX                   # explosion types: ignoring geometry
-    + NUM_ZAP                    # zap (spells projectiles): ignoring direction
-    + 0                          # monsters' insides: mapped to normal monsters
-    + WARNCOUNT                  # danger vibes from unknown monsters
-    + 0                          # monster statues: mapped to normal monsters
+    + EXPL_MAX  # explosion types: ignoring geometry
+    + NUM_ZAP  # zap (spells projectiles): ignoring direction
+    + 0  # monsters' insides: mapped to normal monsters
+    + WARNCOUNT  # danger vibes from unknown monsters
+    + 0  # monster statues: mapped to normal monsters
 )
 
 
 # /* hunger states - see hu_stat in src/eat.c#L74-76 */
 class hunger:
-    SATIATED   = 0
+    SATIATED = 0
     NOT_HUNGRY = 1
-    HUNGRY     = 2
-    WEAK       = 3
-    FAINTING   = 4
-    FAINTED    = 5
-    STARVED    = 6
+    HUNGRY = 2
+    WEAK = 3
+    FAINTING = 4
+    FAINTED = 5
+    STARVED = 6
 
-    MAX        = 7
+    MAX = 7
 
     # /* see hunger states in hack.h#L44-53 - texts used on bottom line */
-    _name = tuple(map(sys.intern, (
-        "satiated",
-        # we use a meaningful descr, instead of whitespace
-        "not hungry",
-        "hungry",
-        "weak",
-        "fainting",
-        "fainted",
-        "starved",
-    )))
+    _name = tuple(
+        map(
+            sys.intern,
+            (
+                "satiated",
+                # we use a meaningful descr, instead of whitespace
+                "not hungry",
+                "hungry",
+                "weak",
+                "fainting",
+                "fainted",
+                "starved",
+            ),
+        )
+    )
 
 
 # /* Boolean condition bits for the condition mask */
@@ -130,71 +134,76 @@ class hunger:
 #  and groups from src/botl.c#L2321-2333
 class condition:
     # major
-    STONE     = 0x00000001
-    SLIME     = 0x00000002
-    STRNGL    = 0x00000004
-    FOODPOIS  = 0x00000008
-    TERMILL   = 0x00000010
+    STONE = 0x00000001
+    SLIME = 0x00000002
+    STRNGL = 0x00000004
+    FOODPOIS = 0x00000008
+    TERMILL = 0x00000010
     MAJOR = STONE | SLIME | STRNGL | FOODPOIS | TERMILL
 
     # minor
-    BLIND     = 0x00000020
-    DEAF      = 0x00000040
-    STUN      = 0x00000080
-    CONF      = 0x00000100
-    HALLU     = 0x00000200
+    BLIND = 0x00000020
+    DEAF = 0x00000040
+    STUN = 0x00000080
+    CONF = 0x00000100
+    HALLU = 0x00000200
     MINOR = BLIND | DEAF | STUN | CONF | HALLU
 
     # movement
-    LEV       = 0x00000400
-    FLY       = 0x00000800
-    RIDE      = 0x00001000
+    LEV = 0x00000400
+    FLY = 0x00000800
+    RIDE = 0x00001000
     MOVEMENT = LEV | FLY | RIDE
 
-    N_BITS    = 13
+    N_BITS = 13
 
     ALL = MAJOR | MINOR | MOVEMENT
 
     # /* see hunger states in hack.h#L44-53 - texts used on bottom line */
     _name = {
-        STONE:     "pterified",
-        SLIME:     "turned to slime",
-        STRNGL:    "strnagled",
-        FOODPOIS:  "food poisoning",
-        TERMILL:   "terminally ill",
-        BLIND:     "blind",
-        DEAF:      "deaf",
-        STUN:      "stunned",
-        CONF:      "confused",
-        HALLU:     "hallucianting",
-        LEV:       "levitating",
-        FLY:       "flying",
-        RIDE:      "riding",
+        STONE: "pterified",
+        SLIME: "turned to slime",
+        STRNGL: "strnagled",
+        FOODPOIS: "food poisoning",
+        TERMILL: "terminally ill",
+        BLIND: "blind",
+        DEAF: "deaf",
+        STUN: "stunned",
+        CONF: "confused",
+        HALLU: "hallucianting",
+        LEV: "levitating",
+        FLY: "flying",
+        RIDE: "riding",
     }
 
 
 # /* symbolic names for capacity levels */
 # taken from include/hack/h#L23-30
 class encumberance:
-    UNENCUMBERED = 0 
+    UNENCUMBERED = 0
     SLT_ENCUMBER = 1  # /* Burdened */
 
     MOD_ENCUMBER = 2  # /* Stressed */
     HVY_ENCUMBER = 3  # /* Strained */
     EXT_ENCUMBER = 4  # /* Overtaxed */
 
-    OVERLOADED   = 5  # /* Overloaded */
+    OVERLOADED = 5  # /* Overloaded */
 
-    MAX          = 6
+    MAX = 6
 
-    _name = tuple(map(sys.intern, (
-        'unencumbered',
-        'burdened',
-        'stressed',
-        'strained',
-        'overtaxed',
-        'overloaded',
-    )))
+    _name = tuple(
+        map(
+            sys.intern,
+            (
+                "unencumbered",
+                "burdened",
+                "stressed",
+                "strained",
+                "overtaxed",
+                "overloaded",
+            ),
+        )
+    )
 
 
 # /* Special returns from mapglyph() */
@@ -211,12 +220,12 @@ class special:
     """
 
     # determined by the glyph
-    from nle.nethack import MG_CORPSE  as CORPSE   # 0x01
-    from nle.nethack import MG_INVIS   as INVIS    # 0x02
-    from nle.nethack import MG_DETECT  as DETECT   # 0x04
-    from nle.nethack import MG_PET     as PET      # 0x08
-    from nle.nethack import MG_RIDDEN  as RIDDEN   # 0x10
-    from nle.nethack import MG_STATUE  as STATUE   # 0x20
+    from nle.nethack import MG_CORPSE as CORPSE  # 0x01
+    from nle.nethack import MG_INVIS as INVIS  # 0x02
+    from nle.nethack import MG_DETECT as DETECT  # 0x04
+    from nle.nethack import MG_PET as PET  # 0x08
+    from nle.nethack import MG_RIDDEN as RIDDEN  # 0x10
+    from nle.nethack import MG_STATUE as STATUE  # 0x20
 
     # boulders hide objpiles, corpses and statues count towards objpiles
     # NB affected by hallucination src/maglyph.c#L57-58
@@ -226,6 +235,7 @@ class special:
     # determined by the glyph and and whether the color is being used and
     #  the water/lava symbols coincide.
     from nle.nethack import MG_BW_LAVA as BW_LAVA  # 0x80
+
     # /* 'black & white lava': highlight lava if it
     #    can't be distringuished from water by color */
 
@@ -233,34 +243,35 @@ class special:
 # cmap symbol-glyph semantics
 class symbol:
     """Copied verbatim and REORDERED from include/rm.h"""
+
     # /* begin dungeon characters */
 
     # begin IS_ROCK according to rm.h:89 and hack.c `test_move` (713), `bad_rock` (659)
     # XXX all are impassable, unless the hero is polymorphed or etheral,
     #  can tunnel or has a pick axe (digging implement). See also mondata.c and
-    S_stone     =  0
-    S_tree      = 18  # /* KMH */  # passable if hero has an axe, but not ethereal.
-                      # XXX Replaces stone in arboreal dungeons. Can also be a standalone tree.
+    S_stone = 0
+    S_tree = 18  # /* KMH */  # passable if hero has an axe, but not ethereal.
+    # XXX Replaces stone in arboreal dungeons. Can also be a standalone tree.
     # begin walls
-    S_vwall     =  1
-    S_hwall     =  2
-    S_tlcorn    =  3
-    S_trcorn    =  4
-    S_blcorn    =  5
-    S_brcorn    =  6
-    S_crwall    =  7
-    S_tuwall    =  8
-    S_tdwall    =  9
-    S_tlwall    = 10
-    S_trwall    = 11
+    S_vwall = 1
+    S_hwall = 2
+    S_tlcorn = 3
+    S_trcorn = 4
+    S_blcorn = 5
+    S_brcorn = 6
+    S_crwall = 7
+    S_tuwall = 8
+    S_tdwall = 9
+    S_tlwall = 10
+    S_trwall = 11
     # end walls
 
     # XXX also passable if hero can corrode, ooze or amorphous
-    S_bars      = 17  # /* KMH -- iron bars */
+    S_bars = 17  # /* KMH -- iron bars */
 
     # XXX also passable if hero can ooze or amorphous
-    S_vcdoor    = 15  # /* closed door, vertical wall */
-    S_hcdoor    = 16  # /* closed door, horizontal wall */
+    S_vcdoor = 15  # /* closed door, vertical wall */
+    S_hcdoor = 16  # /* closed door, horizontal wall */
 
     # XXX passable if ethereal
     S_vcdbridge = 37  # /* closed drawbridge, vertical wall */
@@ -275,34 +286,34 @@ class symbol:
     pass
 
     # begin dangerous cmaps: pools and moats
-    S_pool      = 32
-    S_lava      = 34
-    S_water     = 41
+    S_pool = 32
+    S_lava = 34
+    S_water = 41
     # end
 
     # begin ACCESSIBLE as defined in rm.h:94
-    S_ndoor     = 12
-    S_vodoor    = 13  # cannot "move diagonally out of an intact doorway."
-    S_hodoor    = 14
+    S_ndoor = 12
+    S_vodoor = 13  # cannot "move diagonally out of an intact doorway."
+    S_hodoor = 14
 
-    S_corr, S_litcorr      = 21, 22
+    S_corr, S_litcorr = 21, 22
 
     # begin IS_ROOM: furniture and room floors
-    S_room, S_darkroom     = 19, 20
-    S_upstair, S_dnstair   = 23, 24
+    S_room, S_darkroom = 19, 20
+    S_upstair, S_dnstair = 23, 24
     S_upladder, S_dnladder = 25, 26
 
-    S_fountain  = 31
-    S_throne    = 29
-    S_sink      = 30
-    S_grave     = 28
-    S_altar     = 27
+    S_fountain = 31
+    S_throne = 29
+    S_sink = 30
+    S_grave = 28
+    S_altar = 27
 
-    S_ice       = 33
+    S_ice = 33
     S_vodbridge = 35
     S_hodbridge = 36
-    S_air       = 39
-    S_cloud     = 40
+    S_air = 39
+    S_cloud = 40
     # end IS_ROOM
     # end ACCESSIBLE
 
@@ -312,155 +323,164 @@ class symbol:
 
     # see also `trap_types` in include/trap.h, and `glyph_to_trap`
     #  include/rm.h#L629 . we can also `nle.nethack.glyph_to_cmap` into these.
-    S_arrow_trap           = 42
-    S_dart_trap            = 43
-    S_falling_rock_trap    = 44
-    S_squeaky_board        = 45
-    S_bear_trap            = 46
-    S_land_mine            = 47
+    S_arrow_trap = 42
+    S_dart_trap = 43
+    S_falling_rock_trap = 44
+    S_squeaky_board = 45
+    S_bear_trap = 46
+    S_land_mine = 47
     S_rolling_boulder_trap = 48
-    S_sleeping_gas_trap    = 49
-    S_rust_trap            = 50
-    S_fire_trap            = 51
-    S_pit                  = 52
-    S_spiked_pit           = 53
-    S_hole                 = 54
-    S_trap_door            = 55
-    S_teleportation_trap   = 56
-    S_level_teleporter     = 57
-    S_magic_portal         = 58
-    S_web                  = 59
-    S_statue_trap          = 60
-    S_magic_trap           = 61
-    S_anti_magic_trap      = 62
-    S_polymorph_trap       = 63
-    S_vibrating_square     = 64  # /* for display rather than any trap effect */
+    S_sleeping_gas_trap = 49
+    S_rust_trap = 50
+    S_fire_trap = 51
+    S_pit = 52
+    S_spiked_pit = 53
+    S_hole = 54
+    S_trap_door = 55
+    S_teleportation_trap = 56
+    S_level_teleporter = 57
+    S_magic_portal = 58
+    S_web = 59
+    S_statue_trap = 60
+    S_magic_trap = 61
+    S_anti_magic_trap = 62
+    S_polymorph_trap = 63
+    S_vibrating_square = 64  # /* for display rather than any trap effect */
 
     #  /* end traps, begin special effects */
 
     # XXX maybe we should avoid fx like poison gas, booms, or in-flight zaps
-    S_vbeam        = 65  #  /* The 4 zap beam symbols.  Do NOT separate. */
-    S_hbeam        = 66  #  /* To change order or add, see function      */
-    S_lslant       = 67  #  /* zapdir_to_glyph() in display.c.           */
-    S_rslant       = 68
-    S_digbeam      = 69  #  /* dig beam symbol */
-    S_flashbeam    = 70  #  /* camera flash symbol */
-    S_boomleft     = 71  #  /* thrown boomerang, open left, e.g ')'    */
-    S_boomright    = 72  #  /* thrown boomerang, open right, e.g. '('  */
-    S_ss1          = 73  #  /* 4 magic shield ("resistance sparkle") glyphs */
-    S_ss2          = 74
-    S_ss3          = 75
-    S_ss4          = 76
-    S_poisoncloud  = 77
-    S_goodpos      = 78  #  /* valid position for targeting via getpos() */
+    S_vbeam = 65  #  /* The 4 zap beam symbols.  Do NOT separate. */
+    S_hbeam = 66  #  /* To change order or add, see function      */
+    S_lslant = 67  #  /* zapdir_to_glyph() in display.c.           */
+    S_rslant = 68
+    S_digbeam = 69  #  /* dig beam symbol */
+    S_flashbeam = 70  #  /* camera flash symbol */
+    S_boomleft = 71  #  /* thrown boomerang, open left, e.g ')'    */
+    S_boomright = 72  #  /* thrown boomerang, open right, e.g. '('  */
+    S_ss1 = 73  #  /* 4 magic shield ("resistance sparkle") glyphs */
+    S_ss2 = 74
+    S_ss3 = 75
+    S_ss4 = 76
+    S_poisoncloud = 77
+    S_goodpos = 78  #  /* valid position for targeting via getpos() */
 
     #  /* The 8 swallow symbols.  Do NOT separate.  To change order or add, */
     #  /* see the function swallow_to_glyph() in display.c.                 */
-    S_sw_tl     = 79  #  /* swallow top left [1]             */
-    S_sw_tc     = 80  #  /* swallow top center [2]    Order: */
-    S_sw_tr     = 81  #  /* swallow top right [3]            */
-    S_sw_ml     = 82  #  /* swallow middle left [4]   1 2 3  */
-    S_sw_mr     = 83  #  /* swallow middle right [6]  4 5 6  */
-    S_sw_bl     = 84  #  /* swallow bottom left [7]   7 8 9  */
-    S_sw_bc     = 85  #  /* swallow bottom center [8]        */
-    S_sw_br     = 86  #  /* swallow bottom right [9]         */
+    S_sw_tl = 79  #  /* swallow top left [1]             */
+    S_sw_tc = 80  #  /* swallow top center [2]    Order: */
+    S_sw_tr = 81  #  /* swallow top right [3]            */
+    S_sw_ml = 82  #  /* swallow middle left [4]   1 2 3  */
+    S_sw_mr = 83  #  /* swallow middle right [6]  4 5 6  */
+    S_sw_bl = 84  #  /* swallow bottom left [7]   7 8 9  */
+    S_sw_bc = 85  #  /* swallow bottom center [8]        */
+    S_sw_br = 86  #  /* swallow bottom right [9]         */
 
-    S_explode1  = 87  #  /* explosion top left               */
-    S_explode2  = 88  #  /* explosion top center             */
-    S_explode3  = 89  #  /* explosion top right        Ex.   */
-    S_explode4  = 90  #  /* explosion middle left            */
-    S_explode5  = 91  #  /* explosion middle center    /-\   */
-    S_explode6  = 92  #  /* explosion middle right     |@|   */
-    S_explode7  = 93  #  /* explosion bottom left      \-/   */
-    S_explode8  = 94  #  /* explosion bottom center          */
-    S_explode9  = 95  #  /* explosion bottom right           */
+    S_explode1 = 87  #  /* explosion top left               */
+    S_explode2 = 88  #  /* explosion top center             */
+    S_explode3 = 89  #  /* explosion top right        Ex.   */
+    S_explode4 = 90  #  /* explosion middle left            */
+    S_explode5 = 91  #  /* explosion middle center    /-\   */
+    S_explode6 = 92  #  /* explosion middle right     |@|   */
+    S_explode7 = 93  #  /* explosion bottom left      \-/   */
+    S_explode8 = 94  #  /* explosion bottom center          */
+    S_explode9 = 95  #  /* explosion bottom right           */
     # XXX from nle.nethack import MAXEXPCHARS  # 9 direction incl. center
 
     #  /* end effects */
 
     assert MAXPCHARS == 96  # simple version sanity check
 
-    MAXPCHARS   = 96  #  /* maximum number of mapped characters */
+    MAXPCHARS = 96  #  /* maximum number of mapped characters */
 
     condensed_index = {
         el: j
-        for j, group in enumerate([
-            # walls and generally impassable or locked dungeon features
-            [S_stone],
-            [S_tree],
-            [S_vwall, S_hwall, S_crwall, S_tuwall, S_tdwall, S_tlwall,
-             S_trwall, S_tlcorn, S_trcorn, S_blcorn, S_brcorn],
-            [S_bars],
-            [S_vcdoor, S_hcdoor, S_vcdbridge, S_hcdbridge],
-            [S_pool, S_water],
-            [S_lava],
-
-            # passages
-            [S_ndoor, S_vodoor, S_hodoor, S_vodbridge, S_hodbridge],
-            [S_corr, S_litcorr],
-            [S_room, S_darkroom],
-            # XXX what is the gameplay-effective difference between a corrdor,
-            #  room floor, and open door lowered bridge? You cannot move
-            #  diagonally from a doorway, but then a doorway is a chokepoint
-            #  between two walls, and thus can be distinguished from its
-            #  surroundings.
-
-            # furniture
-            [S_upstair, S_dnstair, S_upladder, S_dnladder],
-            [S_fountain],
-            [S_throne],
-            [S_sink],
-            [S_grave],
-            [S_altar],
-            [S_ice],
-            [S_air],
-            [S_cloud],
-
-            # traps
-            [S_arrow_trap],
-            [S_dart_trap],
-            [S_falling_rock_trap],
-            [S_squeaky_board],
-            [S_bear_trap],
-            [S_land_mine],
-            [S_rolling_boulder_trap],
-            [S_sleeping_gas_trap],
-            [S_rust_trap],
-            [S_fire_trap],
-            [S_pit],
-            [S_spiked_pit],
-            [S_hole],
-            [S_trap_door],
-            [S_teleportation_trap],
-            [S_level_teleporter],
-            [S_magic_portal],
-            [S_web],
-            [S_statue_trap],
-            [S_magic_trap],
-            [S_anti_magic_trap],
-            [S_polymorph_trap],
-            [S_vibrating_square],
-
-            # special fx
-            [S_vbeam],
-            [S_hbeam],
-            [S_lslant],
-            [S_rslant],
-            [S_digbeam],
-            [S_flashbeam],
-            [S_boomleft],
-            [S_boomright],
-            [S_ss1],
-            [S_ss2],
-            [S_ss3],
-            [S_ss4],
-            [S_poisoncloud],
-            [S_goodpos],
-
-            # swallow
-            # skipped, since we remap it to dingeon features
-            #  with `symbol_sw_to_cmap`
-        ]) for el in group
+        for j, group in enumerate(
+            [
+                # walls and generally impassable or locked dungeon features
+                [S_stone],
+                [S_tree],
+                [
+                    S_vwall,
+                    S_hwall,
+                    S_crwall,
+                    S_tuwall,
+                    S_tdwall,
+                    S_tlwall,
+                    S_trwall,
+                    S_tlcorn,
+                    S_trcorn,
+                    S_blcorn,
+                    S_brcorn,
+                ],
+                [S_bars],
+                [S_vcdoor, S_hcdoor, S_vcdbridge, S_hcdbridge],
+                [S_pool, S_water],
+                [S_lava],
+                # passages
+                [S_ndoor, S_vodoor, S_hodoor, S_vodbridge, S_hodbridge],
+                [S_corr, S_litcorr],
+                [S_room, S_darkroom],
+                # XXX what is the gameplay-effective difference between a corrdor,
+                #  room floor, and open door lowered bridge? You cannot move
+                #  diagonally from a doorway, but then a doorway is a chokepoint
+                #  between two walls, and thus can be distinguished from its
+                #  surroundings.
+                # furniture
+                [S_upstair, S_dnstair, S_upladder, S_dnladder],
+                [S_fountain],
+                [S_throne],
+                [S_sink],
+                [S_grave],
+                [S_altar],
+                [S_ice],
+                [S_air],
+                [S_cloud],
+                # traps
+                [S_arrow_trap],
+                [S_dart_trap],
+                [S_falling_rock_trap],
+                [S_squeaky_board],
+                [S_bear_trap],
+                [S_land_mine],
+                [S_rolling_boulder_trap],
+                [S_sleeping_gas_trap],
+                [S_rust_trap],
+                [S_fire_trap],
+                [S_pit],
+                [S_spiked_pit],
+                [S_hole],
+                [S_trap_door],
+                [S_teleportation_trap],
+                [S_level_teleporter],
+                [S_magic_portal],
+                [S_web],
+                [S_statue_trap],
+                [S_magic_trap],
+                [S_anti_magic_trap],
+                [S_polymorph_trap],
+                [S_vibrating_square],
+                # special fx
+                [S_vbeam],
+                [S_hbeam],
+                [S_lslant],
+                [S_rslant],
+                [S_digbeam],
+                [S_flashbeam],
+                [S_boomleft],
+                [S_boomright],
+                [S_ss1],
+                [S_ss2],
+                [S_ss3],
+                [S_ss4],
+                [S_poisoncloud],
+                [S_goodpos],
+                # swallow
+                # skipped, since we remap it to dingeon features
+                #  with `symbol_sw_to_cmap`
+            ]
+        )
+        for el in group
     }
 
 
@@ -471,14 +491,11 @@ symbol_sw_to_cmap = {
     #  4 5 6 -->> 3 . 4 -->>  | |
     #  7 8 9      5 6 7       +-+
     # see `symbol`
-
     symbol.S_sw_tl: symbol.S_tlcorn,
     symbol.S_sw_tc: symbol.S_hwall,
     symbol.S_sw_tr: symbol.S_trcorn,
-
     symbol.S_sw_ml: symbol.S_vwall,
     symbol.S_sw_mr: symbol.S_vwall,
-
     symbol.S_sw_bl: symbol.S_blcorn,
     symbol.S_sw_bc: symbol.S_hwall,
     symbol.S_sw_br: symbol.S_brcorn,
@@ -488,149 +505,180 @@ symbol_sw_to_cmap = {
 # copied form ./include/hack.h#L370-380
 class explosion:
     """explosion types"""
-    DARK    = 0
+
+    DARK = 0
     NOXIOUS = 1
-    MUDDY   = 2
-    WET     = 3
+    MUDDY = 2
+    WET = 3
     MAGICAL = 4
-    FIERY   = 5
-    FROSTY  = 6
+    FIERY = 5
+    FROSTY = 6
 
     from nle.nethack import EXPL_MAX as MAX
 
     # from src/tielmap.c#L184-189
-    _name = tuple(map(sys.intern, (
-        "dark",
-        "noxious",
-        "muddy",
-        "wet",
-        "magical",
-        "fiery",
-        "frosty",
-    )))
+    _name = tuple(
+        map(
+            sys.intern,
+            (
+                "dark",
+                "noxious",
+                "muddy",
+                "wet",
+                "magical",
+                "fiery",
+                "frosty",
+            ),
+        )
+    )
 
 
 # zap beam types (spell/projectile)
 class zap:
     # taken from ./src/zap.c#L38-46
     MAGIC_MISSILE = 0
-    FIRE          = 1
-    COLD          = 2
-    SLEEP         = 3
-    DEATH         = 4
-    LIGHTNING     = 5
-    POISON_GAS    = 6
-    ACID          = 7
+    FIRE = 1
+    COLD = 2
+    SLEEP = 3
+    DEATH = 4
+    LIGHTNING = 5
+    POISON_GAS = 6
+    ACID = 7
     # XXX potentially can be up to 9 according to ./src/zap.c#L46
 
     from nle.nethack import NUM_ZAP as MAX
 
     # taken from ./src/decl.c#L168-185
-    _name = tuple(map(sys.intern, (
-        "missile",
-        "fire",
-        "frost",
-        "sleep",
-        "death",
-        "lightning",
-        "poison gas",
-        "acid",
-    )))
+    _name = tuple(
+        map(
+            sys.intern,
+            (
+                "missile",
+                "fire",
+                "frost",
+                "sleep",
+                "death",
+                "lightning",
+                "poison gas",
+                "acid",
+            ),
+        )
+    )
 
 
 # warning levels
 # FIXME what is the purpose of these?
 class warning:
     # taken from src/drawing.c#L124-137
-    WORRY    = 0
-    CONCERN  = 1
-    ANXIETY  = 2
+    WORRY = 0
+    CONCERN = 1
+    ANXIETY = 2
     DISQUIET = 3
-    ALARM    = 4
-    DREAD    = 5
+    ALARM = 4
+    DREAD = 5
 
     from nle.nethack import WARNCOUNT as MAX
 
-    _name = tuple(map(sys.intern, (
-        "worry",
-        "concern",
-        "anxiety",
-        "disquiet",
-        "alarm",
-        "dread",
-    )))
+    _name = tuple(
+        map(
+            sys.intern,
+            (
+                "worry",
+                "concern",
+                "anxiety",
+                "disquiet",
+                "alarm",
+                "dread",
+            ),
+        )
+    )
 
 
 # taken from mapglyph.c order matters
 class glyph_group:
     # See display.h in NetHack.
-    MON     = 0
-    PET     = 1
-    INVIS   = 2
-    DETECT  = 3
-    BODY    = 4  # undead are MON
-    RIDDEN  = 5
-    OBJ     = 6
-    CMAP    = 7
+    MON = 0
+    PET = 1
+    INVIS = 2
+    DETECT = 3
+    BODY = 4  # undead are MON
+    RIDDEN = 5
+    OBJ = 6
+    CMAP = 7
     EXPLODE = 8
-    ZAP     = 9
+    ZAP = 9
     SWALLOW = 10
     WARNING = 11
-    STATUE  = 12
+    STATUE = 12
 
-    MAX     = 13
+    MAX = 13
 
     # we do not consider a statue a monster
-    ACTORS = frozenset([
-        MON, PET, INVIS, DETECT, RIDDEN,
-    ])
+    ACTORS = frozenset(
+        [
+            MON,
+            PET,
+            INVIS,
+            DETECT,
+            RIDDEN,
+        ]
+    )
 
-    OBJECTS = frozenset([
-        BODY, OBJ, STATUE,
-    ])
+    OBJECTS = frozenset(
+        [
+            BODY,
+            OBJ,
+            STATUE,
+        ]
+    )
 
-    EFFECTS = frozenset([
-        EXPLODE, ZAP, WARNING,
-    ])
+    EFFECTS = frozenset(
+        [
+            EXPLODE,
+            ZAP,
+            WARNING,
+        ]
+    )
 
-    LEVEL = frozenset([
-        CMAP, SWALLOW
-    ])
+    LEVEL = frozenset([CMAP, SWALLOW])
 
     # monsters, special effects and warnings are potentially mobile
-    MOBILE = frozenset([
-        *ACTORS,
-        *EFFECTS,
-    ])
+    MOBILE = frozenset(
+        [
+            *ACTORS,
+            *EFFECTS,
+        ]
+    )
 
 
 # exported macros
 class glyph_is:
     # from nle.nethack import glyph_is_monster as monster  # subsumed
-    from nle.nethack import glyph_is_normal_monster   as normal_monster
-    from nle.nethack import glyph_is_pet              as pet
-    from nle.nethack import glyph_is_body             as body
-    from nle.nethack import glyph_is_statue           as statue
-    from nle.nethack import glyph_is_ridden_monster   as ridden_monster
+    from nle.nethack import glyph_is_normal_monster as normal_monster
+    from nle.nethack import glyph_is_pet as pet
+    from nle.nethack import glyph_is_body as body
+    from nle.nethack import glyph_is_statue as statue
+    from nle.nethack import glyph_is_ridden_monster as ridden_monster
     from nle.nethack import glyph_is_detected_monster as detected_monster
-    from nle.nethack import glyph_is_invisible        as invisible
-    from nle.nethack import glyph_is_normal_object    as normal_object
+    from nle.nethack import glyph_is_invisible as invisible
+    from nle.nethack import glyph_is_normal_object as normal_object
+
     # from nle.nethack import glyph_is_object as obj  # normalize, subsumed
 
     # ATTN is_trap is off-by-one since it uses NUMTRAPS, which includes NO_TRAP
-    from nle.nethack import glyph_is_trap             as trap
+    from nle.nethack import glyph_is_trap as trap
 
-    from nle.nethack import glyph_is_cmap             as cmap
-    from nle.nethack import glyph_is_swallow          as swallow
-    from nle.nethack import glyph_is_warning          as warning
+    from nle.nethack import glyph_is_cmap as cmap
+    from nle.nethack import glyph_is_swallow as swallow
+    from nle.nethack import glyph_is_warning as warning
 
 
 # exported macros
 class glyph_to:
-    from nle.nethack import glyph_to_mon     as monster
-    from nle.nethack import glyph_to_obj     as obj
-    from nle.nethack import glyph_to_trap    as trap
-    from nle.nethack import glyph_to_cmap    as cmap
+    from nle.nethack import glyph_to_mon as monster
+    from nle.nethack import glyph_to_obj as obj
+    from nle.nethack import glyph_to_trap as trap
+    from nle.nethack import glyph_to_cmap as cmap
     from nle.nethack import glyph_to_swallow as swallow
     from nle.nethack import glyph_to_warning as warning
 
@@ -641,12 +689,14 @@ def get_group(cls, offset, *symbols):
 
 # index and group
 # XXX (group, entity) is enough to disambiguate glyphs
-dt_glyph_id = np.dtype([
-    ('value', int),   # (backref) the original value of the glyph
-    ('group', int),   # the technical group it belongs to
-    ('index', int),   # the index within the group
-    ('entity', int),  # the semantically unique id
-])
+dt_glyph_id = np.dtype(
+    [
+        ("value", int),  # (backref) the original value of the glyph
+        ("group", int),  # the technical group it belongs to
+        ("index", int),  # the index within the group
+        ("entity", int),  # the semantically unique id
+    ]
+)
 
 
 # build the glyph group-index-entity lookup
@@ -662,12 +712,7 @@ def glyph_lookup(condensed=False):
 
     # Monsters -- the base category!
     for glyph in range(GLYPH_MON_OFF, GLYPH_PET_OFF):
-        table[glyph] = (
-            glyph,
-            glyph_group.MON,
-            glyph - GLYPH_MON_OFF,
-            n_entity_index
-        )
+        table[glyph] = (glyph, glyph_group.MON, glyph - GLYPH_MON_OFF, n_entity_index)
         n_entity_index += 1
 
     # Pets
@@ -861,51 +906,68 @@ glyphlut = glyph_lookup()
 
 
 # extended lookup table for glyph properties
-dt_glyph_ext = np.dtype([
-    ('id', dt_glyph_id),
-    ('is_background', bool),
-    ('is_floodable', bool),
-    ('is_accessible', bool),
-    ('is_actor', bool),
-    ('is_interesting', bool),
-    ('screen', 'c'),  # the representation of the symbol on the screen
-])
+dt_glyph_ext = np.dtype(
+    [
+        ("id", dt_glyph_id),
+        ("is_background", bool),
+        ("is_floodable", bool),
+        ("is_accessible", bool),
+        ("is_actor", bool),
+        ("is_interesting", bool),
+        ("screen", "c"),  # the representation of the symbol on the screen
+    ]
+)
 
 
 symbol_is_accessible = get_group(
     symbol,
     0,
     # floor, corridor and z-level passages
-    'S_ndoor', 'S_vodoor', 'S_hodoor',
-    'S_vodbridge', 'S_hodbridge',
-    'S_corr', 'S_litcorr',
-    'S_room', 'S_darkroom',
-    'S_upstair', 'S_dnstair',
-    'S_upladder', 'S_dnladder',
-
+    "S_ndoor",
+    "S_vodoor",
+    "S_hodoor",
+    "S_vodbridge",
+    "S_hodbridge",
+    "S_corr",
+    "S_litcorr",
+    "S_room",
+    "S_darkroom",
+    "S_upstair",
+    "S_dnstair",
+    "S_upladder",
+    "S_dnladder",
     # furniture
-    'S_fountain', 'S_throne', 'S_sink', 'S_grave', 'S_altar',
-
+    "S_fountain",
+    "S_throne",
+    "S_sink",
+    "S_grave",
+    "S_altar",
     # terrain
-    'S_ice', 'S_air', 'S_cloud',
+    "S_ice",
+    "S_air",
+    "S_cloud",
 )
 
 
 symbol_is_floodable = get_group(
     symbol,
     0,
-    'S_room', 'S_darkroom',
+    "S_room",
+    "S_darkroom",
     # 'S_ndoor',  # an empty doorway is like a floor
-
     # {S_upstair, "up stairs", "staircase up"},  # from tilemap.c
     # {S_dnstair, "down stairs", "staircase down"},  ditto
-    'S_upstair', 'S_dnstair',
-
+    "S_upstair",
+    "S_dnstair",
     # {S_upladder, "up ladder", "ladder up"},
     # {S_dnladder, "down ladder", "ladder down"},
-    'S_upladder', 'S_dnladder',
-
-    'S_altar', 'S_grave', 'S_throne', 'S_sink', 'S_fountain',
+    "S_upladder",
+    "S_dnladder",
+    "S_altar",
+    "S_grave",
+    "S_throne",
+    "S_sink",
+    "S_fountain",
 )
 
 
@@ -913,26 +975,51 @@ symbol_is_background = get_group(
     symbol,
     0,
     # walls and obstacles
-    'S_stone', 'S_tree',
-    'S_vwall', 'S_hwall',
-    'S_tlcorn', 'S_trcorn', 'S_blcorn', 'S_brcorn',
-    'S_crwall',
-    'S_tuwall', 'S_tdwall', 'S_tlwall', 'S_trwall',
-
-    'S_bars',
-    'S_vodoor', 'S_hodoor', 'S_vodbridge', 'S_hodbridge',
-
+    "S_stone",
+    "S_tree",
+    "S_vwall",
+    "S_hwall",
+    "S_tlcorn",
+    "S_trcorn",
+    "S_blcorn",
+    "S_brcorn",
+    "S_crwall",
+    "S_tuwall",
+    "S_tdwall",
+    "S_tlwall",
+    "S_trwall",
+    "S_bars",
+    "S_vodoor",
+    "S_hodoor",
+    "S_vodbridge",
+    "S_hodbridge",
     # corridors and open doors
-    'S_ndoor',
-    'S_vcdoor', 'S_hcdoor', 'S_vcdbridge', 'S_hcdbridge',
-    'S_corr', 'S_litcorr', 'S_room', 'S_darkroom',
-    'S_upstair', 'S_dnstair', 'S_upladder', 'S_dnladder',
-
+    "S_ndoor",
+    "S_vcdoor",
+    "S_hcdoor",
+    "S_vcdbridge",
+    "S_hcdbridge",
+    "S_corr",
+    "S_litcorr",
+    "S_room",
+    "S_darkroom",
+    "S_upstair",
+    "S_dnstair",
+    "S_upladder",
+    "S_dnladder",
     # elemental
-    'S_pool', 'S_lava', 'S_water', 'S_ice', 'S_air', 'S_cloud',
-
+    "S_pool",
+    "S_lava",
+    "S_water",
+    "S_ice",
+    "S_air",
+    "S_cloud",
     # furniture
-    'S_fountain', 'S_throne', 'S_sink', 'S_grave', 'S_altar',
+    "S_fountain",
+    "S_throne",
+    "S_sink",
+    "S_grave",
+    "S_altar",
 )
 
 
@@ -940,29 +1027,62 @@ glyph_is_mundane = get_group(
     symbol,
     GLYPH_CMAP_OFF,
     # stone, trees, walls and other obstacles
-    'S_stone', 'S_tree',
-    'S_bars',
-    'S_vwall', 'S_hwall', 'S_crwall',
-    'S_tuwall', 'S_tdwall', 'S_tlwall', 'S_trwall',
-    'S_tlcorn', 'S_trcorn', 'S_blcorn', 'S_brcorn',
-
+    "S_stone",
+    "S_tree",
+    "S_bars",
+    "S_vwall",
+    "S_hwall",
+    "S_crwall",
+    "S_tuwall",
+    "S_tdwall",
+    "S_tlwall",
+    "S_trwall",
+    "S_tlcorn",
+    "S_trcorn",
+    "S_blcorn",
+    "S_brcorn",
     # open doors, doorways, lowered brigdes
-    'S_ndoor', 'S_vodoor', 'S_hodoor', 'S_vodbridge', 'S_hodbridge',
-
+    "S_ndoor",
+    "S_vodoor",
+    "S_hodoor",
+    "S_vodbridge",
+    "S_hodbridge",
     # room floors and corridors
-    'S_corr', 'S_litcorr', 'S_room', 'S_darkroom',
-
+    "S_corr",
+    "S_litcorr",
+    "S_room",
+    "S_darkroom",
     # terrain including lava and water
-    'S_ice', 'S_air', 'S_cloud', 'S_lava', 'S_water', 'S_pool',
-
+    "S_ice",
+    "S_air",
+    "S_cloud",
+    "S_lava",
+    "S_water",
+    "S_pool",
     # all kinds of traps
-    'S_arrow_trap', 'S_dart_trap', 'S_falling_rock_trap',
-    'S_squeaky_board', 'S_bear_trap', 'S_land_mine',
-    'S_rolling_boulder_trap', 'S_sleeping_gas_trap',
-    'S_rust_trap', 'S_fire_trap', 'S_pit', 'S_spiked_pit',
-    'S_hole', 'S_trap_door', 'S_teleportation_trap', 'S_level_teleporter',
-    'S_magic_portal', 'S_web', 'S_statue_trap', 'S_magic_trap',
-    'S_anti_magic_trap', 'S_polymorph_trap', 'S_vibrating_square',
+    "S_arrow_trap",
+    "S_dart_trap",
+    "S_falling_rock_trap",
+    "S_squeaky_board",
+    "S_bear_trap",
+    "S_land_mine",
+    "S_rolling_boulder_trap",
+    "S_sleeping_gas_trap",
+    "S_rust_trap",
+    "S_fire_trap",
+    "S_pit",
+    "S_spiked_pit",
+    "S_hole",
+    "S_trap_door",
+    "S_teleportation_trap",
+    "S_level_teleporter",
+    "S_magic_portal",
+    "S_web",
+    "S_statue_trap",
+    "S_magic_trap",
+    "S_anti_magic_trap",
+    "S_polymorph_trap",
+    "S_vibrating_square",
 )
 
 
@@ -981,18 +1101,15 @@ def extended_lut(basic):
     for j in range(len(table)):
         id = basic[j]
 
-        screen = b'?'
+        screen = b"?"
         if id.group in glyph_group.LEVEL:
             screen = symbol_to_screen[id.index]
 
         table[j] = (
             id,
-            (id.group in glyph_group.LEVEL
-                and id.index in symbol_is_background),
-            (id.group in glyph_group.LEVEL
-                and id.index in symbol_is_floodable),
-            (id.group in glyph_group.LEVEL
-                and id.index in symbol_is_accessible),
+            (id.group in glyph_group.LEVEL and id.index in symbol_is_background),
+            (id.group in glyph_group.LEVEL and id.index in symbol_is_floodable),
+            (id.group in glyph_group.LEVEL and id.index in symbol_is_accessible),
             id.group in glyph_group.ACTORS,
             id.value not in glyph_is_mundane,
             screen,
@@ -1005,39 +1122,45 @@ ext_glyphlut = extended_lut(glyphlut)
 
 
 # Bottom Line statistics namedtuple, see `./nle/include/nleobs.h#L16-42`
-_, blstats_fields = zip(*sorted([
-    (NLE_BL_X,         'x'),
-    (NLE_BL_Y,         'y'),
-    (NLE_BL_STR25,     'str'),     # 'strength'
-    (NLE_BL_STR125,    'strength_percentage'),
-    (NLE_BL_DEX,       'dex'),     # 'dexterity'
-    (NLE_BL_CON,       'con'),     # 'constitution'
-    (NLE_BL_INT,       'int'),     # 'intelligence'
-    (NLE_BL_WIS,       'wis'),     # 'wisdom'
-    (NLE_BL_CHA,       'cha'),     # 'charisma'
-    (NLE_BL_SCORE,     'score'),
-    (NLE_BL_HP,        'hitpoints'),
-    (NLE_BL_HPMAX,     'max_hitpoints'),
-    (NLE_BL_DEPTH,     'depth'),
-    (NLE_BL_GOLD,      'gold'),
-    (NLE_BL_ENE,       'energy'),
-    (NLE_BL_ENEMAX,    'max_energy'),
-    (NLE_BL_AC,        'armor_class'),
-    (NLE_BL_HD,        'monster_level'),
-    (NLE_BL_XP,        'experience_level'),
-    (NLE_BL_EXP,       'experience_points'),
-    (NLE_BL_TIME,      'time'),
-    (NLE_BL_HUNGER,    'hunger_state'),
-    (NLE_BL_CAP,       'carrying_capacity'),
-    (NLE_BL_DNUM,      'dungeon_number'),
-    (NLE_BL_DLEVEL,    'level_number'),
-    (NLE_BL_CONDITION, 'condition'),
-    (NLE_BL_ALIGN,     'alignment'),
-]))
+_, blstats_fields = zip(
+    *sorted(
+        [
+            (NLE_BL_X, "x"),
+            (NLE_BL_Y, "y"),
+            (NLE_BL_STR25, "str"),  # 'strength'
+            (NLE_BL_STR125, "strength_percentage"),
+            (NLE_BL_DEX, "dex"),  # 'dexterity'
+            (NLE_BL_CON, "con"),  # 'constitution'
+            (NLE_BL_INT, "int"),  # 'intelligence'
+            (NLE_BL_WIS, "wis"),  # 'wisdom'
+            (NLE_BL_CHA, "cha"),  # 'charisma'
+            (NLE_BL_SCORE, "score"),
+            (NLE_BL_HP, "hitpoints"),
+            (NLE_BL_HPMAX, "max_hitpoints"),
+            (NLE_BL_DEPTH, "depth"),
+            (NLE_BL_GOLD, "gold"),
+            (NLE_BL_ENE, "energy"),
+            (NLE_BL_ENEMAX, "max_energy"),
+            (NLE_BL_AC, "armor_class"),
+            (NLE_BL_HD, "monster_level"),
+            (NLE_BL_XP, "experience_level"),
+            (NLE_BL_EXP, "experience_points"),
+            (NLE_BL_TIME, "time"),
+            (NLE_BL_HUNGER, "hunger_state"),
+            (NLE_BL_CAP, "carrying_capacity"),
+            (NLE_BL_DNUM, "dungeon_number"),
+            (NLE_BL_DLEVEL, "level_number"),
+            (NLE_BL_CONDITION, "condition"),
+            (NLE_BL_ALIGN, "alignment"),
+        ]
+    )
+)
 
 
-BLStats = namedtuple('BLStats', blstats_fields)
-BLStats.__doc__ += "\n" + r"""
+BLStats = namedtuple("BLStats", blstats_fields)
+BLStats.__doc__ += (
+    "\n"
+    + r"""
     Current bottom line statistics vector.
 
     Details
@@ -1045,14 +1168,18 @@ BLStats.__doc__ += "\n" + r"""
     The descriptions and meanings have been taken from
         [nleobs.h](include/nleobs.h#L16-42)
 """
+)
 
 
 # miscellaneous flags
-Misc = namedtuple('Misc', 'in_yn_function,in_getlin,xwaitingforspace')
-Misc.__doc__ += "\n" + r"""
+Misc = namedtuple("Misc", "in_yn_function,in_getlin,xwaitingforspace")
+Misc.__doc__ += (
+    "\n"
+    + r"""
     Miscellaneous flags
 
     Details
     -------
     The meanings have been taken from [nleobs.h](win/rl/winrl.cc#L290-292).
 """
+)

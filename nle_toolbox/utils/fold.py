@@ -9,8 +9,7 @@ def npy_fold2d(
     n_leading=1,
     writeable=True,
 ):
-    """Zero-copy sliding window view for numpy arrays.
-    """
+    """Zero-copy sliding window view for numpy arrays."""
 
     # XXX shouldn't we call it `n_leading`?
     n_leading = (n_leading + array.ndim) if n_leading < 0 else n_leading
@@ -21,17 +20,24 @@ def npy_fold2d(
     d0, d1, *shape = array.shape[n_leading:]
     s0, s1, *strides = array.strides[n_leading:]
     return npy_as_strided(
-        array, (
+        array,
+        (
             *array.shape[:n_leading],
-            d0 - 2 * k, d1 - 2 * k,  # n' = n - w + 1, w = k + 1 + k
-            k + 1 + k, k + 1 + k,
+            d0 - 2 * k,
+            d1 - 2 * k,  # n' = n - w + 1, w = k + 1 + k
+            k + 1 + k,
+            k + 1 + k,
             *shape,
-        ), (
+        ),
+        (
             *array.strides[:n_leading],
-            s0, s1,
-            s0, s1,
+            s0,
+            s1,
+            s0,
+            s1,
             *strides,
-        ), writeable=writeable,
+        ),
+        writeable=writeable,
     )
 
 
@@ -43,8 +49,7 @@ def pyt_fold2d(
     n_leading=1,
     writeable=None,
 ):
-    """Zero-copy sliding window view for torch tensors.
-    """
+    """Zero-copy sliding window view for torch tensors."""
     if writeable is not None:
         raise TypeError("torch does not support access flags in `.as_strided`.")
 
@@ -59,13 +64,18 @@ def pyt_fold2d(
     return tensor.as_strided(
         (
             *tensor.shape[:n_leading],
-            d0 - 2 * k, d1 - 2 * k,  # n' = n - w + 1, w = k + 1 + k
-            k + 1 + k, k + 1 + k,
+            d0 - 2 * k,
+            d1 - 2 * k,  # n' = n - w + 1, w = k + 1 + k
+            k + 1 + k,
+            k + 1 + k,
             *shape,
-        ), (
+        ),
+        (
             *tensor.stride()[:n_leading],
-            s0, s1,
-            s0, s1,
+            s0,
+            s1,
+            s0,
+            s1,
             *strides,
         ),
     )

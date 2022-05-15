@@ -8,8 +8,7 @@ from torch import nn
 
 
 class DiagnosticReLU(nn.ReLU):
-    """A ReLU activation layer which tracks the output sparisty rate.
-    """
+    """A ReLU activation layer which tracks the output sparisty rate."""
 
     def __init__(self, inplace: bool = False):
         super().__init__(inplace=inplace)
@@ -19,7 +18,7 @@ class DiagnosticReLU(nn.ReLU):
         output = super().forward(input)
 
         # count the share of `alive` outputs
-        self.alive.append(int(output.gt(0.).sum()) / output.numel())
+        self.alive.append(int(output.gt(0.0).sum()) / output.numel())
 
         return output
 
@@ -29,14 +28,13 @@ def collect_relu_death(module):
     for nom, mod in module.named_modules():
         if isinstance(mod, DiagnosticReLU):
             assert nom not in relu_death
-            relu_death[nom] = 1. - np.array(mod.alive)
+            relu_death[nom] = 1.0 - np.array(mod.alive)
 
     return relu_death
 
 
 class DiagnosticSequential(nn.Sequential):
-    """A Sequential container which track forward pass timestamps.
-    """
+    """A Sequential container which track forward pass timestamps."""
 
     def __init__(self, *args: nn.Module):
         super().__init__(*args)
@@ -61,7 +59,7 @@ def collect_seq_timings(module):
             assert nom not in seq_timings
 
             seq_timings[nom] = np.array(mod.timings_ns), [
-                f'({j}) {mod.__class__.__name__}' for j, mod in enumerate(mod)
+                f"({j}) {mod.__class__.__name__}" for j, mod in enumerate(mod)
             ]
 
     return seq_timings
@@ -90,8 +88,8 @@ def named_denormal_stats(module):
 
     # bit field sizes of the IEEE754 floating point format
     info = {
-        torch.float16: (np.uint16, 10, 5),   # 1 + 5 + 10
-        torch.float32: (np.uint32, 23, 8),   # 1 + 8 + 23
+        torch.float16: (np.uint16, 10, 5),  # 1 + 5 + 10
+        torch.float32: (np.uint32, 23, 8),  # 1 + 8 + 23
         torch.float64: (np.uint64, 52, 11),  # 1 + 11 + 52
     }
     # XXX `.frexp` returns exp and frac, which represent a given float as

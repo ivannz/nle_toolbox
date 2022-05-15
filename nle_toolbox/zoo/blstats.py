@@ -4,12 +4,10 @@ from torch import nn
 from nle.nethack import (
     NLE_BL_HUNGER,
     NLE_BL_CONDITION,
-
     NLE_BL_HP,
     NLE_BL_HPMAX,
     NLE_BL_ENE,
     NLE_BL_ENEMAX,
-
     NLE_BL_STR25,
     NLE_BL_STR125,
     NLE_BL_DEX,
@@ -17,7 +15,6 @@ from nle.nethack import (
     NLE_BL_INT,
     NLE_BL_WIS,
     NLE_BL_CHA,
-
     NLE_BL_AC,
     NLE_BL_CAP,
 )
@@ -27,27 +24,21 @@ from nle.nethack import (
     # player coords
     NLE_BL_X,
     NLE_BL_Y,
-
     # in-game score and gold
     NLE_BL_SCORE,
     NLE_BL_GOLD,
-
     # level and experience
     NLE_BL_XP,
     NLE_BL_EXP,
-
     # in-game move number
     NLE_BL_TIME,
-
     # dungeon number, level, and the depth (derived from the fisrt two)
     NLE_BL_DNUM,
     NLE_BL_DLEVEL,
     NLE_BL_DEPTH,
-
     # 'monster_level' -- the level of the monster when polymorphed
     #  [``](./nle/win/rl/winrl.cc#L552-553)
     NLE_BL_HD,
-
     # player's alignment
     NLE_BL_ALIGN,
 )
@@ -61,7 +52,7 @@ class BaseEmbedding(nn.Embedding):
         index: int,
         num_embeddings: int,
         embedding_dim: int,
-        padding_idx: int = None
+        padding_idx: int = None,
     ) -> None:
         super().__init__(num_embeddings, embedding_dim, padding_idx)
         self.index = index
@@ -107,9 +98,9 @@ class Condition(nn.Module):
         self,
         embedding_dim: int,
         *,
-        nonlinearity: str = 'tanh',
+        nonlinearity: str = "tanh",
     ) -> None:
-        assert nonlinearity in ('tanh', 'relu')
+        assert nonlinearity in ("tanh", "relu")
         super().__init__()
 
         # Ordinarily, embeddings do not need non-linearities, due to implicit
@@ -122,7 +113,7 @@ class Condition(nn.Module):
             embedding_dim,
             bias=True,  # XXX needed for default all-zeros `condition`
         )
-        self.nonlinearity = nn.Tanh() if nonlinearity == 'tanh' else nn.ReLU()
+        self.nonlinearity = nn.Tanh() if nonlinearity == "tanh" else nn.ReLU()
 
     def forward(self, blstats: torch.Tensor) -> torch.Tensor:
         x = self.onehot(blstats[..., NLE_BL_CONDITION])
@@ -139,13 +130,15 @@ class ArmorClass(nn.Embedding):
 
         # a bin lookup table for armor_class, a categorical variable.
         self.register_buffer(
-            'lut', torch.tensor(
+            "lut",
+            torch.tensor(
                 # 0..10 mapped to 11..1, 11..127 to 0
-                [*reversed(range(1, 12))] + [0] * 117
-
+                [*reversed(range(1, 12))]
+                + [0] * 117
                 # 128..244 mapped to 23, 245..256 to 22..12
-                + [23] * 117 + [*range(22, 11, -1)]
-            )
+                + [23] * 117
+                + [*range(22, 11, -1)]
+            ),
         )
 
     def forward(self, blstats: torch.Tensor) -> torch.Tensor:
@@ -162,7 +155,7 @@ class ArmorClass(nn.Embedding):
 class HP(nn.Module):
     def __init__(self, embedding_dim: int, num_bins: int = 10) -> None:
         super().__init__()
-        self.onehot = EquispacedEmbedding(0, 1, steps=num_bins - 1, scale='lin')
+        self.onehot = EquispacedEmbedding(0, 1, steps=num_bins - 1, scale="lin")
         self.linear = nn.Linear(num_bins, embedding_dim, bias=False)
 
     def forward(self, blstats: torch.Tensor) -> torch.Tensor:
@@ -173,7 +166,7 @@ class HP(nn.Module):
 class MP(nn.Module):
     def __init__(self, embedding_dim: int, num_bins: int = 10) -> None:
         super().__init__()
-        self.onehot = EquispacedEmbedding(0, 1, steps=num_bins - 1, scale='lin')
+        self.onehot = EquispacedEmbedding(0, 1, steps=num_bins - 1, scale="lin")
         self.linear = nn.Linear(num_bins, embedding_dim, bias=False)
 
     def forward(self, blstats: torch.Tensor) -> torch.Tensor:
@@ -185,9 +178,10 @@ class STR125(nn.Module):
     """blstats data must be preprocessed with `NLEFeatureExtractor` from
     `.utils.env.wrappers`
     """
+
     def __init__(self, embedding_dim: int, num_bins: int = 10) -> None:
         super().__init__()
-        self.onehot = EquispacedEmbedding(0, 1, steps=num_bins - 1, scale='lin')
+        self.onehot = EquispacedEmbedding(0, 1, steps=num_bins - 1, scale="lin")
         self.linear = nn.Linear(num_bins, embedding_dim, bias=False)
 
     def forward(self, blstats: torch.Tensor) -> torch.Tensor:

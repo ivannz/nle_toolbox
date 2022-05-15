@@ -38,6 +38,7 @@ class OptionWrapper(Wrapper):
                 action, halt, hx = core(obs, hx=hx)
     ```
     """
+
     _generator = None
 
     def __init__(self, env, *, reduce=sum, allow_empty=False):
@@ -91,7 +92,7 @@ class OptionWrapper(Wrapper):
 
         # peek into generator's context and get the special flag
         ctx = getgeneratorlocals(self._generator)
-        return ctx.get('is_running', False)
+        return ctx.get("is_running", False)
 
     @staticmethod
     def loop(env, *, reduce=sum, allow_empty=False):
@@ -117,7 +118,7 @@ class OptionWrapper(Wrapper):
         .step of the env, except that the rewards are aggregated since the last
         yield.
         """
-        obs, rewards, done, info = env.reset(), [0.], False, {}
+        obs, rewards, done, info = env.reset(), [0.0], False, {}
 
         option, pipe0 = None, deque([])
         while not done:
@@ -144,9 +145,7 @@ class OptionWrapper(Wrapper):
 
             except StopIteration:
                 if not allow_empty and not rewards:
-                    raise RuntimeError(
-                        "Cannot execute empty options."
-                    ) from None
+                    raise RuntimeError("Cannot execute empty options.") from None
 
         # communicate the last response through `StopIteration`
         return obs, reduce(rewards), True, info
@@ -154,6 +153,7 @@ class OptionWrapper(Wrapper):
 
 class Continue(Exception):
     """Special action to continue executing the preempted option."""
+
     def __init__(self, *args, **kwargs):
         super().__init__()
 
@@ -162,6 +162,7 @@ class Preempt(Exception):
     """Special action to temporarily suspend the current option and
     give control to another one.
     """
+
     def __init__(self, option, *args, **kwargs):
         super().__init__(option)
 
@@ -190,6 +191,7 @@ class InterruptibleOptionWrapper(OptionWrapper):
         temporal abstraction in reinforcement learning`, Artificial
         Intelligence 112, 181–211
     """
+
     def step(self, option=Continue):
         """Run one abstract time step of the environment's dynamics."""
         if not isgenerator(self._generator):
@@ -197,8 +199,9 @@ class InterruptibleOptionWrapper(OptionWrapper):
 
         try:
             if not (
-                isinstance(option, Exception) or
-                isinstance(option, type) and issubclass(option, Exception)
+                isinstance(option, Exception)
+                or isinstance(option, type)
+                and issubclass(option, Exception)
             ):
                 return self._generator.send(option)
 
@@ -313,7 +316,7 @@ class InterruptibleOptionWrapper(OptionWrapper):
                 # option, but do not reset the reward accumulator
                 stack.append(option)
 
-                option, = e.args
+                (option,) = e.args
                 pipe0.extend(option.send(None))
 
             try:

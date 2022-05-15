@@ -8,15 +8,14 @@ from numpy import ndarray
 
 from collections import defaultdict, deque, namedtuple
 
-Chunk = namedtuple('Chunk', 'size,data')
+Chunk = namedtuple("Chunk", "size,data")
 
 
 def cat(
     arraylike: Union[Tensor, ndarray],
     dim: int = 0,
 ) -> Union[Tensor, ndarray]:
-    """Concatenate the ndarray or tensor data along the specified dim.
-    """
+    """Concatenate the ndarray or tensor data along the specified dim."""
     if isinstance(arraylike[0], Tensor):
         return torch.cat(arraylike, dim=dim)
 
@@ -90,7 +89,7 @@ def extract(
     n_seq, n_env = reset.shape
     for j in range(n_env):
         # slicing with a single-element list copies both in numpy and torch
-        jj = [j] if copy else slice(j, j+1)  # XXX a list copies, a slice views
+        jj = [j] if copy else slice(j, j + 1)  # XXX a list copies, a slice views
         # XXX it is better to be explicit, rather than implicit...
 
         # find all reset brackets [t0, t1)
@@ -102,7 +101,7 @@ def extract(
             # finish with the [t0, t1+1) slice, including the `t1`-th element,
             #  which could contain data, relevant to the end of the trajectory
             t1, t0 = t, t1
-            tail = plyr.apply(lambda x: x[t0:t1+1, jj], fragment)
+            tail = plyr.apply(lambda x: x[t0 : t1 + 1, jj], fragment)
             strands[j].append(Chunk(t1 + 1 - (t0 or 0), tail))
 
             # combine the fragments together and drop the incomplete strand
@@ -165,8 +164,8 @@ def ensure2d(
 
 
 class EpisodeExtractor:
-    """A simple object to track and stitch fragmented trajectories.
-    """
+    """A simple object to track and stitch fragmented trajectories."""
+
     def __init__(self) -> None:
         # the fragmented contiguous trajectory of each incomplete episode
         self.strands = defaultdict(list)
@@ -226,12 +225,12 @@ def copyto(
 
     else:
         # allow only strict dtype copies
-        np.copyto(dst[at], src, 'no')
+        np.copyto(dst[at], src, "no")
 
 
 class UnorderedLazyBuffer:
-    """A lazily initialized buffer for unordered data.
-    """
+    """A lazily initialized buffer for unordered data."""
+
     def __init__(self, capacity: int) -> None:
         self._buffer = None
         self.used = deque([], capacity)
@@ -250,13 +249,11 @@ class UnorderedLazyBuffer:
         self.used.clear()
 
     def __getitem__(self, index: int) -> Any:
-        """Get the data stored at index.
-        """
+        """Get the data stored at index."""
         return plyr.apply(lambda x: x[index], self._buffer)
 
     def __setitem__(self, index: int, ex: Any) -> Any:
-        """Put the data into the storage at the index.
-        """
+        """Put the data into the storage at the index."""
         # allow negative indexing
         j = (index + self.used.maxlen) if index < 0 else index
 
@@ -264,8 +261,7 @@ class UnorderedLazyBuffer:
         plyr.apply(copyto, self._buffer, ex, at=j)
 
     def push(self, ex: Any) -> None:
-        """Push the new data into the buffer, optionally evicting the oldest.
-        """
+        """Push the new data into the buffer, optionally evicting the oldest."""
         # lazily initialize ourselves
         if self._buffer is None:
             self.from_example(ex)
@@ -285,8 +281,7 @@ class UnorderedLazyBuffer:
             self.used.appendleft(j)
 
     def pop(self) -> Any:
-        """Pop the oldest data from the buffer.
-        """
+        """Pop the oldest data from the buffer."""
         if self.used:
             j = self.used.pop()
             self.free.add(j)
@@ -295,22 +290,19 @@ class UnorderedLazyBuffer:
         raise IndexError
 
     def __bool__(self) -> bool:
-        """Test whether there is anything in the buffer.
-        """
+        """Test whether there is anything in the buffer."""
         return bool(self.used)
 
 
 def fetch(x, t0, t1):
-    """Copy a padded slice [t0, t1) from the arraylike `x`.
-    """
+    """Copy a padded slice [t0, t1) from the arraylike `x`."""
 
     # if the left endpoint is negative, then pad with the first element
-    return cat((x[:1],) * max(- t0, 0) + (x[max(t0, 0):t1],))
+    return cat((x[:1],) * max(-t0, 0) + (x[max(t0, 0) : t1],))
 
 
 class EpisodeBuffer:
-    """Keeping at least the specified number of transitions.
-    """
+    """Keeping at least the specified number of transitions."""
 
     def __init__(self, *, seed: Any = None) -> None:
         self.n_transitions = 0
@@ -328,8 +320,7 @@ class EpisodeBuffer:
 
     @property
     def n_pending(self):
-        """Get the number of pending transitions in unfinished episodes.
-        """
+        """Get the number of pending transitions in unfinished episodes."""
         n_pending = 0
         for chunks in self.strands.values():
             sizes, _ = zip(*chunks)
@@ -338,8 +329,7 @@ class EpisodeBuffer:
         return n_pending
 
     def shrink(self, n_target: int = None) -> None:
-        """Shrink the buffer to the specified number of transitions.
-        """
+        """Shrink the buffer to the specified number of transitions."""
         if n_target is None:
             n_target = self.n_transitions - 1
 
@@ -388,8 +378,7 @@ class EpisodeBuffer:
         # the numbr of elements for frame stacking (>= 1)
         n_window: int = 1,
     ) -> tuple[Any, Any]:
-        """Randomly sample continuous trajectory fragments with burnin.
-        """
+        """Randomly sample continuous trajectory fragments with burnin."""
         burnin = None
 
         # the number of elements in the batch proper (not transitions!!!) (>= 1)
@@ -412,14 +401,16 @@ class EpisodeBuffer:
         stix = self.random_.integers(left, sizes, endpoint=True)
 
         # pad the selected episodes
-        padded = [plyr.apply(fetch, ep, t0=t0, t1=t1)
-                  for ep, t0, t1 in zip(batch, stix - n_total, stix)]
+        padded = [
+            plyr.apply(fetch, ep, t0=t0, t1=t1)
+            for ep, t0, t1 in zip(batch, stix - n_total, stix)
+        ]
 
         # collate into a batch
         padded = plyr.apply(cat, *padded, _star=False, dim=1)
 
         # split the batch into the proper and brunin segments
-        batch = plyr.apply(lambda x: x[1-n_window-n_length:], padded)
+        batch = plyr.apply(lambda x: x[1 - n_window - n_length :], padded)
         if n_burnin > 0:
             burnin = plyr.apply(lambda x: x[:-n_length], padded)
 

@@ -19,15 +19,12 @@ def replay(env, actions, *, seed):
         if fin:
             break
 
-    return {
-        k: numpy.array([o[k] for o in history]) for k in history[0]
-    }, actions[j:]
+    return {k: numpy.array([o[k] for o in history]) for k in history[0]}, actions[j:]
 
 
 @pytest.mark.parametrize(
-    "seed,k", [
-        (randint(1, 7857458), 125) for _ in range(100)
-    ],
+    "seed,k",
+    [(randint(1, 7857458), 125) for _ in range(100)],
 )
 def test_utils_seeding_set_seed(seed, k):
 
@@ -39,18 +36,15 @@ def test_utils_seeding_set_seed(seed, k):
     actions = mt19937.choices(range(16), k=k)
 
     # Does init seed affect anything at all?
-    with gym.make('NetHackChallenge-v0') as env:
+    with gym.make("NetHackChallenge-v0") as env:
         obs_trace1, remaining1 = replay(env, actions, seed=nle_seed)
 
     # make sure not to reuse the same env twice
-    with gym.make('NetHackChallenge-v0') as env:
+    with gym.make("NetHackChallenge-v0") as env:
         obs_trace2, remaining2 = replay(env, actions, seed=nle_seed)
 
     # check the traces
     assert remaining1 == remaining2
     assert obs_trace1.keys() == obs_trace2.keys()
 
-    assert all(
-        (obs_trace1[k] == obs_trace2[k]).all()
-        for k in obs_trace1.keys()
-    )
+    assert all((obs_trace1[k] == obs_trace2[k]).all() for k in obs_trace1.keys())

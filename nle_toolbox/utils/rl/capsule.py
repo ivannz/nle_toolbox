@@ -8,13 +8,12 @@ from .engine import Input
 
 
 def launch(capsule, initial):
-    """Launch the freshly created capsule.
-    """
+    """Launch the freshly created capsule."""
     assert isinstance(initial, Input)
 
     # (capsule) start with the handshake
     if capsule.send(None) is not None:
-        raise RuntimeError('Capsule handshake failed.')
+        raise RuntimeError("Capsule handshake failed.")
 
     # (capsule) communicate the initial input and gets the reaction to it
     return capsule.send(initial)
@@ -43,11 +42,11 @@ def capsule(step, update, length, *, device=None):
         update.
     """
     if update is None and length >= 1 or update is not None and length < 1:
-        raise ValueError('`update` can be None iff fragment `length` is zero.')
+        raise ValueError("`update` can be None iff fragment `length` is zero.")
 
     # (capsule) the tensor cloning func, since host-device moves produce a copy
-    device = torch.device('cpu') if device is None else device
-    cloner = torch.clone if device.type == 'cpu' else lambda t: t.to(device)
+    device = torch.device("cpu") if device is None else device
+    cloner = torch.clone if device.type == "cpu" else lambda t: t.to(device)
     # XXX `.to` is enough here as the npy/pyt buffers are "on host" by design
 
     # (sys) let the learner properly init `hx`-s batch dims
@@ -57,7 +56,7 @@ def capsule(step, update, length, *, device=None):
     # (capsule) finish handshake and prepare the npyt state (aliased npy-pyt)
     # XXX no need to create `AliasedNPYT`, since we live in a capsule!
     pyt = suply(torch.as_tensor, suply(np.copy, Input(*(yield None))))
-    if device.type != 'cpu':
+    if device.type != "cpu":
         pyt = suply(torch.Tensor.pin_memory, pyt)
     npy = suply(np.asarray, pyt)  # XXX `npy` aliases `pyt` (thru array proto)
     suply(torch.Tensor.unsqueeze_, pyt, dim=0)  # fake seq dim
@@ -148,17 +147,17 @@ def buffered(step, update, length, *, device=None):
     `yield` statements govern determine the LOCAL time tick of this capsule.
     """
     assert length >= 1
-    device = torch.device('cpu') if device is None else device
+    device = torch.device("cpu") if device is None else device
 
     # (ctx) ensure a numpy array and then make its tensor copy
     pyt = suply(torch.as_tensor, suply(np.copy, Input(*(yield None))))
-    if device.type != 'cpu':
+    if device.type != "cpu":
         pyt = suply(torch.Tensor.pin_memory, pyt)
 
     # (ctx) alias torch's storage with numpy arrays, and add a fake leading dim
     npy = suply(np.asarray, pyt)
     input = pyt = suply(torch.Tensor.unsqueeze_, pyt, dim=0)
-    if device.type != 'cpu':
+    if device.type != "cpu":
         input = suply(lambda t: t.to(device), pyt)
         # XXX `pyt` and `input` diverge here: `pyt` resides in the pinned
         #  memory on the host, whereas `input` has been copied to device.
@@ -166,9 +165,9 @@ def buffered(step, update, length, *, device=None):
     # (sys) allocate buffers on the correct device and get its single-step
     # editable slices. `+ 1` is the one-step ahead overlap
     buffer = apply(torch.cat, *(input,) * (length + 1), _star=False, dim=0)
-    vw_buffer = tuple([
-        suply(lambda x: x[t:t+1], buffer) for t in range(length + 1)
-    ])
+    vw_buffer = tuple(
+        [suply(lambda x: x[t : t + 1], buffer) for t in range(length + 1)]
+    )
 
     # (sys) perpetual rollout
     nfos, nfo_ = [], {}  # XXX the true initial info dict is empty

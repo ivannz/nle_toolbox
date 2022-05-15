@@ -33,8 +33,7 @@ def onehotbits(
     n_bits: int = 63,
     dtype: torch.dtype = torch.float,
 ) -> Tensor:
-    """Encode integers to fixed-width binary floating point vectors.
-    """
+    """Encode integers to fixed-width binary floating point vectors."""
     assert not input.dtype.is_floating_point
     assert 0 < n_bits < 64  # torch.int64 is signed, so 64-1 bits max
 
@@ -50,8 +49,8 @@ def onehotbits(
 
 
 class OneHotBits(Module):
-    """One-hot encoder of bit fields.
-    """
+    """One-hot encoder of bit fields."""
+
     def __init__(
         self,
         n_bits: int = 63,
@@ -75,19 +74,20 @@ class EquispacedEmbedding(Module):
     """One-hot encode the index of a real-valued feature within the specified
     equispaced bins.
     """
+
     def __init__(
         self,
         start: float,
         end: float,
         steps: int,
         *,
-        scale: str = 'lin',
+        scale: str = "lin",
         base: float = 10.0,
     ) -> None:
-        if scale == 'lin':
+        if scale == "lin":
             breaks = torch.linspace(start, end, steps)
 
-        elif scale == 'log':
+        elif scale == "log":
             breaks = torch.logspace(start, end, steps, base=base)
 
         else:
@@ -95,10 +95,17 @@ class EquispacedEmbedding(Module):
 
         super().__init__()
 
-        limits = breaks.new_tensor([float('-inf'), float('+inf')])
-        self.register_buffer('breaks', torch.cat([
-            limits[:1], breaks, limits[1:],
-        ]))
+        limits = breaks.new_tensor([float("-inf"), float("+inf")])
+        self.register_buffer(
+            "breaks",
+            torch.cat(
+                [
+                    limits[:1],
+                    breaks,
+                    limits[1:],
+                ]
+            ),
+        )
 
         self.start = start
         self.end = end
@@ -111,13 +118,13 @@ class EquispacedEmbedding(Module):
         input: Tensor,
     ) -> Tensor:
         x = input.unsqueeze(-1)
-        return torch.logical_and(
-            self.breaks[:-1] <= x, x < self.breaks[1:],
-        ).to(input)  # XXX to match input's dtype
+        return torch.logical_and(self.breaks[:-1] <= x, x < self.breaks[1:],).to(
+            input
+        )  # XXX to match input's dtype
 
     def extra_repr(self) -> str:
         fmt = "{start}, {end}, {steps}, scale={scale}"
-        if self.scale == 'log':
+        if self.scale == "log":
             fmt += ", base={base}"
 
         return fmt.format(**vars(self))
@@ -131,6 +138,7 @@ class ModuleDict(BaseModuleDict):
     The keys/fields, that are NOT DECLARED at `__init__`, are silently
     IGNORED and filtered out by `.forward`.
     """
+
     def __init__(
         self,
         modules: Optional[Mapping[str, Module]] = None,
@@ -144,7 +152,7 @@ class ModuleDict(BaseModuleDict):
         input: Union[Mapping[str, Any], NamedTuple],
     ) -> Union[Mapping[str, Tensor], Tensor]:
         # namedtuples are almost like frozen dicts
-        if isinstance(input, tuple) and hasattr(type(input), '_fields'):
+        if isinstance(input, tuple) and hasattr(type(input), "_fields"):
             input = input._asdict()
 
         # the same key order as the order of the declaration in  __init__
@@ -169,12 +177,12 @@ def select(tensor, index, dim, *, at=None):
 
     # dimshuffle if at is not dim
     if at != dim:
-        dims = *range(dim), *range(dim+1, tensor.ndim)
+        dims = *range(dim), *range(dim + 1, tensor.ndim)
         tensor = tensor.permute(*dims[:at], dim, *dims[at:])
         dim = at
 
     # select and reshape
-    shape = tensor.shape[:dim] + index.shape + tensor.shape[dim+1:]
+    shape = tensor.shape[:dim] + index.shape + tensor.shape[dim + 1 :]
     return tensor.index_select(dim, index.flatten()).reshape(shape)
 
 
@@ -234,8 +242,8 @@ def bselect(tensor, *index, dim):
     assert tensor.ndim >= dim + len(index)
 
     lead = tensor.shape[:dim]
-    dims = tensor.shape[dim:dim + len(index)]
-    tail = tensor.shape[dim + len(index):]
+    dims = tensor.shape[dim : dim + len(index)]
+    tail = tensor.shape[dim + len(index) :]
 
     # ravel multiindex using an empty tensor
     mock = tensor.new_empty(dims + (0,))
@@ -245,7 +253,13 @@ def bselect(tensor, *index, dim):
     flat = tensor.flatten(dim + len(index), -1).flatten(dim, -2)
 
     # gather the slices from the tensor
-    idx = idx.view(lead + (1, 1,))
+    idx = idx.view(
+        lead
+        + (
+            1,
+            1,
+        )
+    )
     out = torch.gather(flat, -2, idx.expand(*lead, 1, flat.shape[-1]))
 
     # tensor[..., *index, ...]
@@ -360,8 +374,8 @@ class LinearSplitter(Linear):
 
 
 class ModuleDictSplitter(BaseModuleDict):
-    """A dictionary that applies the contained modules to the input tensor.
-    """
+    """A dictionary that applies the contained modules to the input tensor."""
+
     def forward(self, input: Tensor) -> Mapping[str, Tensor]:
         return {k: None if m is None else m(input) for k, m in self.items()}
 
@@ -400,6 +414,7 @@ class InputGradScaler(Identity):
         \,, $$
     evaluates to $x$, but has a Jaconbian matrix $\eta I$.
     """
+
     def __init__(self, *, scale: float = 0.5) -> None:
         super().__init__()
         self.scale = scale
@@ -408,7 +423,7 @@ class InputGradScaler(Identity):
         return scale_grad(input, self.scale)
 
     def extra_repr(self) -> str:
-        return f'scale={self.scale}'
+        return f"scale={self.scale}"
 
 
 def trailing_lerp(x0, x1, *, eta, leading=1):
@@ -499,7 +514,7 @@ def masked_rnn(core, input, hx=None, *, reset=None, h0=None):
 
     # check the leading dims (seq x batch)
     if reset.shape != input.shape[:2]:
-        raise ValueError(f'Dim mismatch {reset.shape} != {input.shape[:2]}')
+        raise ValueError(f"Dim mismatch {reset.shape} != {input.shape[:2]}")
 
     # make sure the reset mask is numeric 0-1 for lerp-ing
     reset = reset.to(input)
@@ -521,8 +536,9 @@ def masked_rnn(core, input, hx=None, *, reset=None, h0=None):
     # return None. However, switching from non None to None is forbidden.
     first, hx_ = core(input[:1], hx=hx)
     if hx_ is None and hx is not None:
-        raise RuntimeError('`hx` and `h0` must NOT be specified '
-                           ' if the `core` is non-recurrent.')
+        raise RuntimeError(
+            "`hx` and `h0` must NOT be specified " " if the `core` is non-recurrent."
+        )
 
     # fast branch for one-element sequences
     if n_seq == 1:
@@ -576,7 +592,7 @@ def latched_masked_rnn(
 
     # check the leading dims (seq x batch)
     if not (latch.shape == reset.shape == input.shape[:2]):
-        raise ValueError('Dim mismatch in `reset`, `latch` and `input`.')
+        raise ValueError("Dim mismatch in `reset`, `latch` and `input`.")
 
     # make sure the masks are numeric 0-1 for lerp-ing
     reset = reset.to(input)
@@ -601,8 +617,9 @@ def latched_masked_rnn(
     # XXX at this point `h0` and `hx_` are either both None or both not None
     yx_, hx_ = out_ = core(input[:1], hx=hx_)
     if hx_ is None and (hx is not None or h0 is not None):
-        raise RuntimeError('`hx` and `h0` must NOT be specified '
-                           ' if the `core` is non-recurrent.')
+        raise RuntimeError(
+            "`hx` and `h0` must NOT be specified " " if the `core` is non-recurrent."
+        )
     #    hx         h0      =>       hx_         h0     hx
     #     None       None   =>   None           None   None
     #     None   not None   =>   (h0,) * B       --    None
@@ -663,15 +680,14 @@ def latched_masked_rnn(
 
 @torch.no_grad()
 def rnn_reset_bias(mod):
-    """Open certain rnn gates by positively biasing them.
-    """
+    """Open certain rnn gates by positively biasing them."""
     if not isinstance(mod, RNNBase):
         return
 
     # although classes derived from RNNBase have the same parameter
     #  structure, we still do some limited sanity checking
     for nom, par in mod.named_parameters(recurse=False):
-        if not nom.startswith('bias_'):
+        if not nom.startswith("bias_"):
             continue
 
         bias = par.unflatten(0, (-1, mod.hidden_size))
@@ -682,21 +698,20 @@ def rnn_reset_bias(mod):
         #   See help(nn.GRU)
         # Nevertheless, we init b_{h*} `bias_hh_l[k]` to zero and tweak
         #  the initial b_{i*} `bias_ih_l[k]`, depending on the arch.
-        if nom.startswith('bias_hh_l'):
+        if nom.startswith("bias_hh_l"):
             init.zeros_(bias)  # XXX GRU might need special care!!
             continue
 
         # RNNBase as of 2021-12 has two kinds of bias terms
-        if not nom.startswith('bias_ih_l'):
-            raise TypeError(f'Unrecognized bias term `{nom}` '
-                            f'in `{type(mod)}`.')
+        if not nom.startswith("bias_ih_l"):
+            raise TypeError(f"Unrecognized bias term `{nom}` " f"in `{type(mod)}`.")
 
         if isinstance(mod, LSTM):
             # bias the forget gates towards open, so that initial
             #  grads through the cell state `c_t` pass uninhibited
             # XXX `nn.LSTM` docs say: bias is [b_ii, b_if, b_ig, b_io]
             # XXX `\sigma(2) \approx 0.88` should be ok
-            init.constant_(bias[1], 2.)
+            init.constant_(bias[1], 2.0)
 
         elif isinstance(mod, GRU):
             # slightly bias the update gates towards open
@@ -710,18 +725,18 @@ def rnn_reset_bias(mod):
             init.zeros_(bias)
 
         else:
-            raise TypeError(f'Unrecognized recurrent layer `{type(mod)}`.')
+            raise TypeError(f"Unrecognized recurrent layer `{type(mod)}`.")
 
 
 @torch.no_grad()
-def rnn_reset_weight_hh_ortho(mod, *, gain=1.):
+def rnn_reset_weight_hh_ortho(mod, *, gain=1.0):
     """Make unitary hidden-to-hidden transforms."""
     # classes derived from RNNBase have the same parameter structure
     if not isinstance(mod, RNNBase):
         return
 
     for nom, par in mod.named_parameters(recurse=False):
-        if not nom.startswith('weight_hh_'):
+        if not nom.startswith("weight_hh_"):
             continue
 
         # init each block as a random orthonormal matrix
@@ -730,7 +745,7 @@ def rnn_reset_weight_hh_ortho(mod, *, gain=1.):
 
 
 @torch.no_grad()
-def rnn_reset_weight_hh_eye(mod, *, gain=1.):
+def rnn_reset_weight_hh_eye(mod, *, gain=1.0):
     """Make near-identity hidden-to-hidden transforms."""
     # TODO figure out the correct fan-in and motivation
     pass
@@ -740,16 +755,16 @@ def rnn_reset_weight_hh_eye(mod, *, gain=1.):
         return
 
     for nom, par in mod.named_parameters(recurse=False):
-        if not nom.startswith('weight_hh_'):
+        if not nom.startswith("weight_hh_"):
             continue
 
         # init each block as a random orthonormal matrix
         for blk in par.unflatten(0, (-1, mod.hidden_size)):
             # allow small leakage from the other hiddens
-            blk.normal_(0., gain / math.sqrt(mod.hidden_size))
+            blk.normal_(0.0, gain / math.sqrt(mod.hidden_size))
 
             # ..., while letting own value propagate unmodulated
-            blk.diagonal()[:] = 1.
+            blk.diagonal()[:] = 1.0
 
 
 def rnn_hx_shape(self):
@@ -760,7 +775,7 @@ def rnn_hx_shape(self):
     Torch devs should've made this into a recurrent module's method.
     """
     if not isinstance(self, (RNNBase, GRU, LSTM)):
-        raise TypeError(f'Unrecognized recurrent layer `{type(self)}`.')
+        raise TypeError(f"Unrecognized recurrent layer `{type(self)}`.")
 
     n_hidden_states = self.num_layers * (2 if self.bidirectional else 1)
 
@@ -828,9 +843,8 @@ def multinomial(
     return out.squeeze(dim) if squeeze else out
 
 
-def apply_mask(tensor, mask, *, value=-float('inf')):
-    """Mask the values in the given tensor.
-    """
+def apply_mask(tensor, mask, *, value=-float("inf")):
+    """Mask the values in the given tensor."""
 
     return tensor.masked_fill(mask.to(bool), value)
 
@@ -882,11 +896,12 @@ class ParameterContainer(Module):
     >>> pc.half();
     >>> pc._value()
     """
+
     def __new__(cls, parameters):
         # regress to nn.Parameter if non-container
         if isinstance(parameters, Parameter):
             # keep a weak ref to self
-            if not hasattr(parameters, '_value'):
+            if not hasattr(parameters, "_value"):
                 parameters._value = weakref.ref(parameters)
 
             return parameters
@@ -898,7 +913,7 @@ class ParameterContainer(Module):
         # to `object`. Any device move or dtype change caused by nn.Module
         # is made on parameters IN-PLACE, and thus is reflected in the original
         # built-in containers, since they store data by reference.
-        object.__setattr__(self, '_value', lambda: parameters)
+        object.__setattr__(self, "_value", lambda: parameters)
         # XXX This does not create cyclic reference, and is just an alternative
         # container of the parameters.
 
@@ -910,7 +925,7 @@ class ParameterContainer(Module):
         # (a subclass of nn.Module), which is registered in `_modules` odict.
         super().__init__()
 
-        if isinstance(parameters, tuple) and hasattr(parameters, '_fields'):
+        if isinstance(parameters, tuple) and hasattr(parameters, "_fields"):
             parameters = parameters._asdict()
 
         if isinstance(parameters, (tuple, list)):
@@ -922,7 +937,7 @@ class ParameterContainer(Module):
                 setattr(self, k, type(self)(it))
 
         else:
-            raise TypeError(f'Unsupported `{type(parameters).__name__}`.')
+            raise TypeError(f"Unsupported `{type(parameters).__name__}`.")
 
     def __getitem__(self, key):
         # emulate container item access
@@ -934,4 +949,4 @@ class ParameterContainer(Module):
     def extra_repr(self):
         # use ParameterList's extra_repr implementation
         tmpstr = ParameterList.extra_repr(self)
-        return '\n'.join(map(str.strip, tmpstr.splitlines()))
+        return "\n".join(map(str.strip, tmpstr.splitlines()))

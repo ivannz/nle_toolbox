@@ -44,12 +44,15 @@ class Replay(Wrapper):
     Consult with the docstring `seeding.set_seed` about the effects of
     re-seeding/reusing the same env instance multiple times.
     """
-    _seed_type = 'auto'
+
+    _seed_type = "auto"
 
     def __init__(self, env, *, sticky=False):
         if not seeding.is_seedable():
-            raise RuntimeError("It appears that Nethack env has been compiled "
-                               "without seeding support.")
+            raise RuntimeError(
+                "It appears that Nethack env has been compiled "
+                "without seeding support."
+            )
 
         super().__init__(env)
         self.sticky = sticky
@@ -59,16 +62,15 @@ class Replay(Wrapper):
         from time import strftime
 
         return {
-            '__version__': __version__,
-            '__dttm__': strftime('%Y%m%d-%H%M%S'),
-            'seed': getattr(self, '_seed', None),
-            'actions': getattr(self, '_actions', []),
+            "__version__": __version__,
+            "__dttm__": strftime("%Y%m%d-%H%M%S"),
+            "seed": getattr(self, "_seed", None),
+            "actions": getattr(self, "_actions", []),
         }
 
     def dump(self, filename):
-        """A debug method to immediately dump the replay state.
-        """
-        pickle.dump(self.state_dict(), open(filename, 'wb'))
+        """A debug method to immediately dump the replay state."""
+        pickle.dump(self.state_dict(), open(filename, "wb"))
 
     def load_state_dict(self, state_dict, *, strict=True):
         """Load the state into NetHack.
@@ -90,18 +92,18 @@ class Replay(Wrapper):
         """
         from packaging.version import Version
 
-        ver = Version(state_dict['__version__'])
+        ver = Version(state_dict["__version__"])
 
         # maintain compatibility with older versions
         if ver > Version(__version__):
             raise RuntimeError(f"Unsupported version `{ver}`.")
 
         # reseed and reset
-        self.seed(seed=state_dict['seed'])
+        self.seed(seed=state_dict["seed"])
         obs, fin, j = self.reset(), False, 0
 
         # blindly replay the actions
-        actions = state_dict['actions']
+        actions = state_dict["actions"]
         while not fin and j < len(actions):
             obs, rew, fin, info = self.step(actions[j])
             j += 1
@@ -112,7 +114,7 @@ class Replay(Wrapper):
     @property
     def root(self):
         """Return the underlying c-level instance of NetHack."""
-        if not hasattr(self, '_pynethack'):
+        if not hasattr(self, "_pynethack"):
             self._pynethack = seeding.pyroot(self.unwrapped)
 
         return self._pynethack
@@ -121,7 +123,7 @@ class Replay(Wrapper):
         """Sets the seed for NLE's random number generator."""
 
         # draw entropy from the system if seed is None
-        self._seed_type = 'auto' if seed is None else 'manual'
+        self._seed_type = "auto" if seed is None else "manual"
 
         # make sure the seed is a pair
         if not isinstance(seed, tuple):
@@ -152,12 +154,12 @@ class Replay(Wrapper):
         """
         # get the cached seed, or generate a new unpredictable one, unless
         #  seeds were set manually by a call to `.seed` with non None arg.
-        if not hasattr(self, '_seed'):
+        if not hasattr(self, "_seed"):
             # XXX if seed is None, then `_seed_type` becomes `auto`, and
             #  later resets land on the next branch if `sticky` if False
             self.seed(seed)
 
-        elif self._seed_type == 'auto' and not self.sticky:
+        elif self._seed_type == "auto" and not self.sticky:
             self.seed(None)
 
         # `set_initial_seeds` has effect only until the next reset, at which
@@ -222,7 +224,7 @@ class Replay(Wrapper):
         obs, fin, j = self.reset(), False, 0
         if not actions:
             # yield a semi-invalid SARS if there are no actions to replay
-            yield None, None, float('nan'), obs, {}
+            yield None, None, float("nan"), obs, {}
             return []
 
         while not fin and j < len(actions):
@@ -270,21 +272,20 @@ class ReplayToFile(Replay):
     """
 
     def __init__(
-        self,
-        env,
-        *,
-        folder,
-        prefix='',
-        sticky=False,
-        save_on='done,reset,close'
+        self, env, *, folder, prefix="", sticky=False, save_on="done,reset,close"
     ):
         # parse save triggers
         if isinstance(save_on, str):
-            save_on = save_on.split(',')
+            save_on = save_on.split(",")
 
-        events = {ev: ev in save_on for ev in (
-            'done', 'reset', 'close',
-        )}
+        events = {
+            ev: ev in save_on
+            for ev in (
+                "done",
+                "reset",
+                "close",
+            )
+        }
         assert any(events.values())
 
         super().__init__(env, sticky=sticky)
@@ -299,11 +300,10 @@ class ReplayToFile(Replay):
         """Save the current replay under a random name."""
 
         # generate a new random opaque filename
-        self.filename = mkstemp(dir=self.folder, suffix='.pkl',
-                                prefix=self.prefix)
+        self.filename = mkstemp(dir=self.folder, suffix=".pkl", prefix=self.prefix)
 
         # save into the current `.filename`
-        pickle.dump(self.state_dict(), open(self.filename, 'wb'))
+        pickle.dump(self.state_dict(), open(self.filename, "wb"))
 
         return self.filename
 
@@ -311,7 +311,7 @@ class ReplayToFile(Replay):
         obs, rew, fin, info = super().step(act)
 
         # save on episode end
-        if fin and 'done' in self.triggers:
+        if fin and "done" in self.triggers:
             self.save()
 
         return obs, rew, fin, info
@@ -319,13 +319,13 @@ class ReplayToFile(Replay):
     def reset(self, **kwargs):
         # if `_actions` are absent then we have not been reset yet and
         #  there is nothing to save.
-        if hasattr(self, '_actions') and 'reset' in self.triggers:
+        if hasattr(self, "_actions") and "reset" in self.triggers:
             self.save()
 
         return super().reset(**kwargs)
 
     def close(self):
-        if 'close' in self.triggers:
+        if "close" in self.triggers:
             self.save()
 
         super().close()

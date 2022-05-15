@@ -13,8 +13,8 @@ from gym.vector.utils import batch_space
 
 
 class SerialVecEnv(gym.Env):
-    """A simple serial vectorized env.
-    """
+    """A simple serial vectorized env."""
+
     def __init__(
         self,
         factory: callable,
@@ -80,12 +80,12 @@ class SerialVecEnv(gym.Env):
 
 
 # stripped down version or rlplay.engine
-Input = namedtuple('Input', 'obs,act,rew,fin')
+Input = namedtuple("Input", "obs,act,rew,fin")
 # XXX note, `.act[t]` is $a_{t-1}$, but the other `*[t]` are $*_t$,
 #  e.g. `.rew[t]` is $r_t$, and `pol[t]` is `$\pi_t$.
 
 # A pair of host-resident numpy array and torch tensor with aliased data
-AliasedNPYT = namedtuple('AliasedNPYT', 'npy,pyt')
+AliasedNPYT = namedtuple("AliasedNPYT", "npy,pyt")
 # XXX converting array data between numpy and torch is zero-copy (on host)
 #  due to the __array__ protocol, i.e. both can alias each other's storage,
 #  meaning that updates of one are immediately reflected in the other.
@@ -97,14 +97,17 @@ def prepare(env, rew=np.nan, fin=True):
     assert isinstance(env, SerialVecEnv)
 
     # prepare the runtime context (coupled numpy-torch tensors)
-    npy = plyr.apply(np.copy, Input(
-        env.reset(),
-        env.action_space.sample(),
-        # pre-filled arrays for potentially structured rewards
-        plyr.ragged(np.full, len(env), rew, dtype=np.float32),
-        # `fin` is an array and NEVER structured
-        np.full(len(env), fin, dtype=bool),
-    ))
+    npy = plyr.apply(
+        np.copy,
+        Input(
+            env.reset(),
+            env.action_space.sample(),
+            # pre-filled arrays for potentially structured rewards
+            plyr.ragged(np.full, len(env), rew, dtype=np.float32),
+            # `fin` is an array and NEVER structured
+            np.full(len(env), fin, dtype=bool),
+        ),
+    )
 
     # in-place unsequeeze produces a writable view, which preserves aliasing
     pyt = plyr.apply(torch.as_tensor, npy)
@@ -178,7 +181,7 @@ def step(env, agent, npyt, hx, *, device=None):
 
     # (sys) clone to avoid graph diff-ability issues, because `pyt` is updated
     #  INPLACE through storage-aliased `npy`
-    if device is None or device.type == 'cpu':
+    if device is None or device.type == "cpu":
         input = plyr.apply(torch.clone, pyt)
 
     else:
@@ -233,8 +236,10 @@ def dropout_mask(input, *, k=None):
     elif k is None:
         return None
 
-    raise ValueError("`k` must be either `None`, a +ve int,"
-                     f" or a float between 0 and 1. Got `{k}`.")
+    raise ValueError(
+        "`k` must be either `None`, a +ve int,"
+        f" or a float between 0 and 1. Got `{k}`."
+    )
 
 
 def pyt_logpact(logpol, act):
@@ -283,10 +288,17 @@ def pyt_entropy(logpol, *, mask=None):
     #  computes $\sum_j e^{\log p_j} \log p_j$, so we need to flip the sign.
     # XXX `.new_zeros(())` creates a scalar zero (yes, an EMPTY tuple)
     # XXX `kl_div(x, y, log_target=True)` computes \sum_n e^y_n (y_n - x_n)
-    entropy = F.kl_div(
-        # input `x` and target `y`, with x = 0. and y = logpol
-        logpol.new_zeros(()), logpol[:-1], reduction='none', log_target=True,
-    ).sum(dim=-1).neg()
+    entropy = (
+        F.kl_div(
+            # input `x` and target `y`, with x = 0. and y = logpol
+            logpol.new_zeros(()),
+            logpol[:-1],
+            reduction="none",
+            log_target=True,
+        )
+        .sum(dim=-1)
+        .neg()
+    )
 
     # sum over the remaining dims after applying the optional mask
     if mask is not None:
@@ -297,12 +309,11 @@ def pyt_entropy(logpol, *, mask=None):
 
 
 def pyt_critic(val, ret, *, mask=None):
-    r"""The critic loss in the A2C algo (and others).
-    """
+    r"""The critic loss in the A2C algo (and others)."""
     mse = F.mse_loss(
         val[:-1],
         ret,
-        reduction='none',
+        reduction="none",
     )
 
     if mask is not None:

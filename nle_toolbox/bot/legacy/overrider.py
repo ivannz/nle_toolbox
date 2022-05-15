@@ -7,6 +7,7 @@ from .genfun import is_suspended
 
 class UnhandledObservation(Exception):
     """Signal the caller that an Overrider cannot deal with the data."""
+
     pass
 
 
@@ -15,7 +16,7 @@ def follow(env, *, handle):
     See `doc/shell`.
     """
     # construct the initial result
-    obs, rew, done, info = env.reset(), 0., False, {}
+    obs, rew, done, info = env.reset(), 0.0, False, {}
     rew_lead = rew_follow = rew
     while not done:
         # if we cannot override then yield to the user
@@ -57,7 +58,7 @@ def lead(env, *, handle):
     -------
     The same logic as in `follow`, but with yield and `handle` swapped places.
     """
-    obs, rew, done, info = env.reset(), 0., False, {}
+    obs, rew, done, info = env.reset(), 0.0, False, {}
     rew_lead = rew_follow = rew
     while not done:
         try:
@@ -91,7 +92,7 @@ def drive(env, *, device, reduce=sum):
     """
 
     # construct the initial result
-    tx = obs, rew, done, info = env.reset(), 0., False, {}
+    tx = obs, rew, done, info = env.reset(), 0.0, False, {}
 
     # `None` command indicates startup
     gen, n_yields, n_steps, rewards = device(*tx, cmd=None), 0, 0, []
@@ -108,7 +109,7 @@ def drive(env, *, device, reduce=sum):
                 # XXX maybe raise a warning instead?
                 raise RuntimeError
 
-            rew = reduce(rewards, start=0.)
+            rew = reduce(rewards, start=0.0)
             gen = device(*tx, cmd=(yield obs, rew, False, info))
 
             n_yields, n_steps, rewards = n_yields + 1, 0, []
@@ -124,10 +125,11 @@ def drive(env, *, device, reduce=sum):
 
 class BaseOverrider(Wrapper):
     """Gym interface for overrider."""
+
     _loop = None
 
-    def __init__(self, env, *, mode='driver'):
-        assert mode in ('leader', 'follower', 'driver')
+    def __init__(self, env, *, mode="driver"):
+        assert mode in ("leader", "follower", "driver")
         super().__init__(env)
 
         self.mode = mode
@@ -137,10 +139,10 @@ class BaseOverrider(Wrapper):
             self._loop.close()
 
         # reset the generator and start it
-        if self.mode == 'driver':
+        if self.mode == "driver":
             self._loop = drive(self.env, device=self.handle)
 
-        elif self.mode == 'leader':
+        elif self.mode == "leader":
             self._loop = lead(self.env, handle=self.handle)
 
         else:
@@ -154,8 +156,8 @@ class BaseOverrider(Wrapper):
             raise RuntimeError("Terminated environment on reset!") from None
 
     def abstain(self):
-        if not self.mode == 'lead':
-            raise RuntimeError('Abstention is allowed only in leader mode.')
+        if not self.mode == "lead":
+            raise RuntimeError("Abstention is allowed only in leader mode.")
 
         try:
             return self._loop.throw(UnhandledObservation)
@@ -170,7 +172,7 @@ class BaseOverrider(Wrapper):
         except StopIteration as e:
             return e.value
 
-    def handle(self, obs, rew=0., done=False, info=None, cmd=None):
+    def handle(self, obs, rew=0.0, done=False, info=None, cmd=None):
         """Throwing an exception allows partial handling: we can update
         internal state and data, yet still yield to the user."""
         raise UnhandledObservation

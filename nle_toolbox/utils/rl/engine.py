@@ -22,6 +22,7 @@ class SerialVecEnv(gym.Env):
         *,
         args: tuple = (),
         kwargs: dict = None,
+        pack_nfo: bool = True,
     ):
         self.envs = [factory(*args, **(kwargs or {})) for _ in range(n_envs)]
 
@@ -29,6 +30,8 @@ class SerialVecEnv(gym.Env):
         env = self.envs[0]
         self.observation_space = batch_space(env.observation_space, n_envs)
         self.action_space = batch_space(env.action_space, n_envs)
+
+        self.pack_nfo = pack_nfo
 
     def seed(self, seed):
         # XXX does not work for envs, which use non-numpy or legacy PRNG
@@ -67,7 +70,13 @@ class SerialVecEnv(gym.Env):
         # MAYBE the info dict `nfo` should NOT be repacked (unlike other data),
         #  since it may contain dynamic auxiliary diagnostic information it is
         #  up to env's implementation.
-        nfo = plyr.apply(plyr.AtomicTuple, *nfo_, _star=False)
+        if self.pack_nfo:
+            # MAYBE replace the `AtomicTuple` with a `np.asarray`?
+            nfo = plyr.apply(plyr.AtomicTuple, *nfo_, _star=False)
+
+        else:
+            nfo = nfo_
+
         obs = plyr.apply(np.stack, *obs_, _star=False, axis=0)
         return obs, np.array(rew_), np.array(fin_), nfo
 

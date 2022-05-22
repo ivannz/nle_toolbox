@@ -135,6 +135,14 @@ def buffered(step, update, length, *, device=None):
     Unlike `capsule`, this collector does not track the value output of
     the `step`, ONLY its `act` and `hx` outputs.
 
+    XXX
+    ---
+    Reconsider this design decision: output tracking can be done by stacking
+    individual step-by-step outputs, like in `capsule()` above. It would save
+    a full fragment non-diffable forward pass in `learn()`, and facilitate
+    `collection-processing-utilization` separation.
+
+
     Thoughts
     --------
     `obs`, `act`, `rew` and `fin` are STRONGLY structured, meaning that this

@@ -182,8 +182,9 @@ def buffered(step, update, length, *, device=None):
     gx = hx = None  # XXX `hx` is either None, or an object
     while True:  # .learn()
         # (sys) write the current `pyt` into the current slice of the buffer
-        input = vw_buffer[len(nfos)]
-        suply(torch.Tensor.copy_, input, pyt)
+        # XXX `input` is structurally IDENTICAL to `vw_buffer` and refers to
+        #  the SAME tensors, since `d.copy_(s)` copies INPLACE and returns `d`.
+        input = suply(torch.Tensor.copy_, vw_buffer[len(nfos)], pyt)
         nfo = nfo_
 
         # REACT and update the action in `npy` through `pyt`
@@ -194,8 +195,7 @@ def buffered(step, update, length, *, device=None):
             suply(torch.Tensor.copy_, pyt.act, act_)
 
         # STEP and advance local time
-        #   \omega_t, a_t
-        #      -->> \omega_{t+1}, x_{t+1}, r_{t+1}, d_{t+1}, I_{t+1}
+        #   \omega_t, a_t -->> \omega_{t+1}, x_{t+1}, r_{t+1}, d_{t+1}, I_{t+1}
         #   with \omega_t being the unobservable complete state
         obs_, rew_, fin_, nfo_ = yield npy.act
 
@@ -211,7 +211,7 @@ def buffered(step, update, length, *, device=None):
             continue
 
         # (sys) write the last `pyt` into the buffer
-        suply(torch.Tensor.copy_, vw_buffer[len(nfos)], pyt)
+        input = suply(torch.Tensor.copy_, vw_buffer[len(nfos)], pyt)
         nfo = *nfos, nfo_
         nfos.clear()
 

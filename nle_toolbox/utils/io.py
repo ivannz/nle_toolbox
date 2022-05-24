@@ -54,6 +54,7 @@ def write_file(
             count: int = -1, offset:int = 0, dtype: torch.dtype != None)
         * ._write_file(
             file, is_real_file: bool, save_size: bool, element_size: int)
+    also `_legacy_save()` in ./torch/serialization.py#L384-L525
 
     """
     # in case we want to override this rather technical flag
@@ -68,10 +69,14 @@ def write_file(
     #  `UntypedStorage`, which requires the element size positional. The method
     #  `.storage()` returns `TypedStorage`, which knows the `.dtype` and
     #  correctly computes the size.
-    tensor.storage()._write_file(file, is_real_file, save_size)
+    # XXX `sto.element_size()` is `torch._utils._element_size(sto.dtype)`
+    sto: Storage = tensor.storage()
+    sto._write_file(file, is_real_file, save_size, sto.element_size())
 
 
-def write(tensor: Tensor, filename: str, *, at: int = None) -> None:
+def write(
+    tensor: Tensor, filename: str, *, at: int = None, create: bool = False
+) -> None:
     """Write tensor into a flat binary file by appending or overwriting.
 
     Arguments
@@ -80,13 +85,16 @@ def write(tensor: Tensor, filename: str, *, at: int = None) -> None:
         The tensor, the storage of which to write to a file.
 
     filename : str
-        The binary file, which is mapped into the new tensor's storage.
+        An existing binary file, which is mapped into the new tensor's storage.
 
     st : int = None
         The byte position in the file at which to put the tensor's data in
         low-level binary representation. Appends to the end if `at=None`.
     """
     assert at is None or at >= 0
+
+    if create and not os.path.isfile(filename):
+        open(filename, "wb").close()
 
     # 'r+b' opens the file for binary read/write with no truncation
     with open(filename, "r+b") as f:
@@ -137,24 +145,33 @@ def from_file(
     if isinstance(shape, int):
         shape = (shape,)
 
+    elif shape is None:
+        shape = (-1,)
+
     if isinstance(shape, (tuple, list)):
         shape = Size(shape)
 
     assert isinstance(shape, Size)
 
-    # create an empty tensor of the proper `dtype` and reassign
-    #  its underlying storage to a mem-mapped file-based storage
-    # XXX since PR#62030 storage is bytes only and does not track
-    #  dtype, delegating this task to tensors. Everything works thru
-    # `UntypedStorage`
+    # create an empty tensor of the proper `dtype` and determine the size
+    # XXX since PR#62030 storage is bytes only and does not track dtype,
+    #  delegating this task to tensors. Everything works thru `UntypedStorage`
     tensor = torch.tensor([], dtype=dtype, device=device)
-    sto: Storage = tensor.storage()  # actually a `_TypedStorage`
-    tensor.set_(sto.from_file(filename, shared=writeable, size=shape.numel()))
-    # XXX `_set_from_file` is more hassle since we'll need to call
+    if all(n >= 0 for n in shape):
+        size = shape.numel()
+
+    else:
+        # get the number of whole elements from the file size in bytes
+        size = os.path.getsize(filename) // tensor.element_size()
+
+    # reassign the underlying storage to a mem-mapped file-based storage
+    # XXX `._set_from_file` is more hassle since we'll need to call
     #  `torch._utils._element_size(dtype)`. `TypedStorage` knows its `dtype`.
+    sto: Storage = tensor.storage()  # XXX actually a `_TypedStorage`
+    tensor.set_(sto.from_file(filename, shared=writeable, size=size))
 
     # reshape unless flat
     if len(shape) > 1:
-        return tensor.reshape_(shape)
+        return tensor.reshape(shape)
 
     return tensor

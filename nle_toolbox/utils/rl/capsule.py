@@ -25,7 +25,7 @@ def capsule(step, update, length, *, device=None):
     Parameters
     ----------
     step: callable
-        A funciton taking `input` (namedtuple with fields `obs`, `act`, `rew`,
+        A function taking `input` (namedtuple with fields `obs`, `act`, `rew`,
         and `fin`, which represents the recent observations) and the keyword
         `hx` (arbitrarily nested tensors), which stores the recurrent runtime
         state, that may be auto-initialised if `hx` is None. `step` returns
@@ -127,42 +127,55 @@ def capsule(step, update, length, *, device=None):
         hx = gx = hx if gx is None else gx  # if None, set gx to hx
 
 
-def buffered(step, update, length, *, device=None):
+def buffered(step, process, length, *, device=None):
     """Buffered non-diffable trajectory collector for capsuled RL.
+
+    Parameters
+    ----------
+    step: callable
+        A function taking `input` (namedtuple with fields `obs`, `act`, `rew`,
+        and `fin`, which represents the recent observations), the keyword `hx`
+        (arbitrarily nested tensors), which stores the recurrent runtime state,
+        that may be auto-initialised if `hx` is None, and the most recent info
+        dict `nfo`. `step` returns the action `act`, auxiliary data `output`,
+        and the new state `hx`.
+
+    process: callable
+        A function that updates whatever internal parameters `step` depends on,
+        and takes in `input` (always non-diffable `obs`, `act`, `rew`, `fin`),
+        `output`, `hx` and `gx` (possibly diff-able). It returns an auxiliary
+        information dict and an update for `hx` (may be diff-able).
+
+    length: int
+        The length of trajectory fragments used for each truncated BPTT grad
+        update.
 
     Details
     -------
-    Unlike `capsule`, this collector does not track the value output of
-    the `step`, ONLY its `act` and `hx` outputs.
+    `yield` statement governs the LOCAL time tick of this capsule.
 
-    XXX
-    ---
-    Reconsider this design decision: output tracking can be done by stacking
-    individual step-by-step outputs, like in `capsule()` above. It would save
-    a full fragment non-diffable forward pass in `learn()`, and facilitate
-    `collection-processing-utilization` separation.
+    `obs`, `act`, `rew` and `fin` are STRONGLY structured: this data has static
+    higher-level structure and unchanging lower-level shape and dtype. Thus it
+    is guaranteed to be collated and sent to the requested device.
 
+    `nfo` on the other hand is WEAKLY structured, i.e. we can be only sure that
+    it is a container of dynamically changing content. Therefore it is relayed
+    to `step` and `process` as is.
 
-    Thoughts
-    --------
-    `obs`, `act`, `rew` and `fin` are STRONGLY structured, meaning that this
-    data has static unchanging higher-level structure and lower-level shape
-    and dtype. Thus this data is guaranteed to be collated and sent to the
-    requested device. `nfo` on the other hand is WEAKLY structured, meaning
-    that we only know that it is a dict, which may have dynamically changing
-    content. Therefore it is relayed to `step` and `update` as is.
-
-    `yield` statements govern determine the LOCAL time tick of this capsule.
+    We non-diffably track the output of `step()` by stacking it results in
+    order to facilitate `collect-process-consume` trajectory pipeline design.
+    This incurs an extra call to `step()` for value bootstrap and might have
+    a side effect on PRNG, if `step()` relies on it.
     """
     assert length >= 1
     device = torch.device("cpu") if device is None else device
 
-    # (ctx) ensure a numpy array and then make its tensor copy
+    # ensure numpy arrays and then make torch tensor COPIES
     pyt = suply(torch.as_tensor, suply(np.copy, Input(*(yield None))))
     if device.type != "cpu":
         pyt = suply(torch.Tensor.pin_memory, pyt)
 
-    # (ctx) alias torch's storage with numpy arrays, and add a fake leading dim
+    # alias torch's storage with numpy arrays and add a fake leading dim
     npy = suply(np.asarray, pyt)
     input = pyt = suply(torch.Tensor.unsqueeze_, pyt, dim=0)
     if device.type != "cpu":
@@ -170,52 +183,62 @@ def buffered(step, update, length, *, device=None):
         # XXX `pyt` and `input` diverge here: `pyt` resides in the pinned
         #  memory on the host, whereas `input` has been copied to device.
 
-    # (sys) allocate buffers on the correct device and get its single-step
+    # allocate buffers on the correct device and get its single-step
     # editable slices. `+ 1` is the one-step ahead overlap
     buffer = apply(torch.cat, *(input,) * (length + 1), _star=False, dim=0)
     vw_buffer = tuple(
         [suply(lambda x: x[t : t + 1], buffer) for t in range(length + 1)]
     )
 
-    # (sys) perpetual rollout
-    nfos, nfo_ = [], {}  # XXX the true initial info dict is empty
+    # perpetual rollout
     gx = hx = None  # XXX `hx` is either None, or an object
+    outs, nfos, nfo_ = [], [], None  # XXX the initial info dict is unavailable
     while True:  # .learn()
-        # (sys) write the current `pyt` into the current slice of the buffer
+        # write the current `pyt` into the current slice of the buffer
         # XXX `input` is structurally IDENTICAL to `vw_buffer` and refers to
         #  the SAME tensors, since `d.copy_(s)` copies INPLACE and returns `d`.
         input = suply(torch.Tensor.copy_, vw_buffer[len(nfos)], pyt)
         nfo = nfo_
 
         # REACT and update the action in `npy` through `pyt`
-        #   x_t, a_{t-1}, h_t -->> a_t, y_t, h_{t+1}
-        #   with `a_t \sim \pi_t`, but y_t is ignored
+        #   x_t, a_{t-1}, h_t -->> a_t, y_t, h_{t+1}  with `a_t \sim \pi_t`.
         with torch.no_grad():  # XXX `yield` NEVER causes `__exit__`!
-            act_, _, hx = step(input, hx=hx, nfo=nfo)
+            act_, out_, hx = step(input, hx=hx, nfo=nfo)
             suply(torch.Tensor.copy_, pyt.act, act_)
+        outs.append(out_)
 
         # STEP and advance local time
         #   \omega_t, a_t -->> \omega_{t+1}, x_{t+1}, r_{t+1}, d_{t+1}, I_{t+1}
-        #   with \omega_t being the unobservable complete state
+        #   with \omega_t being the unobservable complete state of the ENV
         obs_, rew_, fin_, nfo_ = yield npy.act
 
-        # (sys) update the rest of the `npy-pyt` aliased context
+        # update the rest of the `npy-pyt` aliased context
         suply(np.copyto, npy.obs, obs_)
         suply(np.copyto, npy.rew, rew_)
         np.copyto(npy.fin, fin_)
 
-        # (sys) we deepcopy `nfo_`, but report on the NEXT step
+        # we make a deep copy of `nfo_`, but report it on the NEXT step
         nfo_ = deepcopy(nfo_)
-        nfos.append(nfo or nfo_)
+        nfos.append(nfo_ if nfo is None else nfo)
         if len(nfos) < length:
-            continue
+            continue  # XXX loop-and-a-half?
 
-        # (sys) write the last `pyt` into the buffer
+        # write the last `pyt` into the buffer and get bootstrap output
         input = suply(torch.Tensor.copy_, vw_buffer[len(nfos)], pyt)
+        with torch.no_grad():
+            _, out_, _ = step(input, hx=hx, nfo=nfo_)
+
+        # collate info dicts
         nfo = *nfos, nfo_
         nfos.clear()
 
-        # (sys) do an update on the collected fragment and get the revised
-        #  recurrent runtime state for the next fragment
-        _, gx = update(buffer, None, gx=gx, hx=hx, nfo=nfo)
+        # joint the output recirs into a single buffer
+        # XXX In order to implement hot-swappable buffer, call `step()` once,
+        #  when initializing `vw_buffer`
+        output = apply(torch.cat, *outs, out_, _star=False)  # implied dim = 0
+        outs.clear()
+
+        # (sys) process the collected fragment and revise the recurrent runtime
+        #  state for the next fragment (runtimes: `gx` before, `hx` after)
+        _, gx = process(buffer, output, gx=gx, hx=hx, nfo=nfo)
         hx = gx = hx if gx is None else gx  # if None, set gx to hx

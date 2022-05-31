@@ -12,7 +12,8 @@ from torch import nn
 from torch.nn import functional as F
 from torch.nn.utils import clip_grad_norm_
 
-from nle_toolbox.utils.nn import ModuleDict, multinomial, ModuleDictSplitter
+from nle_toolbox.utils.nn import multinomial
+from nle_toolbox.utils.nn import ModuleDict, ModuleDictSplitter
 
 import gym
 import nle_toolbox.utils.rl.engine as rl
@@ -239,6 +240,9 @@ def update_ppo(model, epx, input, output, gx=None, hx=None, nfo=None):
 
 
 if __name__ == "__main__":
+    # architectures that seem to have worked well
+    # - emb(obs)_{64} || emb(act)_{64} -> Rearrange (2x64) -> LayerNorm(64)
+    # - linear(obs; param=emb(act)) <<-- hypernetwork
     model_stepper = model_learner = nn.Sequential(
         # shared feature embedding
         ModuleDict(

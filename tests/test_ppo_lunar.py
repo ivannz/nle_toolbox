@@ -60,6 +60,8 @@ class Config:
 
     b_adv_normalization: bool = True
 
+    n_eval_episodes: int = 20
+
     @property
     def f_loss_coef(self) -> dict[str, float]:
         # -ve -->> max, +ve -->> min
@@ -132,19 +134,7 @@ def step(model, input, *, hx=None, nfo=None, deterministic=False):
     return act_, vp, None
 
 
-def eval_step(
-    model, obs, act=None, rew=None, fin=None, *, hx=None, deterministic=False
-):
-    return step(
-        model,
-        rl.Input(obs, act, rew, fin),
-        hx=hx,
-        nfo=None,
-        deterministic=deterministic,
-    )
-
-
-def ep_metrics(epx, fragment):
+def ep_metrics(epx, fragment, *, aggregate=True):
     metrics = []
     for ep in epx.extract(fragment.fin, fragment):
         ep_len = len(ep.fin) - int(ep.fin[-1])
@@ -152,17 +142,17 @@ def ep_metrics(epx, fragment):
             continue
 
         metrics.append(
-            (
-                ep_len,
-                ep.rew[1:].sum(),
-            )
+            {
+                "f_len": ep_len,
+                "f_ret": ep.rew[1:].sum(),
+            }
         )
 
     if not metrics:
         return {}
 
-    f_len, f_ret = map(np.mean, zip(*metrics))
-    return {"f_len": f_len, "f_ret": f_ret}
+    fn = np.mean if aggregate else np.asarray
+    return plyr.apply(fn, *metrics, _star=False)
 
 
 def prepare(input, output, nfo=None):
@@ -245,11 +235,16 @@ def update_ppo(model, epx, input, output, gx=None, hx=None, nfo=None):
 
     # (log) estimate the number of resets per fragment
     # XXX `batch.input` has correct sync!
-    metrics = ep_metrics(epx, buffer.input)
+    metrics = ep_metrics(epx, buffer.input, aggregate=True)
     if metrics:
         log["metrics"] = metrics
 
     return log, None
+
+
+def evaluate(model, epx, input, output, gx=None, hx=None, nfo=None):
+    input = plyr.apply(lambda x: x[:-1], input)
+    return ep_metrics(epx, input, aggregate=False), None
 
 
 if __name__ == "__main__":
@@ -383,6 +378,9 @@ if __name__ == "__main__":
             timings_ns.clear()
             log.clear()
 
+    epx.finish()
+    cap.close()
+
     print(config)
     print(model_stepper)
 
@@ -416,12 +414,29 @@ if __name__ == "__main__":
     plt.tight_layout()
     plt.show()
 
-    # visualized evaluatiion runs
-    eval_env = rl.SerialVecEnv(gym.make, 1, args=("LunarLander-v2",))
-    stepper = partial(eval_step, model_stepper, deterministic=True)
-    with torch.no_grad():
-        npyt = rl.prepare(eval_env)
+    # visualized evaluation runs
+    history, log = [], {}
+    evl = buffered(
+        partial(step, model_stepper, deterministic=True),
+        capture(partial(evaluate, model_stepper, epx), log),
+        config.n_fragment_length,
+    )
 
-        vis = eval_env.envs[0]
-        while vis.render():
-            (inp, out), _, _ = rl.step(eval_env, stepper, npyt, hx=None)
+    env = rl.SerialVecEnv(gym.make, 1, args=("LunarLander-v2",))
+    vis = env.envs[0]
+
+    act = launch(evl, rl.prepare(env).npy)
+    while vis.render() and len(history) < config.n_eval_episodes:
+        act = evl.send(env.step(act))
+        if log:
+            history.append(dict(log))
+            log.clear()
+
+    epx.finish()
+    evl.close()
+
+    # get the evaluation averages
+    logs = plyr.apply(np.concatenate, *history, _star=False, axis=0)
+    avg = plyr.apply(np.mean, logs, axis=0)
+    std = plyr.apply(np.std, logs, axis=0)
+    print(plyr.apply("{:4.1f}±{:4.1f}".format, avg, std))

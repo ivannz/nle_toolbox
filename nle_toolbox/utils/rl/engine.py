@@ -251,6 +251,35 @@ def dropout_mask(input, *, k=None):
     )
 
 
+def bselect(tensor, index, dim=-1):
+    """Pick values at indices along the speicifed dimension.
+
+    See Also
+    -------
+    `nn.bselect` for multi-dimensional indexing.
+    """
+    return tensor.gather(dim, index.unsqueeze(dim)).squeeze_(dim)
+
+
+def entropy(logprob, dim=-1):
+    r"""Compute the discrete entropy $- \sum_j \pi_j \log \pi_j$."""
+    # `.kl_div` correctly handles `-ve` infinite logits (or zero probs), but
+    #  computes $\sum_j e^{\log p_j} \log p_j$, so we need to flip the sign.
+    # XXX `.new_zeros(())` creates a scalar zero (yes, an EMPTY tuple)
+    # XXX `kl_div(x, y, log_target=True)` computes \sum_n e^y_n (y_n - x_n)
+    return (
+        F.kl_div(
+            # input `x` and target `y`, with x = 0. and y = logpol
+            logprob.new_zeros(()),
+            logprob,
+            reduction="none",
+            log_target=True,
+        )
+        .sum(dim)
+        .neg()
+    )
+
+
 def pyt_logpact(logpol, act):
     """Get log probability of the taken actions.
 
@@ -260,7 +289,7 @@ def pyt_logpact(logpol, act):
     between `logpol` and `act`
     """
     # (sys) get \log\mu_t(a_t) from `logpol[t][act[t+1]])`, t=0..T-1
-    return logpol[:-1].gather(-1, act[1:].unsqueeze(-1)).squeeze_(-1)
+    return bselect(logpol[:-1], act[1:], -1)
 
 
 def pyt_polgrad(logpol, act, adv, *, mask=None):
@@ -293,28 +322,14 @@ def pyt_entropy(logpol, *, mask=None):
     r"""Compute the entropy `- \sum_j \pi_{j t} \log \pi_{j t}` over
     the event dim.
     """
-    # `.kl_div` correctly handles `-ve` infinite logits (or zero probs), but
-    #  computes $\sum_j e^{\log p_j} \log p_j$, so we need to flip the sign.
-    # XXX `.new_zeros(())` creates a scalar zero (yes, an EMPTY tuple)
-    # XXX `kl_div(x, y, log_target=True)` computes \sum_n e^y_n (y_n - x_n)
-    entropy = (
-        F.kl_div(
-            # input `x` and target `y`, with x = 0. and y = logpol
-            logpol.new_zeros(()),
-            logpol[:-1],
-            reduction="none",
-            log_target=True,
-        )
-        .sum(dim=-1)
-        .neg()
-    )
+    value = entropy(logpol[:-1], -1)
 
     # sum over the remaining dims after applying the optional mask
     if mask is not None:
         scale = float(mask.sum()) / mask.numel()
-        entropy = entropy.mul(mask).div(scale)
+        value = value.mul(mask).div(scale)
 
-    return entropy.sum()
+    return value.sum()
 
 
 def pyt_critic(val, ret, *, mask=None):

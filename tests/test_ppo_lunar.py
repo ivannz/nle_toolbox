@@ -51,9 +51,11 @@ class Config:
 
     f_clip_grad: float = 0.5
     f_ppo_eps: float = 0.2
-    n_act_embedding_dim: int = 16
+    n_act_embedding_dim: int = 0
     f_entropy: float = 0.01
     f_critic: float = 0.5
+
+    s_adv_normalization: str = "scale"  # "z-score"
 
     @property
     def f_loss_coef(self) -> dict[str, float]:
@@ -210,7 +212,13 @@ def update_ppo(model, epx, input, output, gx=None, hx=None, nfo=None):
         f_clip = torch.abs(lik - 1).ge(config.f_ppo_eps).float().mean()
 
         # detail #7: advantage normalization
-        adv = (batch.adv - batch.adv.mean()) / (batch.adv.std() + 1e-8)
+        adv = batch.adv
+        if config.s_adv_normalization == "z-score":
+            adv = (adv - adv.mean()) / (adv.std() + 1e-8)
+
+        elif config.s_adv_normalization == "scale":
+            adv = adv / (adv.std() + 1e-8)
+
         terms = {
             "polgrad": torch.minimum(
                 adv * lik,
@@ -243,14 +251,12 @@ if __name__ == "__main__":
     # architectures that seem to have worked well
     # - emb(obs)_{64} || emb(act)_{64} -> Rearrange (2x64) -> LayerNorm(64)
     # - linear(obs; param=emb(act)) <<-- hypernetwork
+    # - double-sized single shared network with split heads doesnt't work
     model_stepper = model_learner = nn.Sequential(
         # shared feature embedding
         ModuleDict(
             dict(
-                obs=nn.Sequential(
-                    nn.Linear(8, 64),
-                    nn.Tanh(),
-                ),
+                obs=nn.Identity(),
                 act=nn.Embedding(4, config.n_act_embedding_dim),
             ),
             dim=-1,
@@ -259,12 +265,16 @@ if __name__ == "__main__":
         ModuleDictSplitter(
             dict(
                 pol=nn.Sequential(
-                    nn.Linear(64 + config.n_act_embedding_dim, 64),
+                    nn.Linear(8 + config.n_act_embedding_dim, 64),
+                    nn.Tanh(),
+                    nn.Linear(64, 64),
                     nn.Tanh(),
                     nn.Linear(64, 4),
                 ),
                 val=nn.Sequential(
-                    nn.Linear(64 + config.n_act_embedding_dim, 64),
+                    nn.Linear(8 + config.n_act_embedding_dim, 64),
+                    nn.Tanh(),
+                    nn.Linear(64, 64),
                     nn.Tanh(),
                     nn.Linear(64, 1),
                 ),
@@ -374,6 +384,7 @@ if __name__ == "__main__":
             log.clear()
 
     print(config)
+    print(model_stepper)
 
     eval_env = rl.SerialVecEnv(gym.make, 1, args=("LunarLander-v2",))
     stepper = partial(eval_step, model_stepper)

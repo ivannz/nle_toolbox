@@ -386,16 +386,6 @@ if __name__ == "__main__":
     print(config)
     print(model_stepper)
 
-    # visualized evaluatiion runs
-    eval_env = rl.SerialVecEnv(gym.make, 1, args=("LunarLander-v2",))
-    stepper = partial(eval_step, model_stepper, deterministic=True)
-    with torch.no_grad():
-        npyt = rl.prepare(eval_env)
-
-        vis = eval_env.envs[0]
-        while vis.render():
-            (inp, out), _, _ = rl.step(eval_env, stepper, npyt, hx=None)
-
     # show the timings and reward dynamics
     timings, n_steps, logs = plyr.apply(np.asarray, *history, _star=False)
     n_total, f_share, _ = process_timings(
@@ -425,3 +415,13 @@ if __name__ == "__main__":
 
     plt.tight_layout()
     plt.show()
+
+    # visualized evaluatiion runs
+    eval_env = rl.SerialVecEnv(gym.make, 1, args=("LunarLander-v2",))
+    stepper = partial(eval_step, model_stepper, deterministic=True)
+    with torch.no_grad():
+        npyt = rl.prepare(eval_env)
+
+        vis = eval_env.envs[0]
+        while vis.render():
+            (inp, out), _, _ = rl.step(eval_env, stepper, npyt, hx=None)

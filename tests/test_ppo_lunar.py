@@ -55,7 +55,7 @@ class Config:
     f_entropy: float = 0.01
     f_critic: float = 0.5
 
-    s_adv_normalization: str = "scale"  # "z-score"
+    b_adv_normalization: bool = True
 
     @property
     def f_loss_coef(self) -> dict[str, float]:
@@ -127,17 +127,30 @@ def pyt_logpact(logpol, act):
     return logpol.gather(-1, act.unsqueeze(-1)).squeeze_(-1)
 
 
-def step(model, input, *, hx=None, nfo=None):
+def step(model, input, *, hx=None, nfo=None, deterministic=False):
     # breakpoint()
 
     out = model(input)
     vp = ValPolPair(out["val"].squeeze(-1), out["pol"].log_softmax(-1))
-    act_ = multinomial(vp.pol.exp())
+    if deterministic:
+        act_ = vp.pol.argmax(-1)
+
+    else:
+        act_ = multinomial(vp.pol.exp())
+
     return act_, vp, None
 
 
-def eval_step(model, obs, act=None, rew=None, fin=None, *, hx=None):
-    return step(model, rl.Input(obs, act, rew, fin), hx=hx, nfo=None)
+def eval_step(
+    model, obs, act=None, rew=None, fin=None, *, hx=None, deterministic=False
+):
+    return step(
+        model,
+        rl.Input(obs, act, rew, fin),
+        hx=hx,
+        nfo=None,
+        deterministic=deterministic,
+    )
 
 
 def ep_metrics(epx, fragment):
@@ -213,11 +226,12 @@ def update_ppo(model, epx, input, output, gx=None, hx=None, nfo=None):
 
         # detail #7: advantage normalization
         adv = batch.adv
-        if config.s_adv_normalization == "z-score":
+        if config.b_adv_normalization:
+            # Although we can safely subtract baseline consts in expectated
+            #  policy gradients, it might not be safe in sampled approximation.
+            # XXX conceptually, normalization should keep the signs, e.g.
+            #  div-by-norm, to  however early on the baseline could be bad
             adv = (adv - adv.mean()) / (adv.std() + 1e-8)
-
-        elif config.s_adv_normalization == "scale":
-            adv = adv / (adv.std() + 1e-8)
 
         terms = {
             "polgrad": torch.minimum(
@@ -298,7 +312,7 @@ if __name__ == "__main__":
     log = {}
     epx = EpisodeExtractor()
     cap = buffered(
-        partial(step, model_stepper),
+        partial(step, model_stepper, deterministic=False),
         capture(
             partial(update_ppo, model_learner, epx),
             log,
@@ -387,7 +401,7 @@ if __name__ == "__main__":
     print(model_stepper)
 
     eval_env = rl.SerialVecEnv(gym.make, 1, args=("LunarLander-v2",))
-    stepper = partial(eval_step, model_stepper)
+    stepper = partial(eval_step, model_stepper, deterministic=True)
     with torch.no_grad():
         npyt = rl.prepare(eval_env)
 

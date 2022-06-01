@@ -23,6 +23,9 @@ from nle_toolbox.utils.rl.returns import pyt_ret_gae
 from nle_toolbox.utils.rl.tools import EpisodeExtractor
 from dataclasses import dataclass
 
+from matplotlib import pyplot as plt
+from matplotlib.ticker import EngFormatter
+
 import pytest
 
 
@@ -85,13 +88,20 @@ def reduce(values, weight=None):
     return sum(flat)
 
 
-def timing_eng(ns, units=("ns", "µs", "ms", "s.")):
-    # ns -->> µs -->> ms -->> s.
-    for _unit in units:
-        if ns < 1000:
-            break
-        ns /= 1000
-    return f"{ns:.1f}{_unit}"
+def process_timings(timing, *labels, scale=1.0, aggregate=False):
+    # collect the timings
+    timing = np.reshape(timing, (-1, 1 + len(labels)), "C")
+
+    # get the fraction spent at each step
+    timing_label = np.diff(timing, axis=-1).T
+    timing_total = (timing[:, 1:] - timing[:, 0, np.newaxis]).T
+    if aggregate:
+        timing_label = timing_label.sum(axis=1)
+        timing_total = timing_total.sum(axis=1)
+
+    total = dict(zip(labels, timing_total * scale))
+    share = dict(zip(labels, timing_label / timing_total[-1, np.newaxis]))
+    return total, share, timing
 
 
 def capture(fn, to):
@@ -106,25 +116,6 @@ def capture(fn, to):
         return result
 
     return _wrapper
-
-
-def entropy(logprob):
-    # `rl.entropy` relies on synchronisation of `logprob`
-    return (
-        F.kl_div(
-            logprob.new_zeros(()),
-            logprob,
-            reduction="none",
-            log_target=True,
-        )
-        .sum(dim=-1)
-        .neg()
-    )
-
-
-def pyt_logpact(logpol, act):
-    # `rl.pyt_logpact` relies on synchronisation of `logprob` with `act`
-    return logpol.gather(-1, act.unsqueeze(-1)).squeeze_(-1)
 
 
 def step(model, input, *, hx=None, nfo=None, deterministic=False):
@@ -189,7 +180,7 @@ def prepare(input, output, nfo=None):
     return Buffer(
         plyr.apply(lambda x: x[:-1], input),
         input.act[1:],
-        rl.pyt_logpact(output.pol, input.act),
+        rl.bselect(output.pol[:-1], input.act[1:], -1),
         gae,
         # detail #5: TD(\lambda) returns with gae
         gae + output.val[:-1],
@@ -221,7 +212,7 @@ def update_ppo(model, epx, input, output, gx=None, hx=None, nfo=None):
         mu = ValPolPair(out["val"].squeeze(-1), out["pol"].log_softmax(-1))
 
         # (ppo) compute the importance weights (diffable)
-        lik = torch.exp(pyt_logpact(mu.pol, batch.act) - batch.log_p)
+        lik = torch.exp(rl.bselect(mu.pol, batch.act, -1) - batch.log_p)
         f_clip = torch.abs(lik - 1).ge(config.f_ppo_eps).float().mean()
 
         # detail #7: advantage normalization
@@ -238,7 +229,7 @@ def update_ppo(model, epx, input, output, gx=None, hx=None, nfo=None):
                 adv * lik,
                 adv * lik.clamp(1.0 - config.f_ppo_eps, 1.0 + config.f_ppo_eps),
             ).mean(),
-            "entropy": entropy(mu.pol).mean(),
+            "entropy": rl.entropy(mu.pol, -1).mean(),
             "critic": F.mse_loss(mu.val, batch.ret, reduction="mean"),
         }
 
@@ -265,7 +256,8 @@ if __name__ == "__main__":
     # architectures that seem to have worked well
     # - emb(obs)_{64} || emb(act)_{64} -> Rearrange (2x64) -> LayerNorm(64)
     # - linear(obs; param=emb(act)) <<-- hypernetwork
-    # - double-sized single shared network with split heads doesnt't work
+    # - double-sized single shared network with split heads doesn't work
+    # - shared previous action embedding generally does not work
     model_stepper = model_learner = nn.Sequential(
         # shared feature embedding
         ModuleDict(
@@ -321,7 +313,9 @@ if __name__ == "__main__":
     )
 
     # ad-hoc logging
-    history = []
+    n_steps, n_iters = 0, 0
+    history, timings_ns = [], []
+    format_eng = EngFormatter(places=1, sep="").format_eng
     metrics = {"f_len": np.nan, "f_ret": np.nan}
     header, format = map(
         " ".join,
@@ -337,14 +331,13 @@ if __name__ == "__main__":
                 ("f_ret ", "{f_ret:<+6.1f}"),
                 ("f_lam", "{f_lam:<5.2f}"),
                 ("f_cap", "{f_cap:<5.2f}"),
-                ("loop", "{s_ns_loop}"),
+                ("loop", "{s_ns_loop}s"),
             )
         ),
     )
     print(header)
 
-    n_steps, n_iters = 0, 0
-    timings_ns = []
+    # the main loop `prepare launch (step send)*`
     act = launch(cap, rl.prepare(env).npy)  # XXX a dedicated `.prepare`?
     while n_steps < config.n_total_steps:
         # (train) get GAE averaging schedule
@@ -356,33 +349,25 @@ if __name__ == "__main__":
         timings_ns.append(monotonic_ns())  # env.step
 
         act = cap.send(result)  # XXX cap updates `act` INPLACE, no lulz here :)
-        timings_ns.append(monotonic_ns())  # cap.step
+        timings_ns.append(monotonic_ns())  # cap.send
 
         n_steps += config.n_envs
-
         if log:
             n_iters += 1
 
             # collect the timings and get the fraction spend at each step
-            timings = np.reshape(timings_ns, (-1, 3), "C")  # XXX 3 = 1 + N
-
-            ns_step = np.diff(timings, axis=-1).sum(0)
-            ns_loop = (timings[:, -1] - timings[:, 0]).sum(0)
-            f_share = dict(
-                zip(
-                    (
-                        "f_env",
-                        "f_cap",
-                    ),
-                    ns_step / ns_loop,
-                )
+            n_total, f_share, timings = process_timings(
+                timings_ns,
+                "f_env",
+                "f_cap",
+                scale=1e-9,
+                aggregate=True,
             )
-            timings_ns.clear()
+            history.append((timings, n_steps, dict(log)))
 
             # metrics are sparsely logged, so we repeat the most recently
             #  available values
             metrics = log.pop("metrics", metrics)
-
             print(
                 format.format(
                     n_iters,
@@ -390,16 +375,18 @@ if __name__ == "__main__":
                     **log,
                     f_lam=f_lam,
                     **f_share,
-                    s_ns_loop=timing_eng(ns_loop),
+                    s_ns_loop=format_eng(n_total["f_cap"]),
                     **metrics,
                 )
             )
 
+            timings_ns.clear()
             log.clear()
 
     print(config)
     print(model_stepper)
 
+    # visualized evaluatiion runs
     eval_env = rl.SerialVecEnv(gym.make, 1, args=("LunarLander-v2",))
     stepper = partial(eval_step, model_stepper, deterministic=True)
     with torch.no_grad():
@@ -408,3 +395,33 @@ if __name__ == "__main__":
         vis = eval_env.envs[0]
         while vis.render():
             (inp, out), _, _ = rl.step(eval_env, stepper, npyt, hx=None)
+
+    # show the timings and reward dynamics
+    timings, n_steps, logs = plyr.apply(np.asarray, *history, _star=False)
+    n_total, f_share, _ = process_timings(
+        timings.flatten(),
+        "f_env",
+        "f_cap",
+        aggregate=False,
+    )
+
+    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(8, 4), dpi=120)
+
+    # timings
+    for nom in ("f_cap",):
+        ax0.plot(np.r_[: n_steps[-1] : config.n_envs], f_share[nom], label=nom)
+
+    # mark the `update` events on the time axis
+    for x in n_steps:
+        ax0.axvline(x, c="k", alpha=0.25, zorder=-10)
+    ax0.legend()
+
+    # performance
+    metrics = logs["metrics"]
+    (l_f_ret,) = ax1.plot(n_steps, metrics["f_ret"], c="C0", label="return")
+    ax_ = ax1.twinx()
+    (l_f_len,) = ax_.plot(n_steps, metrics["f_len"], c="C1", label="length")
+    ax1.legend(loc="best", handles=[l_f_ret, l_f_len])
+
+    plt.tight_layout()
+    plt.show()

@@ -187,12 +187,16 @@ class EpisodeExtractor:
         return episodes
 
     def finish(self) -> Any:
-        out = [stitch(*fragmets) for fragmets in self.strands.values()]
-        # this also decrefs the lists in the strands, which causes them
-        #  to decref the tensor strands they contain
-        self.strands.clear()
+        # stitch together the remaining chunks of the unfinished episodes
+        episodes = []
+        for out in self.strands.values():
+            _, chunks = zip(*out)
+            episodes.append(stitch(*chunks))
 
-        return out
+        # `.clear` also decrefs the lists in the strands, which causes
+        #  them to eventually decref the tensor strands they contain.
+        self.strands.clear()
+        return episodes
 
 
 def empty(

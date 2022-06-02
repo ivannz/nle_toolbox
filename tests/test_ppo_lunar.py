@@ -60,8 +60,6 @@ class Config:
 
     b_adv_normalization: bool = True
 
-    n_eval_episodes: int = 20
-
     @property
     def f_loss_coef(self) -> dict[str, float]:
         # -ve -->> max, +ve -->> min
@@ -106,15 +104,15 @@ def process_timings(timing, *labels, scale=1.0, aggregate=False):
     return total, share, timing
 
 
-def capture(fn, to):
-    """Capture the log information output to the specified dict."""
-    if to is None:
+def capture(fn, commit):
+    """Pass the log information output to the specified callable."""
+    if not callable(commit):
         return fn
 
     @wraps(fn)
     def _wrapper(*args, **kwargs):
         nfo, _ = result = fn(*args, **kwargs)
-        to.update(nfo)
+        commit(nfo)
         return result
 
     return _wrapper
@@ -134,7 +132,7 @@ def step(model, input, *, hx=None, nfo=None, deterministic=False):
     return act_, vp, None
 
 
-def ep_metrics(epx, fragment, *, aggregate=True):
+def ep_metrics(epx, fragment):
     metrics = []
     for ep in epx.extract(fragment.fin, fragment):
         ep_len = len(ep.fin) - int(ep.fin[-1])
@@ -143,16 +141,12 @@ def ep_metrics(epx, fragment, *, aggregate=True):
 
         metrics.append(
             {
-                "f_len": ep_len,
-                "f_ret": ep.rew[1:].sum(),
+                "f_len": int(ep_len),
+                "f_ret": float(ep.rew[1:].sum()),
             }
         )
 
-    if not metrics:
-        return {}
-
-    fn = np.mean if aggregate else np.asarray
-    return plyr.apply(fn, *metrics, _star=False)
+    return metrics
 
 
 def prepare(input, output, nfo=None):
@@ -235,19 +229,21 @@ def update_ppo(model, epx, input, output, gx=None, hx=None, nfo=None):
 
     # (log) estimate the number of resets per fragment
     # XXX `batch.input` has correct sync!
-    metrics = ep_metrics(epx, buffer.input, aggregate=True)
+    metrics = ep_metrics(epx, buffer.input)
     if metrics:
-        log["metrics"] = metrics
+        log["metrics"] = plyr.apply(np.mean, *metrics, _star=False)
 
     return log, None
 
 
 def evaluate(model, epx, input, output, gx=None, hx=None, nfo=None):
-    input = plyr.apply(lambda x: x[:-1], input)
-    return ep_metrics(epx, input, aggregate=False), None
+    return ep_metrics(epx, plyr.apply(lambda x: x[:-1], input)), None
 
 
 if __name__ == "__main__":
+    b_visualize: bool = False
+    n_eval_episodes: int = 20
+
     # architectures that seem to have worked well
     # - emb(obs)_{64} || emb(act)_{64} -> Rearrange (2x64) -> LayerNorm(64)
     # - linear(obs; param=emb(act)) <<-- hypernetwork
@@ -289,6 +285,7 @@ if __name__ == "__main__":
         eps=1e-5,  # detail #?: it turns out, this is very important!
     )
 
+    epx = EpisodeExtractor()
     env = rl.SerialVecEnv(
         gym.make,
         config.n_envs,
@@ -297,12 +294,11 @@ if __name__ == "__main__":
     )
 
     log = {}
-    epx = EpisodeExtractor()
     cap = buffered(
         partial(step, model_stepper, deterministic=False),
         capture(
             partial(update_ppo, model_learner, epx),
-            log,
+            log.update,
         ),
         config.n_fragment_length,
     )
@@ -385,58 +381,57 @@ if __name__ == "__main__":
     print(model_stepper)
 
     # show the timings and reward dynamics
-    timings, n_steps, logs = plyr.apply(np.asarray, *history, _star=False)
-    n_total, f_share, _ = process_timings(
-        timings.flatten(),
-        "f_env",
-        "f_cap",
-        aggregate=False,
-    )
+    if b_visualize:
+        timings, n_steps, logs = plyr.apply(np.asarray, *history, _star=False)
 
-    fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(8, 4), dpi=120)
+        fig, (ax0, ax1) = plt.subplots(1, 2, figsize=(8, 4), dpi=120)
 
-    # timings
-    for nom in ("f_cap",):
-        ax0.plot(np.r_[: n_steps[-1] : config.n_envs], f_share[nom], label=nom)
+        # timings
+        n_total, f_share, _ = process_timings(
+            timings.flatten(),
+            "f_env",
+            "f_cap",
+            aggregate=False,
+        )
+        for nom in ("f_cap",):
+            ax0.plot(np.r_[: n_steps[-1] : config.n_envs], f_share[nom], label=nom)
 
-    # mark the `update` events on the time axis
-    for x in n_steps:
-        ax0.axvline(x, c="k", alpha=0.25, zorder=-10)
-    ax0.legend()
+        # mark the `update` events on the time axis
+        for x in n_steps:
+            ax0.axvline(x, c="k", alpha=0.25, zorder=-10)
+        ax0.legend()
 
-    # performance
-    metrics = logs["metrics"]
-    (l_f_ret,) = ax1.plot(n_steps, metrics["f_ret"], c="C0", label="return")
-    ax_ = ax1.twinx()
-    (l_f_len,) = ax_.plot(n_steps, metrics["f_len"], c="C1", label="length")
-    ax1.legend(loc="best", handles=[l_f_ret, l_f_len])
+        # performance
+        metrics = logs["metrics"]
+        (l_f_ret,) = ax1.plot(n_steps, metrics["f_ret"], c="C0", label="return")
 
-    plt.tight_layout()
-    plt.show()
+        ax_ = ax1.twinx()
+        (l_f_len,) = ax_.plot(n_steps, metrics["f_len"], c="C1", label="length")
+
+        ax1.legend(loc="best", handles=[l_f_ret, l_f_len])
+
+        plt.tight_layout()
+        plt.show()
 
     # visualized evaluation runs
-    history, log = [], {}
-    evl = buffered(
+    history = []
+    env = rl.SerialVecEnv(gym.make, 1, args=("LunarLander-v2",))
+    vis = env.envs[0].render if b_visualize else lambda: True
+
+    cap = buffered(
         partial(step, model_stepper, deterministic=True),
-        capture(partial(evaluate, model_stepper, epx), log),
+        capture(partial(evaluate, model_stepper, epx), history.extend),
         config.n_fragment_length,
     )
 
-    env = rl.SerialVecEnv(gym.make, 1, args=("LunarLander-v2",))
-    vis = env.envs[0]
-
-    act = launch(evl, rl.prepare(env).npy)
-    while vis.render() and len(history) < config.n_eval_episodes:
-        act = evl.send(env.step(act))
-        if log:
-            history.append(dict(log))
-            log.clear()
+    act = launch(cap, rl.prepare(env).npy)
+    while len(history) < n_eval_episodes and vis():
+        act = cap.send(env.step(act))
 
     epx.finish()
-    evl.close()
+    cap.close()
 
     # get the evaluation averages
-    logs = plyr.apply(np.concatenate, *history, _star=False, axis=0)
-    avg = plyr.apply(np.mean, logs, axis=0)
-    std = plyr.apply(np.std, logs, axis=0)
+    avg = plyr.apply(np.mean, *history, _star=False)
+    std = plyr.apply(np.std, *history, _star=False)
     print(plyr.apply("{:4.1f}±{:4.1f}".format, avg, std))

@@ -118,11 +118,15 @@ def capture(fn, commit):
     return _wrapper
 
 
+def forward(model, input, *, hx=None, nfo=None):
+    out = model(input)
+    return ValPolPair(out["val"].squeeze(-1), out["pol"].log_softmax(-1))
+
+
 def step(model, input, *, hx=None, nfo=None, deterministic=False):
     # breakpoint()
+    vp = forward(model, input, hx=hx, nfo=nfo)
 
-    out = model(input)
-    vp = ValPolPair(out["val"].squeeze(-1), out["pol"].log_softmax(-1))
     if deterministic:
         act_ = vp.pol.argmax(-1)
 
@@ -192,8 +196,7 @@ def update_ppo(model, epx, input, output, gx=None, hx=None, nfo=None):
     # (ppo) train on random batches from experience
     for batch in sample(buffer, config.n_ppo_epochs, config.n_ppo_batch_size):
         # (ppo) diffable forward pass thru the random batch
-        out = model(batch.input)  # , hx=hx, nfo=nfo)
-        mu = ValPolPair(out["val"].squeeze(-1), out["pol"].log_softmax(-1))
+        mu = forward(model, batch.input)  # , hx=hx, nfo=nfo)
 
         # (ppo) compute the importance weights (diffable)
         lik = torch.exp(rl.bselect(mu.pol, batch.act, -1) - batch.log_p)

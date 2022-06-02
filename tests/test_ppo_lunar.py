@@ -48,17 +48,17 @@ class Config:
     n_fragment_length: int = 1024
     n_envs: int = 16
 
+    n_act_embedding_dim: int = 0
+
     f_gam: float = 0.999
     n_ppo_batch_size: int = 64
     n_ppo_epochs: int = 4
 
-    f_clip_grad: float = 0.5
     f_ppo_eps: float = 0.2
-    n_act_embedding_dim: int = 0
+    b_adv_normalization: bool = True
+    f_clip_grad: float = 0.5
     f_entropy: float = 0.01
     f_critic: float = 0.5
-
-    b_adv_normalization: bool = True
 
     @property
     def f_loss_coef(self) -> dict[str, float]:
@@ -244,6 +244,8 @@ if __name__ == "__main__":
     b_visualize: bool = False
     n_eval_episodes: int = 20
 
+    device_ = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
     # architectures that seem to have worked well
     # - emb(obs)_{64} || emb(act)_{64} -> Rearrange (2x64) -> LayerNorm(64)
     # - linear(obs; param=emb(act)) <<-- hypernetwork
@@ -254,6 +256,7 @@ if __name__ == "__main__":
         ModuleDict(
             dict(
                 obs=nn.Identity(),
+                # XXX cuda, apparently, does not enjoy zero-sized embeddings
                 act=nn.Embedding(4, config.n_act_embedding_dim),
             ),
             dim=-1,
@@ -277,7 +280,7 @@ if __name__ == "__main__":
                 ),
             )
         ),
-    )
+    ).to(device_)
 
     optim = torch.optim.Adam(
         model_learner.parameters(),
@@ -301,6 +304,7 @@ if __name__ == "__main__":
             log.update,
         ),
         config.n_fragment_length,
+        device=device_,
     )
 
     # ad-hoc logging
@@ -422,6 +426,7 @@ if __name__ == "__main__":
         partial(step, model_stepper, deterministic=True),
         capture(partial(evaluate, model_stepper, epx), history.extend),
         config.n_fragment_length,
+        device=device_,
     )
 
     act = launch(cap, rl.prepare(env).npy)

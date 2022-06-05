@@ -261,23 +261,22 @@ def bselect(tensor, index, dim=-1):
     return tensor.gather(dim, index.unsqueeze(dim)).squeeze_(dim)
 
 
+def kl_div(logp, logq, dim=-1):
+    r"""Compute the KL-divergence between discrete distributions p and q
+    over the specified dim: $KL(p\| q) = \sum_j p_j \log \frac{p_j}{q_j}$.
+
+    For input x and target y, `F.kl_div(x, y, "none", log_target=True)` returns
+    $e^y (y - x)$, correctly handling infinite `-ve` logits. `log_target`
+    relates to `y` being logits (True) or probas (False).
+    """
+    return F.kl_div(logq, logp, reduction="none", log_target=True).sum(dim)
+
+
 def entropy(logprob, dim=-1):
     r"""Compute the discrete entropy $- \sum_j \pi_j \log \pi_j$."""
-    # `.kl_div` correctly handles `-ve` infinite logits (or zero probs), but
-    #  computes $\sum_j e^{\log p_j} \log p_j$, so we need to flip the sign.
+    # call `kl_div(p, q)` with q = 0. and p = logpol, then flip the sign
     # XXX `.new_zeros(())` creates a scalar zero (yes, an EMPTY tuple)
-    # XXX `kl_div(x, y, log_target=True)` computes \sum_n e^y_n (y_n - x_n)
-    return (
-        F.kl_div(
-            # input `x` and target `y`, with x = 0. and y = logpol
-            logprob.new_zeros(()),
-            logprob,
-            reduction="none",
-            log_target=True,
-        )
-        .sum(dim)
-        .neg()
-    )
+    return kl_div(logprob, logprob.new_zeros(()), dim=dim).neg()
 
 
 def pyt_logpact(logpol, act):

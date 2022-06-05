@@ -247,6 +247,7 @@ if __name__ == "__main__":
 
     # ad-hoc logging
     to_seconds = EngFormatter(places=2, sep="", unit="s")
+    to_number = EngFormatter(places=1, sep="", unit="")
     n_iters, history, timings_ns = 0, [], []
     header, format = map(
         " ".join,
@@ -334,7 +335,7 @@ if __name__ == "__main__":
     )
 
     # the number of steps taken in all envs so far
-    n_steps = 0
+    n_steps, ns_total = 0, monotonic_ns()
 
     # the main loop: `prepare launch (step send)*`
     act = launch(cap, rl.prepare(env).npy)  # XXX a dedicated `.prepare`?
@@ -388,8 +389,11 @@ if __name__ == "__main__":
     epx.finish()
 
     # show the config, timings and reward dynamics
+    ns_total = monotonic_ns() - ns_total
+    print()
     print(config)
     print(model_stepper)
+    print(f"{to_number(n_steps)} steps took {to_seconds(ns_total * 1e-9)}.")
 
     if b_visualize:
         timings, n_steps, metrics, logs = plyr.apply(np.asarray, *history, _star=False)

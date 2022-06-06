@@ -140,7 +140,7 @@ def step(model, input, *, hx=None, nfo=None, deterministic=False):
     return act_, vp, None
 
 
-def evaluate(epx, input, output, gx=None, hx=None, nfo=None):
+def evaluate(input, output, gx=None, hx=None, nfo=None, *, epx, fill=True):
     # (sys) ignore the overlapping records between the fragment
     fragment = plyr.apply(lambda x: x[:-1], input)
 
@@ -158,8 +158,10 @@ def evaluate(epx, input, output, gx=None, hx=None, nfo=None):
             }
         )
 
-    missing = {"f_len": np.nan, "f_ret": np.nan}
-    return {"metrics": metrics or [missing]}, None
+    if not metrics and fill:
+        metrics = [{"f_len": np.nan, "f_ret": np.nan}]
+
+    return {"metrics": metrics}, None
 
 
 def prepare(input, output, nfo=None):
@@ -326,7 +328,7 @@ if __name__ == "__main__":
     cap = buffered(
         partial(step, model_stepper, deterministic=False),
         chained_capture(
-            partial(evaluate, epx),
+            partial(evaluate, epx=epx, fill=True),
             partial(update_ppo, model_learner),
             commit=log.update,
         ),
@@ -434,7 +436,7 @@ if __name__ == "__main__":
     cap = buffered(
         partial(step, model_stepper, deterministic=True),
         chained_capture(
-            partial(evaluate, epx),
+            partial(evaluate, epx=epx, fill=False),
             commit=lambda nfo: history.extend(nfo["metrics"]),
         ),
         config.n_fragment_length,

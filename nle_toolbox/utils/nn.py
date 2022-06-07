@@ -373,6 +373,35 @@ class LinearSplitter(Linear):
         return text.format(self.in_features, splits, self.bias is not None)
 
 
+class Splitter(Identity):
+    """A layer that splits the input into a dict of tensors."""
+
+    def __init__(
+        self,
+        splits: Union[int, Mapping[str, int]],
+        dim: int = -1,
+    ) -> None:
+        # `splits` is a potentially nested object, so we extract
+        #  its structre and flatten the size data contained within
+        sizes, structure = flatten(splits)
+        if not all(isinstance(sz, int) and sz >= 0 for sz in sizes):
+            raise ValueError("Structured output sizes cannot be negative.")
+
+        super().__init__()
+        self.splits, self.dim = splits, dim
+        self.structure, self.sizes = structure, tuple(sizes)
+
+    def forward(self, input: Tensor) -> Mapping[str, Tensor]:
+        # apply the linear layer and split the outputs along the last dim
+        flat = input.split(self.sizes, dim=self.dim)
+
+        # ... then rebuild the correct nested structure
+        return unflatten(flat, self.structure)
+
+    def extra_repr(self) -> str:
+        return repr(unflatten(self.sizes, self.structure))
+
+
 class ModuleDictSplitter(BaseModuleDict):
     """A dictionary that applies the contained modules to the input tensor."""
 

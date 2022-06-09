@@ -60,6 +60,8 @@ class Config:
     f_entropy: float = 0.01
     f_critic: float = 0.5
 
+    f_model_lerp: float = 0.9
+
     @property
     def f_loss_coef(self) -> dict[str, float]:
         # -ve -->> max, +ve -->> min
@@ -191,12 +193,12 @@ def sample(buffer, n_epochs, n_batch_size):
     flat = plyr.apply(torch.flatten, buffer, start_dim=0, end_dim=1)
 
     # (ppo) do several complete passes over the rollout buffer in batches
-    for _ in range(n_epochs):
+    for ep in range(n_epochs):
         indices = torch.randperm(flat.input.fin.numel())
 
         # (ppo) get a random batch from the experience fragment
-        for batch in indices.split(n_batch_size):
-            yield plyr.apply(lambda x: x[batch], flat)
+        for bi, batch in enumerate(indices.split(n_batch_size)):
+            yield ep, bi, plyr.apply(lambda x: x[batch], flat)
 
 
 def update_ppo(model, input, output, gx=None, hx=None, nfo=None):
@@ -205,7 +207,7 @@ def update_ppo(model, input, output, gx=None, hx=None, nfo=None):
 
     log = []
     # (ppo) train on random batches from experience
-    for batch in sample(buffer, config.n_ppo_epochs, config.n_ppo_batch_size):
+    for _, _, batch in sample(buffer, config.n_ppo_epochs, config.n_ppo_batch_size):
         # (ppo) diffable forward pass thru the random batch
         mu = forward(model, batch.input)  # , hx=hx, nfo=nfo)
 
@@ -241,6 +243,51 @@ def update_ppo(model, input, output, gx=None, hx=None, nfo=None):
     return {"update": log}, None
 
 
+def build_model(*, linear=nn.Linear, tanh=nn.Tanh, **ignored):
+    # architectures that seem to have worked well
+    # - emb(obs)_{64} || emb(act)_{64} -> Rearrange (2x64) -> LayerNorm(64)
+    # - linear(obs; param=emb(act)) <<-- hypernetwork
+    # - double-sized single shared network with split heads doesn't work
+    # - shared previous action embedding generally does not work
+    return nn.Sequential(
+        # shared feature embedding
+        ModuleDict(
+            dict(
+                obs=nn.Identity(),
+                # XXX cuda, apparently, does not enjoy zero-sized embeddings
+                act=nn.Embedding(4, config.n_act_embedding_dim),
+            ),
+            dim=-1,
+        ),
+        # split networks
+        ModuleDictSplitter(
+            dict(
+                pol=nn.Sequential(
+                    linear(8 + config.n_act_embedding_dim, 64),
+                    tanh(),
+                    linear(64, 64),
+                    tanh(),
+                    linear(64, 4),
+                ),
+                val=nn.Sequential(
+                    linear(8 + config.n_act_embedding_dim, 64),
+                    tanh(),
+                    linear(64, 64),
+                    tanh(),
+                    linear(64, 1),
+                ),
+            )
+        ),
+    )
+
+
+@torch.no_grad()
+def parameters_lerp(frac, *, src, dst):
+    # we do not check if the models are compatible!
+    for s, d in zip(src.parameters(), dst.parameters()):
+        d.lerp_(s, frac)  # d += frac * (s - d)
+
+
 if __name__ == "__main__":
     device_ = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -274,41 +321,12 @@ if __name__ == "__main__":
     )
     print(header)
 
-    # architectures that seem to have worked well
-    # - emb(obs)_{64} || emb(act)_{64} -> Rearrange (2x64) -> LayerNorm(64)
-    # - linear(obs; param=emb(act)) <<-- hypernetwork
-    # - double-sized single shared network with split heads doesn't work
-    # - shared previous action embedding generally does not work
-    model_stepper = model_learner = nn.Sequential(
-        # shared feature embedding
-        ModuleDict(
-            dict(
-                obs=nn.Identity(),
-                # XXX cuda, apparently, does not enjoy zero-sized embeddings
-                act=nn.Embedding(4, config.n_act_embedding_dim),
-            ),
-            dim=-1,
-        ),
-        # split networks
-        ModuleDictSplitter(
-            dict(
-                pol=nn.Sequential(
-                    nn.Linear(8 + config.n_act_embedding_dim, 64),
-                    nn.Tanh(),
-                    nn.Linear(64, 64),
-                    nn.Tanh(),
-                    nn.Linear(64, 4),
-                ),
-                val=nn.Sequential(
-                    nn.Linear(8 + config.n_act_embedding_dim, 64),
-                    nn.Tanh(),
-                    nn.Linear(64, 64),
-                    nn.Tanh(),
-                    nn.Linear(64, 1),
-                ),
-            )
-        ),
-    ).to(device_)
+    # seprate models for stepping/learning and evaluation
+    model_evaluation = build_model()
+
+    model_stepper = build_model().to(device_)
+    model_learner = build_model().to(device_)
+    parameters_lerp(1.0, src=model_learner, dst=model_stepper)
 
     optim = torch.optim.Adam(
         model_learner.parameters(),
@@ -386,6 +404,9 @@ if __name__ == "__main__":
                 )
             )
 
+            # stepper follows the learner as EWMA with decay rate `f_model_lerp`
+            parameters_lerp(config.f_model_lerp, src=model_learner, dst=model_stepper)
+
     # (sys) close the capsule and flush the peisode collector
     cap.close()
     epx.finish()
@@ -396,6 +417,10 @@ if __name__ == "__main__":
     print(config)
     print(model_stepper)
     print(f"{to_number(n_steps)} steps took {to_seconds(ns_total * 1e-9)}.")
+
+    # load the stepper into the evaluation model
+    state_dict = model_stepper.state_dict()
+    print(model_evaluation.load_state_dict(state_dict))
 
     if b_visualize:
         timings, n_steps, metrics, logs = plyr.apply(np.asarray, *history, _star=False)
@@ -434,13 +459,12 @@ if __name__ == "__main__":
 
     history = []
     cap = buffered(
-        partial(step, model_stepper, deterministic=True),
+        partial(step, model_evaluation, deterministic=True),
         chained_capture(
             partial(evaluate, epx=epx, fill=False),
             commit=lambda nfo: history.extend(nfo["metrics"]),
         ),
         config.n_fragment_length,
-        device=device_,
     )
 
     act = launch(cap, rl.prepare(env).npy)

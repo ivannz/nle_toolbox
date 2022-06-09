@@ -9,6 +9,8 @@ from .vit import TransformerLayer
 class HiT(nn.Module):
     """Highway input-output transformer.
     * i-o port embeddings
+
+    Inspireed by [Training Very Deep Networks](https://arxiv.org/abs/1507.06228)
     """
 
     def __init__(

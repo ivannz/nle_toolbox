@@ -31,4 +31,23 @@ if __name__ == "__main__":
             "nle_toolbox.zoo.transformer",
             "nle_toolbox.zoo.vq",
         ],
+        python_requires=">=3.9",
+        install_requires=[
+            "numpy",
+            "torch>=1.8",
+            "python-plyr",
+            "scipy",
+            "einops",
+            "gym<=0.23",
+            "nle>=0.8.0",
+            "minihack",
+            "matplotlib",
+        ],
+        test_requires=[
+            "gitpython",
+            "pytest",
+            "swig",
+            "box2d-py",
+            "gym[box2d]<=0.23",
+        ],
     )

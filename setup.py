@@ -38,8 +38,8 @@ if __name__ == "__main__":
             "python-plyr>=0.8",
             "scipy",
             "einops",
-            "gym<=0.23",
-            "nle>=0.8.0",
+            "gym",
+            "nle>=0.8.1",
             "minihack",
             "matplotlib",
         ],
@@ -48,6 +48,6 @@ if __name__ == "__main__":
             "pytest",
             "swig",
             "box2d-py",
-            "gym[box2d]<=0.23",
+            "gym[box2d]",
         ],
     )

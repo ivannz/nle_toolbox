@@ -266,58 +266,6 @@ def bselect(tensor, *index, dim):
     return out.reshape(*lead, *tail)
 
 
-def flatten(struct, *, flat=None):
-    """Get a flat depth-first representation of the nested object.
-
-    Parameters
-    ----------
-    struct : nested object
-        The nested object to serialize.
-
-    flat : list, or None
-        A flat iterable container to serially append the leaf data to.
-
-    Returns
-    -------
-    flat : list
-        The container populated with the leaves in depth-first structure order.
-
-    struct : nested object
-        The skeletal structure of the nested object with arbitrary leaf data.
-    """
-    if not isinstance(flat, list):
-        flat = []
-
-    return flat, plyr.apply(flat.append, struct)
-
-
-def unflatten(flat, struct):
-    """Place the data from iterable into the specified nested structure.
-
-    Parameters
-    ----------
-    flat : iterable
-        The iterable that supplies the data for the nested object in fifo
-        depth-first order.
-
-    struct : nested object
-        The desired structure of the nested object (leaf data is intact).
-
-    Returns
-    -------
-    result : nested object
-        The nested object with the specified hierarchy populated by the data
-        from the iterable.
-
-    Details
-    -------
-    Raises `StopItertaion` if the iterable is exhausted before the structure is
-    completely rebuilt. Data consumed by an unsuccessful `unflatten` is LOST.
-    """
-
-    return plyr.apply(lambda *a, it=iter(flat): next(it), struct)
-
-
 class LinearSplitter(Linear):
     """A linear layer splitting its result into a dict of tensors.
 
@@ -349,7 +297,7 @@ class LinearSplitter(Linear):
     ) -> None:
         # `out_features` is a potentially nested object, so we extract
         #  its structre and flatten the size data contained within
-        sizes, structure = flatten(out_features)
+        sizes, structure = plyr.flatten(out_features)
         if not all(isinstance(sz, int) and sz >= 0 for sz in sizes):
             raise ValueError("Structured output sizes cannot be negative.")
 
@@ -364,10 +312,10 @@ class LinearSplitter(Linear):
         flat = torch.split(super().forward(input), self.sizes, dim=-1)
 
         # ... then rebuild the correct nested structure
-        return unflatten(flat, self.structure)
+        return plyr.unflatten(flat, self.structure)
 
     def extra_repr(self) -> str:
-        splits = unflatten(self.sizes, self.structure)
+        splits = plyr.unflatten(self.sizes, self.structure)
 
         text = "in_features={}, out_features={}, bias={}"
         return text.format(self.in_features, splits, self.bias is not None)
@@ -383,7 +331,7 @@ class Splitter(Identity):
     ) -> None:
         # `splits` is a potentially nested object, so we extract
         #  its structre and flatten the size data contained within
-        sizes, structure = flatten(splits)
+        sizes, structure = plyr.flatten(splits)
         if not all(isinstance(sz, int) and sz >= 0 for sz in sizes):
             raise ValueError("Structured output sizes cannot be negative.")
 
@@ -396,10 +344,10 @@ class Splitter(Identity):
         flat = input.split(self.sizes, dim=self.dim)
 
         # ... then rebuild the correct nested structure
-        return unflatten(flat, self.structure)
+        return plyr.unflatten(flat, self.structure)
 
     def extra_repr(self) -> str:
-        return repr(unflatten(self.sizes, self.structure))
+        return repr(plyr.unflatten(self.sizes, self.structure))
 
 
 class ModuleDictSplitter(BaseModuleDict):

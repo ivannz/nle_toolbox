@@ -35,7 +35,7 @@ if __name__ == "__main__":
         install_requires=[
             "numpy",
             "torch>=1.8",
-            "python-plyr",
+            "python-plyr>=0.8",
             "scipy",
             "einops",
             "gym<=0.23",

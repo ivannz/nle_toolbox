@@ -12,7 +12,7 @@ conda create -n nle_toolbox "python>=3.9" pip setuptools numpy scipy \
   "pytorch::pytorch>=1.8" matplotlib \
 
 conda activate nle_toolbox \
-  && pip install "python-plyr>=0.7.1" einops nle minihack
+  && pip install "python-plyr>=0.8" einops nle minihack
 ```
 
 The latest version of the toolbox itself can be installed from github

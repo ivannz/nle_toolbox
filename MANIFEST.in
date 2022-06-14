@@ -1,1 +1,2 @@
 graft nle_toolbox/utils/env/minihack/*.des
+include VERSION

@@ -45,7 +45,7 @@ cd nle_toolbox
 conda activate nle_toolbox
 
 conda install -n nle_toolbox swig pytest notebook \
-  && pip install black pre-commit gitpython box2d-py "gym[box2d]"
+  && pip install tqdm wandb black pre-commit gitpython box2d-py "gym[box2d]"
 # XXX gitpython and gym[box2d] for fancy testing
 
 pre-commit install

@@ -172,10 +172,10 @@ def prepare(input, output, nfo=None):
 
     _, gae = pyt_ret_gae(
         input.rew[1:],
-        input.fin[1:],
         output.val,
-        gam=config.f_gam,
-        lam=f_lam,
+        config.f_gam,
+        f_lam,
+        input.fin[1:],
     )
 
     return Buffer(

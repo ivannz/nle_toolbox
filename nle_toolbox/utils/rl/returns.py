@@ -15,10 +15,11 @@ def trailing_broadcast(
 def gamma(
     rew: Tensor,
     gam: Union[float, Tensor],
+    val: Tensor,
     *,
     fin: Tensor,
 ) -> tuple[Tensor, Tensor]:
-    """Prepare the discount factor array.
+    """Prepare the discount factor array and the rewards.
 
     The discount factor `gam` can be a scalar, or a [T x B x ...] tensor,
     which can be broadcasted to `rew` from its leading dimensions (like `fin`).
@@ -39,6 +40,7 @@ def gamma(
     >>> fin2 = fin3.ne(0)  # fin3 is {-1, 0, +1}, fin2 is {0, 1}
     >>> assert fin2.ne(-1).all()  # False == 0, True == 1, False < True
     >>> assert (fin2.gt(0) == fin2).all()
+    >>> assert (fin2.ne(0) == fin2).all()
     >>> assert (fin2.ne(1) == fin2.logical_not()).all()
     """
     # align the termination mask with the rewards `rew` by broadcasting from
@@ -54,7 +56,7 @@ def gamma(
         gam_ = trailing_broadcast(gam, rew).clone()
 
     # annihilate the discounts according to the termination mask
-    return fin_, gam_.masked_fill_(fin_, 0.0)
+    return fin_, gam_.masked_fill_(fin_, 0.0), rew
 
 
 def pyt_ret_gae(
@@ -92,23 +94,23 @@ def pyt_ret_gae(
     """
 
     # get properly broadcasted and zeroed discount coefficients
-    fin_, gam_ = gamma(rew, gam, fin=fin)
+    fin_, gam_, rew_ = gamma(rew, gam, val, fin=fin)
 
-    # [O(T B F)] delta_t = r_{t+1} + \gamma 1_{T \leq t+1} v_{t+1} - v_t
-    # td(n) target is the (n+1)-step lookahead value estimate over the current
-    #  trajectory. The td(n)-residual can be computed using td(0)-errors
-    # \delta^{n+1}_t = \sum_{j=0}^{n+1} \gamma^j \delta_{t+j}  % just expand!
-    # \delta_t = r_{t+1} + \gamma v_{t+1} - v_t
-    delta = torch.addcmul(rew, gam_, val[1:]).sub_(val[:-1])
+    # [O(T B F)] compute the td-errors for truncation-aware GAE
+    # XXX for nonstationary \gamma_t, the n-step lookahead td-residual over
+    #  the current trajectory is
+    #  \delta^n_t
+    #    = \sum_{j=0}^{n-1} \Gamma^j_{t+1} r_{t+j+1} + \Gamma^n_{t+1} v_{t+n} - v_t
+    #    = \sum_{j=0}^{n-1} \Gamma^j_{t+1} \delta_{t+j}  % just expand!
+    #  with \delta_t = r_{t+1} + \gamma_{t+1} v_{t+1} - v_t and
+    #  \Gamma^j_t = \prod_{k<j} \gamma_{t+k}. For example, in our case
+    #    \gamma_t = \gamma 1_{f_t \neq \top}
+    delta = torch.addcmul(rew_, gam_, val[1:]).sub_(val[:-1])
     # XXX `bootstrapping` means using v_{t+h} (the func `v(.)` itself) as an
     # approximation of the present value of rewards-to-go (r_{j+1})_{j\geq t+h}
-    # XXX for ternary $f_t \in \{\pm 1, 0\}$ with tuncation `-1` termination `+1`
-    # we must use zero vtg ONLY IF the state at `t+1` is terminal `f_{t+1} = +1`
-    #   \delta_t = r_{t+1} + \gamma 1_{f_{t+1} \neq +1} v_{t+1} - v_t
-    #      = torch.addcmul(rew, fin_.ne(1), val[1:], value=gam).sub_(val[:-1])
 
-    # A_t = (1 - \lambda) \sum_{t \leq j} \lambda^{j-t} \delta^{j-t}_j
-    #     = \sum_{s \geq 0} \delta_{t+s} (\gamma \lambda)^s
+    # A_t = (1 - \lambda) \sum_{j \geq 0} \lambda^j \delta^{j+1}_t
+    #     = \sum_{k \geq 0} (\gamma \lambda)^k \delta_{t+k}
     # G_t = r_{t+1} + \gamma G_{t+1} 1_{\neg f_{t+1}}
     # XXX this loop version has slight overhead which is noticeable only for
     # short sequences and small batches, but otherwise this scales linearly
@@ -128,7 +130,7 @@ def pyt_ret_gae(
 
         # RET [O(B F)] G_t = r_{t+1} + \gamma G_{t+1} 1_{\neg f_{t+1}}
         # ret[t] = rew[t] + gamma * fin[t] * ret[t+1], t=0..T-1
-        torch.addcmul(rew[-j], gam_[-j], ret[-j], out=ret[-j - 1])
+        torch.addcmul(rew_[-j], gam_[-j], ret[-j], out=ret[-j - 1])
 
     return ret[:-1], gae[:-1]
 
@@ -188,7 +190,7 @@ def pyt_vtrace(
     """
 
     # get properly broadcasted and zeroed discount coefficients
-    fin_, gam_ = gamma(rew, gam, fin=fin)
+    fin_, gam_, rew_ = gamma(rew, gam, val, fin=fin)
 
     # add extra trailing unitary dims for broadcasting to the log-likelihood
     # XXX rho is the current/behavioural likelihood ratio for the taken action
@@ -197,7 +199,7 @@ def pyt_vtrace(
     # [O(T B F)] get the clipped importance-weighted td(0)-residuals
     #     \delta_t = r_{t+1} + \gamma v_{t+1} - v_t
     #     \rho_t = \min\{ \bar{\rho},  \frac{\pi_t(a_t)}{\mu_t(a_t)} \}
-    delta = torch.addcmul(rew, gam_, val[1:]).sub_(val[:-1])
+    delta = torch.addcmul(rew_, gam_, val[1:]).sub_(val[:-1])
     delta.mul_(rho_.exp().clamp_(max=r_bar))  # NB extra copy by `.exp()`
 
     adv = torch.zeros_like(val)
@@ -260,7 +262,7 @@ def pyt_multistep(
 
     # get properly broadcasted and zeroed discount coefficients
     # gam_[t] = (~fin[t]) * gamma = 1_{\neg f_{t+1}} \gamma, t=0..T-1
-    fin_, gam_ = gamma(rew, gam, fin=fin)
+    fin_, gam_, rew_ = gamma(rew, gam, val, fin=fin)
 
     # fast branch for one-step lookahead, i.e. the TD(0) targets.
     if n_lookahead == 1:
@@ -275,7 +277,7 @@ def pyt_multistep(
         # where $\beta_{t+1} = \gamma 1_{\neg f_{t+1}}$.
         #     val_[t] = rew[t] + gam_[t] * val[t+1], t=0..T-1
         # here `gam_[t]` is $\beta_{t+1}$ and `rew` is $r_{t+1}$
-        val_[:-1] = torch.addcmul(rew, gam_, val[1:])
+        val_[:-1] = torch.addcmul(rew_, gam_, val[1:])
 
         # `val[-1]` never changes, cause it's zero-step ahead bootstrapped!
         val = val_.clone()
@@ -285,7 +287,7 @@ def pyt_multistep(
         # Here `val` is exactly that.
 
     # do not cut off incomplete returns
-    return torch.addcmul(rew, gam_, val[1:])
+    return torch.addcmul(rew_, gam_, val[1:])
 
 
 def pyt_q_values(

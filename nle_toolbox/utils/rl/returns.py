@@ -35,9 +35,11 @@ def gamma(
         * `.gt(0)` termination, `.lt(0)` truncation
     These are compatibne with bool `fin`, since `fin2.gt(0) == fin2`
     >>> import torch
-    >>> fin3 = torch.randint(-1, 2, size=(10, 4), dtype=torch.int8)
-    >>> fin2 = fin3.ne(0)
-    >>> assert (fin2.gt(False) == fin2).all()  # False < True
+    >>> fin3 = torch.randint(-1, 2, size=(1024, 16), dtype=torch.int8)
+    >>> fin2 = fin3.ne(0)  # fin3 is {-1, 0, +1}, fin2 is {0, 1}
+    >>> assert fin2.ne(-1).all()  # False == 0, True == 1, False < True
+    >>> assert (fin2.gt(0) == fin2).all()
+    >>> assert (fin2.ne(1) == fin2.logical_not()).all()
     """
     # align the termination mask with the rewards `rew` by broadcasting from
     #  the leading dimensions
@@ -100,6 +102,10 @@ def pyt_ret_gae(
     delta = torch.addcmul(rew, gam_, val[1:]).sub_(val[:-1])
     # XXX `bootstrapping` means using v_{t+h} (the func `v(.)` itself) as an
     # approximation of the present value of rewards-to-go (r_{j+1})_{j\geq t+h}
+    # XXX for ternary $f_t \in \{\pm 1, 0\}$ with tuncation `-1` termination `+1`
+    # we must use zero vtg ONLY IF the state at `t+1` is terminal `f_{t+1} = +1`
+    #   \delta_t = r_{t+1} + \gamma 1_{f_{t+1} \neq +1} v_{t+1} - v_t
+    #      = torch.addcmul(rew, fin_.ne(1), val[1:], value=gam).sub_(val[:-1])
 
     # A_t = (1 - \lambda) \sum_{t \leq j} \lambda^{j-t} \delta^{j-t}_j
     #     = \sum_{s \geq 0} \delta_{t+s} (\gamma \lambda)^s

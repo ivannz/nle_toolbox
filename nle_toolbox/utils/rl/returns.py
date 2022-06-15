@@ -14,14 +14,30 @@ def trailing_broadcast(
 
 def gamma(
     rew: Tensor,
-    fin: Tensor,
-    *,
     gam: Union[float, Tensor],
+    *,
+    fin: Tensor,
 ) -> tuple[Tensor, Tensor]:
     """Prepare the discount factor array.
 
     The discount factor `gam` can be a scalar, or a [T x B x ...] tensor,
     which can be broadcasted to `rew` from its leading dimensions (like `fin`).
+
+    On the other hand `fin` is always a [T x B] bool tensor (2-dim).
+
+    XXX
+    ---
+    We need to implement slightly different logic for trunctation/termination
+    events: if `fin` indicates termination, then we use zero value-to-go,
+    otherwise, when `fin` indicates truncation, we must use bootstraped value-to-go
+    estimate. To this end the `fin` should have to be ternary, not boolean.
+    `torch.int8` would perfectly fit this:
+        * `.gt(0)` termination, `.lt(0)` truncation
+    These are compatibne with bool `fin`, since `fin2.gt(0) == fin2`
+    >>> import torch
+    >>> fin3 = torch.randint(-1, 2, size=(10, 4), dtype=torch.int8)
+    >>> fin2 = fin3.ne(0)
+    >>> assert (fin2.gt(False) == fin2).all()  # False < True
     """
     # align the termination mask with the rewards `rew` by broadcasting from
     #  the leading dimensions
@@ -46,7 +62,6 @@ def pyt_ret_gae(
     *,
     gam: Union[float, Tensor],
     lam: float,
-    rho: Tensor = None,
 ) -> tuple[Tensor, Tensor]:
     r"""Compute the Generalized Advantage Estimates and the Returns.
 
@@ -76,7 +91,7 @@ def pyt_ret_gae(
     """
 
     # get properly broadcasted and zeroed discount coefficients
-    fin_, gam_ = gamma(rew, fin, gam=gam)
+    fin_, gam_ = gamma(rew, gam, fin=fin)
 
     # [O(T B F)] delta_t = r_{t+1} + \gamma 1_{T \leq t+1} v_{t+1} - v_t
     # td(n) target is the (n+1)-step lookahead value estimate over the current
@@ -168,7 +183,7 @@ def pyt_vtrace(
     """
 
     # get properly broadcasted and zeroed discount coefficients
-    fin_, gam_ = gamma(rew, fin, gam=gam)
+    fin_, gam_ = gamma(rew, gam, fin=fin)
 
     # add extra trailing unitary dims for broadcasting to the log-likelihood
     # XXX rho is the current/behavioural likelihood ratio for the taken action
@@ -240,7 +255,7 @@ def pyt_multistep(
 
     # get properly broadcasted and zeroed discount coefficients
     # gam_[t] = (~fin[t]) * gamma = 1_{\neg f_{t+1}} \gamma, t=0..T-1
-    fin_, gam_ = gamma(rew, fin, gam=gam)
+    fin_, gam_ = gamma(rew, gam, fin=fin)
 
     # fast branch for one-step lookahead, i.e. the TD(0) targets.
     if n_lookahead == 1:
@@ -326,7 +341,7 @@ def pyt_q_values(
     for $
         \hat{a}_t = \arg \max_a q_{\theta t}(a)
     $ being the action taken by the current Q-network $\theta$ at $x_t$.
-    """
+    """  # noqa: E501
     # use $q_{\theta t}$ instead of $q_{\theta^- t}$ in Q-learning
     if qtg is None:
         qtg, double = qon, False

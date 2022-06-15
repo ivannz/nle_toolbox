@@ -57,11 +57,10 @@ def gamma(
 
 def pyt_ret_gae(
     rew: Tensor,
-    fin: Tensor,
     val: Tensor,
-    *,
     gam: Union[float, Tensor],
     lam: float,
+    fin: Tensor,
 ) -> tuple[Tensor, Tensor]:
     r"""Compute the Generalized Advantage Estimates and the Returns.
 
@@ -130,11 +129,11 @@ def pyt_ret_gae(
 
 def pyt_vtrace(
     rew: Tensor,
-    fin: Tensor,
     val: Tensor,
-    rho: Tensor,
-    *,
     gam: Union[float, Tensor],
+    rho: Tensor,
+    fin: Tensor,
+    *,
     r_bar: float = float("+inf"),
     c_bar: float = float("+inf"),
 ) -> Tensor:
@@ -212,10 +211,10 @@ def pyt_vtrace(
 
 def pyt_multistep(
     rew: Tensor,
-    fin: Tensor,
     val: Tensor,
-    *,
     gam: Union[float, Tensor],
+    fin: Tensor,
+    *,
     n_lookahead: int = 4,
 ) -> Tensor:
     r"""Compute the multistep lookahead bootstrapped returns.
@@ -364,10 +363,9 @@ def pyt_q_values(
 
 def pyt_td_target(
     rew: Tensor,
-    fin: Tensor,
     val: Tensor,
-    *,
     gam: Union[float, Tensor],
+    fin: Tensor,
 ) -> Tensor:
     r"""Compute the TD(0) targets.
 
@@ -376,16 +374,16 @@ def pyt_td_target(
     see `pyt_ret_gae` about synchronization of `rew`, `fin` and `val`.
     `rew` is on element shorter than `val`! See `gamma()` about `gam`.
     """
-    return pyt_multistep(rew, fin, val, gam=gam, n_lookahead=1)
+    return pyt_multistep(rew, val, gam, fin, n_lookahead=1)
 
 
 def pyt_q_targets(
     rew: Tensor,
-    fin: Tensor,
     qon: Tensor,
-    qtg: Tensor = None,
-    *,
+    qtg: Tensor,
     gam: Union[float, Tensor],
+    fin: Tensor,
+    *,
     double: bool = True,
     n_lookahead: int = 1,
 ) -> Tensor:
@@ -395,4 +393,4 @@ def pyt_q_targets(
     val = pyt_q_values(qon, qtg, double=double)
 
     # compute one- or multi-step lookahead bootstrapped value targets
-    return pyt_multistep(rew, fin, val, gam=gam, n_lookahead=n_lookahead)
+    return pyt_multistep(rew, val, gam, fin, n_lookahead=n_lookahead)

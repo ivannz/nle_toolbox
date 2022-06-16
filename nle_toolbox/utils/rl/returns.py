@@ -23,25 +23,10 @@ def gamma(
 
     The discount factor `gam` can be a scalar, or a [T x B x ...] tensor,
     which can be broadcasted to `rew` from its leading dimensions (like `fin`).
-
-    On the other hand `fin` is always a [T x B] bool tensor (2-dim).
-
-    XXX
-    ---
-    We need to implement slightly different logic for trunctation/termination
-    events: if `fin` indicates termination, then we use zero value-to-go,
-    otherwise, when `fin` indicates truncation, we must use bootstraped value-to-go
-    estimate. To this end the `fin` should have to be ternary, not boolean.
-    `torch.int8` would perfectly fit this:
-        * `.gt(0)` termination, `.lt(0)` truncation
-    These are compatibne with bool `fin`, since `fin2.gt(0) == fin2`
-    >>> import torch
-    >>> fin3 = torch.randint(-1, 2, size=(1024, 16), dtype=torch.int8)
-    >>> fin2 = fin3.ne(0)  # fin3 is {-1, 0, +1}, fin2 is {0, 1}
-    >>> assert fin2.ne(-1).all()  # False == 0, True == 1, False < True
-    >>> assert (fin2.gt(0) == fin2).all()
-    >>> assert (fin2.ne(0) == fin2).all()
-    >>> assert (fin2.ne(1) == fin2.logical_not()).all()
+    `fin` is always a [T x B] tensor (2-dim) with either of bool or int8 dtype.
+    Ternary `fin` is necessary for implementing different value-to-go logic for
+    trunctation/termination events: `termination` means zero value estimate,
+    `truncation` -- self bootstrapped estimate.
     """
     # align the termination mask with the rewards `rew` by broadcasting from
     #  the leading dimensions
@@ -55,8 +40,20 @@ def gamma(
         # make sure to `.clone` gamma since we will be overwriting it soon
         gam_ = trailing_broadcast(gam, rew).clone()
 
-    # annihilate the discounts according to the termination mask
-    return fin_, gam_.masked_fill_(fin_, 0.0), rew
+    # Truncation and termination have different effects on the present-value,
+    #  despite both blocking the reward flow from the future. Termination means
+    #  that the reward flow following the state is zero, which implies that the
+    #  value-to-go is zero. Truncation on the other hand means that the episode
+    #  has been terminated at a state that may potentially have non-zero future
+    #  reward stream. Hence in this case the value-to-go could be bootstrapped
+    #  from the current value function. Conceptually, truncation always happens
+    #  at the edge of a fragment, when value estimate is used to bootsrap.
+    # XXX one-step adjusted rewards r^\circ_t = r_t + \gamma_t v_t 1_{f_t = -1}
+    # XXX `rew[t] = r_{t+1}` (t = 0..T-1), `val[t] = v_t` (t = 0..T)
+    rew_ = torch.addcmul(rew, gam_.masked_fill(fin_.ge(0), 0.0), val[1:])
+
+    # annihilate the discounts according to the truncation/termination mask,
+    return fin_, gam_.masked_fill_(fin_.ne(0), 0.0), rew_
 
 
 def pyt_ret_gae(
@@ -71,26 +68,27 @@ def pyt_ret_gae(
     Details
     -------
     The sequential data in `rew` [T x B x ...], `fin` [T x B x ...] and
-    `val` [(T + 1) x B x ...] is expected to have the following timing: for
-    the transition
+    `val` [(T + 1) x B x ...] (and potentially in `gam` [T x B x ...]) is
+    expected to have the following timing: for the transition
     $$
         \omega_t, a_t -->> \omega_{t+1}, x_{t+1}, r^E_{t+1}, f_{t+1}
         \,, $$
 
     `rew[t]` is $r_{t+1}$, `fin[t]` indicates if $\omega_{t+1}$ is terminal,
     and `val[t]` is the bootsrap estimate $v_t$ of the value-to-go from the
-    current state $\omega_t$.
+    current state $\omega_t$. Ternary `fin[t]` is $f_{t+1} \in \{0, \pm 1\}$
+    with `-1` indicating truncation, `+1` -- termination and `0` -- continuation.
 
-    Thus $v_t$ estimates the present value of the future stream of rewards
-    $(r_{j+1} )_{j \geq t}$ which includes $r_{t+1}$. In terms of the argument
-    names `val[t] ~ PV(rew[t:], gam)`.
-
-    If a state is TERMINAL ($f_{t+1} = \top$), then the reward stream coming
+    If a state is TERMINAL ($f_{t+1} = +1$), then the reward stream coming
     AFTER it is asssumed to be zero ($r_{j+1} = 0$ for all $j > t$). Hence,
     the returns, time-deltas and bootstrapped esitmates are computed using
-    $\gamma_t = \gamma 1_{\neg f_t}$ series instead of plain `gamma`.
+    $\gamma_t = \gamma 1_{f_t = 0}$ series instead of plain `gamma`. See
+    `gamma()` about truncation events $f_t= - 1$ and the discount factor `gam`.
 
-    See `gamma()` about the discount factor `gam`.
+    $v_t$ estimates the VALUE-TO-GO of the FUTURE STREAM of rewards
+    $(r_{j+1})_{j \geq t}$ which does NOT include $r_t$, since it HAS BEEN
+    RECEVIED for the transition `t-1 -->> t`. In terms of the argument
+    names `val[t] ~ present-value(rew[t:], gam[t:])`.
     """
 
     # get properly broadcasted and zeroed discount coefficients
@@ -104,33 +102,33 @@ def pyt_ret_gae(
     #    = \sum_{j=0}^{n-1} \Gamma^j_{t+1} \delta_{t+j}  % just expand!
     #  with \delta_t = r_{t+1} + \gamma_{t+1} v_{t+1} - v_t and
     #  \Gamma^j_t = \prod_{k<j} \gamma_{t+k}. For example, in our case
-    #    \gamma_t = \gamma 1_{f_t \neq \top}
+    #    \gamma_t = \tilde{gamma}_t 1_{f_t = 0}, for \tilde{gamma}_t discounts
     delta = torch.addcmul(rew_, gam_, val[1:]).sub_(val[:-1])
     # XXX `bootstrapping` means using v_{t+h} (the func `v(.)` itself) as an
     # approximation of the present value of rewards-to-go (r_{j+1})_{j\geq t+h}
 
-    # A_t = (1 - \lambda) \sum_{j \geq 0} \lambda^j \delta^{j+1}_t
-    #     = \sum_{k \geq 0} (\gamma \lambda)^k \delta_{t+k}
-    # G_t = r_{t+1} + \gamma G_{t+1} 1_{\neg f_{t+1}}
-    # XXX this loop version has slight overhead which is noticeable only for
-    # short sequences and small batches, but otherwise this scales linearly
-    # in all dimensions. Using doubly buffered
-    #   `.addcmul(rew, gam_, ret[j, 1:], out=ret[1-j, :-1])`
-    # for `ret` (and similar for `gae`) would increase the complexity of each
-    # iteration by T times! (`pyt_returns` and `pyt_multistep_returns`)
+    # rew[t], fin[t], gam[t], val[t] is r_{t+1}, f_{t+1}, \gamma_{t+1} and v_t
+    #   `t` is `-j`, `t+1` is `-j-1` (j=1..T)
     gae, ret = torch.zeros_like(val), val.clone()
     for j in range(1, len(delta) + 1):
-        # rew[t], fin[t], val[t] is r_{t+1}, f_{t+1} and v_t
-        # t is -j, t+1 is -j-1 (j=1..T)
-
-        # GAE [O(B F)] A_t = \delta_t + \lambda \gamma A_{t+1} 1_{\neg f_{t+1}}
-        # gae[t] = delta[t] + gamma * C * fin[t] * gae[t+1], t=0..T-1
-        # XXX `gam_` is already zeroed according to the `fin` mask!
+        # GAE [O(B F)] A_t = \delta_t + \lambda \gamma_{t+1} A_{t+1} 1_{f_{t+1} = 0}
+        # A_t = (1 - \lambda) \sum_{j \geq 0} \lambda^j \delta^{j+1}_t
+        #     = \sum_{k \geq 0} \Gamma^k_t \lambda^k \delta_{t+k}
+        #     = \delta_t + \lambda \gamma_{t+1} A_{t+1}
+        # gae[t] = delta[t] + gamma[t] * C * (fin[t] == 0) * gae[t+1], t=0..T-1
+        # XXX `gam_` is already zeroed according to the `fin == 0` mask!
         torch.addcmul(delta[-j], gam_[-j], gae[-j], value=lam, out=gae[-j - 1])
 
-        # RET [O(B F)] G_t = r_{t+1} + \gamma G_{t+1} 1_{\neg f_{t+1}}
-        # ret[t] = rew[t] + gamma * fin[t] * ret[t+1], t=0..T-1
+        # RET [O(B F)] G_t = r_{t+1} + \gamma_{t+1} G_{t+1} 1_{f_{t+1} = 0}
+        # G_t = \sum_{j\geq 0} \Gamma^j_{t+1} r_{t+j+1}
+        #     = r_{t+1} + \gamma_{t+1} G_{t+1}
+        # ret[t] = rew[t] + gamma[t] * (fin[t] == 0) * ret[t+1], t=0..T-1
         torch.addcmul(rew_[-j], gam_[-j], ret[-j], out=ret[-j - 1])
+    # XXX this loop version has slight overhead which is noticeable only for
+    # short sequences and small batches, but otherwise this scales linearly
+    # in all dimensions. Double buffering for `ret` and `gae` increases the
+    # complexity of each iteration by T times, e.g`pyt_multistep_returns`.
+    #   `torch.addcmul(rew, gam_, ret[j, 1:], out=ret[1-j, :-1])`
 
     return ret[:-1], gae[:-1]
 
@@ -188,6 +186,7 @@ def pyt_vtrace(
 
     See `gamma()` about the discount factor `gam`.
     """
+    raise NotImplementedError
 
     # get properly broadcasted and zeroed discount coefficients
     fin_, gam_, rew_ = gamma(rew, gam, val, fin=fin)
@@ -259,6 +258,7 @@ def pyt_multistep(
     is the probability of termination conditional on NOT having terminated
     before), or terminate upon end-of-episode and never discount.
     """
+    raise NotImplementedError
 
     # get properly broadcasted and zeroed discount coefficients
     # gam_[t] = (~fin[t]) * gamma = 1_{\neg f_{t+1}} \gamma, t=0..T-1

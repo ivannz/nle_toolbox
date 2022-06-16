@@ -1,21 +1,35 @@
 import pytest
 
 import torch
-from nle_toolbox.utils.rl.returns import trailing_broadcast, pyt_ret_gae
+from typing import Union
+from torch import Tensor
+
+from nle_toolbox.utils.rl.returns import trailing_broadcast
+from nle_toolbox.utils.rl.returns import pyt_ret_gae, pyt_multistep
 
 
-def random_data(n_seq: int, n_env: int, *shape, binary: bool = False):
+def random_data(
+    n_seq: int,
+    n_env: int,
+    *shape,
+    binary: bool = False,
+    dtype: torch.dtype = torch.float64,
+) -> tuple[Tensor, Tensor, Union[float, Tensor], Tensor]:
     # produce some random discount factors, rewards and value estimates
-    rew = torch.rand(n_seq, n_env, *shape).log_().neg_()
-    val = torch.randn(n_seq + 1, n_env, *shape)
-    gam = torch.rand(n_seq, n_env, *shape)
+    rew = torch.rand(n_seq, n_env, *shape, dtype=dtype).log_().neg_()
+    val = torch.randn(n_seq + 1, n_env, *shape, dtype=dtype)
+    gam = torch.rand(n_seq, n_env, *shape, dtype=dtype)
 
     # generate ternary fin mask
     fin = torch.randint(-1, 2, size=(n_seq, n_env), dtype=torch.int8)
     return rew, val, gam, (fin.ne(0) if binary else fin)
 
 
-def broadcast(rew, gam, fin):
+def broadcast(
+    rew: Tensor,
+    gam: Union[float, Tensor],
+    fin: Tensor,
+) -> tuple[Tensor, Tensor]:
     fin_ = trailing_broadcast(fin, rew)
     if isinstance(gam, float):
         gam_ = rew.new_full(fin_.shape, gam)
@@ -26,7 +40,12 @@ def broadcast(rew, gam, fin):
     return fin_, gam_
 
 
-def manual_present_value(rew, val, gam, fin):
+def manual_present_value(
+    rew: Tensor,
+    val: Tensor,
+    gam: Union[float, Tensor],
+    fin: Tensor,
+) -> Tensor:
     fin, gam = broadcast(rew, gam, fin)
 
     # backward recursion from t=T..0
@@ -42,7 +61,12 @@ def manual_present_value(rew, val, gam, fin):
     return torch.stack(res[::-1], axis=0)
 
 
-def manual_deltas(rew, val, gam, fin):
+def manual_deltas(
+    rew: Tensor,
+    val: Tensor,
+    gam: Union[float, Tensor],
+    fin: Tensor,
+) -> Tensor:
     fin, gam = broadcast(rew, gam, fin)
 
     # \delta_t = r_{t+1}
@@ -51,7 +75,13 @@ def manual_deltas(rew, val, gam, fin):
     return rew + gam * val[1:] * blk - val[:-1]
 
 
-def manual_ret_gae(rew, val, gam, lam, fin):
+def manual_ret_gae(
+    rew: Tensor,
+    val: Tensor,
+    gam: Union[float, Tensor],
+    lam: Tensor,
+    fin: Tensor,
+) -> tuple[Tensor, Tensor]:
     ret_ = manual_present_value(rew, val, gam, fin)
 
     gae_ = manual_present_value(
@@ -63,7 +93,36 @@ def manual_ret_gae(rew, val, gam, lam, fin):
     return ret_, gae_
 
 
-def test_torch_ternary_to_binary(shape=(256, 256)):
+def manual_multistep(
+    rew: Tensor,
+    val: Tensor,
+    gam: Union[float, Tensor],
+    fin: Tensor,
+    *,
+    n_lookahead: int,
+) -> Tensor:
+    fin, gam = broadcast(rew, gam, fin)
+
+    # compute h-step lookahead value-to-go estimates
+    # x^h_t = \sum_{j=0}{^{h-1} \Gamma^j_{t+1} r_{t+j+1} + \Gamma^h_{t+1} v_{t+h}
+    # recursion on the horizon h
+    # x^0_t = v_t (t = 0..T-1) and x^h_T = v_T (h = 0..H)
+    # x^h_t = r_{t+1}  (t = 0..T-1)
+    #       + \gamma_{t+1} v_{t+1} 1_{f_{t+1} = -1}
+    #       + \gamma_{t+1} x^{h-1}_{t+1} 1_{f_{t+1} = 0}
+    rew_ = rew + gam * fin.eq(-1) * val[1:]
+    ret = val.new_zeros((1 + n_lookahead,) + val.shape).copy_(val)
+    for j in range(n_lookahead):
+        ret[j + 1, :-1] = rew_ + gam * fin.eq(0) * ret[j, 1:]
+
+        assert torch.allclose(ret[j + 1, -1:], val[-1:])
+
+    return ret[n_lookahead, :-1]
+
+
+def test_torch_ternary_to_binary(
+    shape: tuple[int] = (256, 256),
+) -> None:
     # get binary from ternary data
     fin3 = torch.randint(-1, 2, size=shape, dtype=torch.int8)
     fin2 = fin3.ne(0)  # fin3 is {-1, 0, +1}, fin2 is {0, 1}
@@ -81,11 +140,88 @@ def test_torch_ternary_to_binary(shape=(256, 256)):
 
 
 @pytest.mark.parametrize("binary", [False, True])
+def test_manual_multistep(
+    binary: bool,
+    n_seq: int = 256,
+    n_env: int = 256,
+    shape: tuple[int] = (),
+) -> None:
+    """Sanity check on the tester function."""
+    rew, val, gam, fin = random_data(n_seq, n_env, *shape, binary=binary)
+
+    res = manual_multistep(rew, val, gam, fin, n_lookahead=1)
+    assert torch.allclose(
+        res,
+        rew + gam * (fin.eq(0) * val[1:] + fin.eq(-1) * val[1:]),
+    )
+
+    res = manual_multistep(rew, val, gam, fin, n_lookahead=3)
+    assert torch.allclose(
+        res[-1],
+        rew[-1] + gam[-1] * (fin[-1].eq(0) * val[-1] + fin[-1].eq(-1) * val[-1]),
+    )
+    assert torch.allclose(
+        res[-2],
+        rew[-2]
+        + gam[-2]
+        * (
+            fin[-2].eq(-1) * val[-2]
+            + fin[-2].eq(0)
+            * (rew[-1] + gam[-1] * (fin[-1].eq(0) * val[-1] + fin[-1].eq(-1) * val[-1]))
+        ),
+    )
+    assert torch.allclose(
+        res[-3],
+        rew[-3]
+        + gam[-3]
+        * (
+            fin[-3].eq(-1) * val[-3]
+            + fin[-3].eq(0)
+            * (
+                rew[-2]
+                + gam[-2]
+                * (
+                    fin[-2].eq(-1) * val[-2]
+                    + fin[-2].eq(0)
+                    * (
+                        rew[-1]
+                        + gam[-1] * (fin[-1].eq(0) * val[-1] + fin[-1].eq(-1) * val[-1])
+                    )
+                )
+            )
+        ),
+    )
+
+
+@pytest.mark.parametrize("binary", [False, True])
 @pytest.mark.parametrize("n_seq", [1, 1024])
 @pytest.mark.parametrize("lam", [0.0, 0.5, 0.9, 0.98, 1.0])
-def test_pyt_ret_gae(binary, n_seq, lam, n_env=256, shape=()):
+def test_pyt_ret_gae(
+    binary: bool,
+    n_seq: int,
+    lam: float,
+    n_env: int = 256,
+    shape: tuple[int] = (),
+) -> None:
     rew, val, gam, fin = random_data(n_seq, n_env, *shape, binary=binary)
 
     ret, gae = pyt_ret_gae(rew, val, gam, lam, fin)
     ret_, gae_ = manual_ret_gae(rew, val, gam, lam, fin)
     assert torch.allclose(ret, ret_) and torch.allclose(gae, gae_)
+
+
+@pytest.mark.parametrize("binary", [False, True])
+@pytest.mark.parametrize("n_seq", [1, 1024])
+@pytest.mark.parametrize("n_lookahead", [0, 1, 3, 10])
+def test_pyt_multistep(
+    binary: bool,
+    n_seq: int,
+    n_lookahead: int,
+    n_env: int = 256,
+    shape: tuple[int] = (),
+) -> None:
+    rew, val, gam, fin = random_data(n_seq, n_env, *shape, binary=binary)
+
+    ret = pyt_multistep(rew, val, gam, fin, n_lookahead=n_lookahead)
+    ret_ = manual_multistep(rew, val, gam, fin, n_lookahead=n_lookahead)
+    assert torch.allclose(ret, ret_)

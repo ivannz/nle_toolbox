@@ -22,16 +22,15 @@ class SerialVecEnv(gym.Env):
         *,
         args: tuple = (),
         kwargs: dict = None,
-        pack_nfo: bool = True,
+        ternary: bool = False,
     ):
+        self.ternary = ternary
         self.envs = [factory(*args, **(kwargs or {})) for _ in range(n_envs)]
 
         # assume the factory produces consistent envs
         env = self.envs[0]
         self.observation_space = batch_space(env.observation_space, n_envs)
         self.action_space = batch_space(env.action_space, n_envs)
-
-        self.pack_nfo = pack_nfo
 
     def seed(self, seed):
         # XXX does not work for envs, which use non-numpy or legacy PRNG
@@ -61,24 +60,29 @@ class SerialVecEnv(gym.Env):
             # `nfo` is auxiliary dict, related to `t -->> t+1` transition
             obs, rew, fin, nfo = env.step(act)
             if fin:
+                # record the obs before resetting if episode was truncated
+                if nfo.get("TimeLimit.truncated", False):
+                    fin = -1  # XXX indicate truncation event with `-1`
+                    nfo["obs"] = deepcopy(obs)
+
                 obs = env.reset()
 
             # `obs` is x_0 if `fin` else x_{t+1}
             result.append((obs, rew, fin, nfo))
 
         obs_, rew_, fin_, nfo_ = zip(*result)
-        # MAYBE the info dict `nfo` should NOT be repacked (unlike other data),
-        #  since it may contain dynamic auxiliary diagnostic information it is
-        #  up to env's implementation.
-        if self.pack_nfo:
-            # MAYBE replace the `AtomicTuple` with a `np.asarray`?
-            nfo = plyr.apply(plyr.AtomicTuple, *nfo_, _star=False)
 
-        else:
-            nfo = nfo_
-
+        # the info dicts `nfo` are never packed (unlike other data), since they
+        # may report diagnostic information which is up to env's implementation
         obs = plyr.apply(np.stack, *obs_, _star=False, axis=0)
-        return obs, np.array(rew_), np.array(fin_), nfo
+
+        # the dtype of `fin` (`done`) data:
+        # * binary continuation (False), termination (True)
+        # * ternary continuation (== 0), termination (> 0), truncation (< 0)
+        # we pick -1, 0, +1 becasue these values are compatible with bool!
+        # XXX https://docs.python.org/3/library/stdtypes.html#truth-value-testing
+        dtype = np.int8 if self.ternary else bool
+        return obs, np.array(rew_), np.array(fin_, dtype), nfo_
 
     @property
     def nenvs(self):
@@ -100,12 +104,13 @@ AliasedNPYT = namedtuple("AliasedNPYT", "npy,pyt")
 #  meaning that updates of one are immediately reflected in the other.
 
 
-def prepare(env, rew=np.nan, fin=True):
+def prepare(env, rew=np.nan):
     # we rely on an underlying Vectorized Env to supply us with correct
     #  product action space, observations, and a number of environments.
     assert isinstance(env, SerialVecEnv)
 
     # prepare the runtime context (coupled numpy-torch tensors)
+    dtype = np.int8 if env.ternary else bool
     npy = plyr.apply(
         np.copy,
         Input(
@@ -114,7 +119,7 @@ def prepare(env, rew=np.nan, fin=True):
             # pre-filled arrays for potentially structured rewards
             plyr.ragged(np.full, len(env), rew, dtype=np.float32),
             # `fin` is an array and NEVER structured
-            np.full(len(env), fin, dtype=bool),
+            np.full(len(env), True, dtype=dtype),
         ),
     )
 

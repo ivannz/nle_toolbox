@@ -258,7 +258,9 @@ def pyt_multistep(
     is the probability of termination conditional on NOT having terminated
     before), or terminate upon end-of-episode and never discount.
     """
-    raise NotImplementedError
+    # fast branch for zero-step lookahead, i.e. current value-to-go estimates
+    if n_lookahead < 1:
+        return val[:-1]
 
     # get properly broadcasted and zeroed discount coefficients
     # gam_[t] = (~fin[t]) * gamma = 1_{\neg f_{t+1}} \gamma, t=0..T-1
@@ -266,7 +268,7 @@ def pyt_multistep(
 
     # fast branch for one-step lookahead, i.e. the TD(0) targets.
     if n_lookahead == 1:
-        return torch.addcmul(rew, gam_, val[1:])
+        return torch.addcmul(rew_, gam_, val[1:])
 
     assert n_lookahead > 1
 

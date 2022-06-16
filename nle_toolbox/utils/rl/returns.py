@@ -151,69 +151,78 @@ def pyt_vtrace(
 
         [Espeholt et al. (2018)](http://proceedings.mlr.press/v80/espeholt18a.html)
 
-    Specifically we denote the log-likelihood ratio of target and behavior
-    policies by $
+    The TD(0) residuals are given by
+    $$
+        \delta_t = r_{t+1} + \gamma_{t+1} 1_{f_{t+1} = 0} v_{t+1} - v_t
+        \,, $$
+
+    where $r_{t+1}$ (`rew[t]`) is the reward for transitioning to `t+1`,
+    $\gamma_{t+1}$ (`gam[t]`) is the discount factor (potentially non-constant),
+    e.g. $\gamma_{t+1} = \gamma 1_{f_{t+1} = 0}$ for $f_{t+1}$ (`fin[t]`), and
+    $v_t$ (`val[t]`) is the state-value estimate (T+1, unlike others). In order
+    to support truncation termination we use 1-step appxorimation $
+        r^\circ_{t+1} = r_{t+1} + \gamma_{t+1} v_{t+1} 1_{f_{t+1} = -1}
+    $ instead of $r_{t+1}$.
+
+    The $n$-step lookahead v-trace value estimate is
+    $$
+        \hat{v}^n_t  % n-step lookahead importance-weighted value estimate
+            = v_t + \sum_{j=0}^{n-1} q^j_t \Gamma^j_{t+1} \delta_{t+j}
+        \,, $$
+
+    where the action log likelihood ratio $
         \rho_t = \log \pi(a_t \mid x_t) - \log \mu(a_t \mid x_t)
-    $, where $\mu$ is the behavior policy and $\pi$ is the target.
-
-    Recall that the TD(0) residuals are given by
-    $$
-        \delta_t = r_{t+1} + \gamma 1_{\neg f_{t+1}} v_{t+1} - v_t
-        \,, $$
-
-    where $v_t = V(\omega_t)$ -- the state-value function associated with
-    the behaviour policy $\mu$, and $\delta_s = 0$ for all $s \geq t$ if
-    $f_t = \top$. The $n$-step lookahead v-trace value estimate is
-    $$
-        \hat{v}^n_t
-            = v_t + \sum_{j=t}^{t+n-1} \gamma^{j-t}
-                       \delta_j \eta_j \prod_{k=t}^{j-1} c_k
-        \,, $$
-
-    where $
-        c_j = \min\{ e^\rho_j, \bar{c} \}
+    $ (`rho[t]`) $\mu$ is the behavior policy and $\pi$ is the target, $
+        \Gamma^j_t = \prod_{k < j} \gamma_{t+k}
+                   % \Gamma^{j+1}_t = \gamma_t \Gamma^j_{t+1}
     $, $
-        \eta_j = \min\{ e^\rho_j, \bar{\rho} \}
-    $, and $\hat{v}^n_s = 0$ for all $s \geq t$ if $f_t = \top$. At
-    the $n \to \infty$ limit (bounded $\rho_t$, $v_t$, and $r_t$) we
-    get a forward recurrence
+        q^j_t = \biggl( \prod_{k < j} c_{t+k} \biggr) \eta_{t+j}
+              % q^{j+1}_t = c_t q^j_{t+1}
+    $, $
+        \eta_t = \min\{ e^\rho_t, \bar{\eta} \}
+    $, $
+        c_t = \min\{ e^\rho_t, \bar{c} \}
+    $. At $n \to \infty$ limit (bounded $\rho_t$, $v_t$, and $r_t$) we get a
+    forward recurrence
     $$
         \hat{v}_t
-            = v_t + \sum_{j \geq t}
-                \gamma^{j-t} \delta_j \eta_j \prod_{k=t}^{j-1} c_k
-            = v_t + \delta_t \eta_t + \gamma c_t (\hat{v}_{t+1} - v_{t+1})
+            % = v_t + \sum_{j \geq 0} q^j_t \Gamma^j_{t+1} \delta_{t+j}
+            % = v_t + q^0_t \delta_t
+            %   + \sum_{j \geq 0} q^{j+1}_t \Gamma^{j+1}_{t+1} \delta_{t+1+j}
+            = v_t + \eta_t \delta_t
+              + c_t \gamma_{t+1} (\hat{v}_{t+1} - v_{t+1}) 1_{f_{t+1} = 0}
         \,. $$
-
-    See `gamma()` about the discount factor `gam`.
+    See `gamma()` about the discount factor `gam` and adjusted rewards.
     """
-    raise NotImplementedError
-
     # get properly broadcasted and zeroed discount coefficients
     fin_, gam_, rew_ = gamma(rew, gam, val, fin=fin)
 
     # add extra trailing unitary dims for broadcasting to the log-likelihood
     # XXX rho is the current/behavioural likelihood ratio for the taken action
     rho_ = rho.reshape_as(fin_)
+    eta = rho_.exp().clamp_(max=r_bar)  # NB extra copy by `.exp()`
 
-    # [O(T B F)] get the clipped importance-weighted td(0)-residuals
-    #     \delta_t = r_{t+1} + \gamma v_{t+1} - v_t
-    #     \rho_t = \min\{ \bar{\rho},  \frac{\pi_t(a_t)}{\mu_t(a_t)} \}
-    delta = torch.addcmul(rew_, gam_, val[1:]).sub_(val[:-1])
-    delta.mul_(rho_.exp().clamp_(max=r_bar))  # NB extra copy by `.exp()`
+    # [O(T B F)] get the clipped \eta_t-weighted td(0)-residuals \delta_t
+    delta = torch.addcmul(rew_, gam_, val[1:]).sub_(val[:-1]).mul_(eta)
 
+    # [O(T B F)] compute $\gamma_{t+1} c_t 1_{f_{t+1} = 0}$
     adv = torch.zeros_like(val)
-
-    # c_t = \min\{ \bar{c}, \frac{\pi_t(a_t)}{\mu_t(a_t)} \}
-    # `seegam[t]` is \gamma 1_{\neg f_t} c_t, i.e. zeroed at terminal steps
     seegam = rho_.exp().clamp_(max=c_bar).mul_(gam_)
     for j in range(1, len(delta) + 1):
-        # V-trace [O(B F)] \hat{v}_t = \hat{a}_t + v_t
-        #         \hat{a}_t = \rho_t \delta_t
-        #                   + \gamma c_t 1_{\neg f_{t+1}} \hat{a}_{t+1}
-        # adv[t] = rho[t] * delta[t] + gamma * (~fin[t]) * see[t] * adv[t+1]
+        # V-trace [O(B F)]
+        #   \hat{v}_t = \hat{a}_t + v_t
+        #   \hat{a}_t = \eta_t \delta_t + c_t \gamma_{t+1} 1_{f_{t+1} = 0} \hat{a}_{t+1}
+        # adv[t] = rho[t] * delta[t] + gam[t] * see[t] * (fin[t] == 0) * adv[t+1]
         torch.addcmul(delta[-j], seegam[-j], adv[-j], out=adv[-j - 1])
 
-    return adv + val
+    vtrace = adv + val  # XXX adv[-1] is zero
+
+    # [O(T B F)] get the importance-weighted 1-step lookahead advantages
+    # see sec. "v-trace actor-critic algo" (p. 4) in Espeholt et al. (2018)
+    adv = torch.addcmul(rew_, gam_, vtrace[1:]).sub_(val[:-1]).mul_(eta)
+
+    # return the V-trace value targets and the advantages
+    return vtrace[:-1], adv
 
 
 def pyt_multistep(

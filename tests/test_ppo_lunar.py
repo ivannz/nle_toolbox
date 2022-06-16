@@ -61,6 +61,7 @@ class Config:
     f_critic: float = 0.5
 
     f_model_lerp: float = 0.9
+    b_ternary: bool = False
 
     @property
     def f_loss_coef(self) -> dict[str, float]:
@@ -319,6 +320,8 @@ if __name__ == "__main__":
             )
         ),
     )
+    print(config)
+    print()
     print(header)
 
     # seprate models for stepping/learning and evaluation
@@ -339,7 +342,7 @@ if __name__ == "__main__":
         gym.make,
         config.n_envs,
         args=("LunarLander-v2",),
-        pack_nfo=False,
+        ternary=config.b_ternary,
     )
 
     log = {}
@@ -454,7 +457,12 @@ if __name__ == "__main__":
         plt.show()
 
     # visualized evaluation runs
-    env = rl.SerialVecEnv(gym.make, 1, args=("LunarLander-v2",))
+    env = rl.SerialVecEnv(
+        gym.make,
+        1,
+        args=("LunarLander-v2",),
+        ternary=config.b_ternary,
+    )
     vis = env.envs[0].render if b_visualize else lambda: True
 
     history = []

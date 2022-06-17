@@ -514,7 +514,7 @@ def masked_rnn(core, input, hx=None, *, reset=None, h0=None):
     first, hx_ = core(input[:1], hx=hx)
     if hx_ is None and hx is not None:
         raise RuntimeError(
-            "`hx` and `h0` must NOT be specified " " if the `core` is non-recurrent."
+            "`hx` and `h0` must NOT be specified if the `core` is non-recurrent."
         )
 
     # fast branch for one-element sequences
@@ -595,7 +595,7 @@ def latched_masked_rnn(
     yx_, hx_ = out_ = core(input[:1], hx=hx_)
     if hx_ is None and (hx is not None or h0 is not None):
         raise RuntimeError(
-            "`hx` and `h0` must NOT be specified " " if the `core` is non-recurrent."
+            "`hx` and `h0` must NOT be specified if the `core` is non-recurrent."
         )
     #    hx         h0      =>       hx_         h0     hx
     #     None       None   =>   None           None   None

@@ -225,10 +225,14 @@ def update_ppo(model, input, output, gx=None, hx=None, nfo=None):
             #  div-by-norm, to  however early on the baseline could be bad
             adv = (adv - adv.mean()) / (adv.std() + 1e-8)
 
+        # (ppo) the clipped policy grad objective (equivalently simplified)
+        # for `x > 0` we have `\min\{r A, clip(r, 1-x, 1+x) A \} -->> \max`
+        #     if `A > 0` then `A \min\{r, 1+x \} = \min\{r A, A + x A \}`
+        #     if `A < 0` then `A \max\{r, 1-x \} = \min\{r A, A - x A \}`
+        # note, `A + A x` for `A > 0` and `A - A x` for `A < 0` is `A + x |A|`
         terms = {
             "polgrad": torch.minimum(
-                adv * lik,
-                adv * lik.clamp(1.0 - config.f_ppo_eps, 1.0 + config.f_ppo_eps),
+                adv * lik, adv + abs(adv) * config.f_ppo_eps
             ).mean(),
             "entropy": rl.entropy(mu.pol, -1).mean(),
             "critic": F.mse_loss(mu.val, batch.ret, reduction="mean"),

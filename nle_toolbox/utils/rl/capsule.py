@@ -34,8 +34,10 @@ def capsule(step, update, length, *, device=None):
     update: callable
         A function that updates whatever internal parameters `step` depends on,
         and takes in `input` (always non-diffable `obs`, `act`, `rew`, `fin`),
-        `output`, `hx` and `gx` (possibly diff-able). It returns an auxiliary
-        information dict and an update for `hx` (may be diff-able).
+        `output`, `hxx` the recent history of `hx` states, possibly diff-able,
+        and `nfo` history of info data. It returns an information dict, and an
+        update for `hx` (may be diff-able) to be used at the start of the next
+        fragment, or `None` in which case the current inner value is kept.
 
     length: int
         The length of trajectory fragments used for each truncated bptt grad
@@ -48,10 +50,6 @@ def capsule(step, update, length, *, device=None):
     device = torch.device("cpu") if device is None else device
     cloner = torch.clone if device.type == "cpu" else lambda t: t.to(device)
     # XXX `.to` is enough here as the npy/pyt buffers are "on host" by design
-
-    # (sys) let the learner properly init `hx`-s batch dims
-    # XXX hx is current, gx is at the start of the fragment
-    gx = hx = None  # XXX hx is either None, or an object
 
     # (capsule) finish handshake and prepare the npyt state (aliased npy-pyt)
     # XXX no need to create `AliasedNPYT`, since we live in a capsule!
@@ -66,8 +64,12 @@ def capsule(step, update, length, *, device=None):
     append = id if length < 1 else fragment.append  # `id` serves as a dummy
     length = max(length, 1)  # XXX clamp the length to one anyway
 
+    # let the learner properly init `hx`-s batch dims
+    # XXX `hx` is current, `gx` is at the start of the fragment
+    gx = hx = None  # XXX `hx` is either None, or an object
+
     # (sys) perpetual rollout
-    nfo_ = {}  # XXX the true initial info dict is empty
+    nfo_, hxx = None, [gx]  # XXX the initial info dict is unavailable
     while True:  # .learn()
         # (sys) clone for diff-ability, because `pyt` is updated in-place
         input = suply(cloner, pyt)
@@ -79,6 +81,8 @@ def capsule(step, update, length, *, device=None):
         #  XXX if the runtime state is irrelevant to `step`, then it returns
         #  `hx` intact
         act_, output, hx = step(input, hx=hx, nfo=nfo)
+        if hx is not None:
+            hxx.append(hx)
 
         # (sys) update the action in `npy` through `pyt`
         suply(torch.Tensor.copy_, pyt.act, act_)
@@ -102,7 +106,7 @@ def capsule(step, update, length, *, device=None):
 
         # (sys) collect a fragment of time `t` afterstates t=0..N-1
         # XXX `input` and `nfo` are SIMULTANEOUS, unlike `engine.step`!
-        append(((input, output), nfo or nfo_))
+        append(((input, output), nfo_ if nfo is None else nfo))
         if len(fragment) < length:
             continue
 
@@ -123,8 +127,9 @@ def capsule(step, update, length, *, device=None):
 
         # (sys) do an update on the collected fragment and get the revised
         # recurrent runtime state for the next fragment
-        _, gx = update(input, output, gx=gx, hx=hx, nfo=nfo)
+        _, gx = update(input, output, hxx=hxx, nfo=nfo)
         hx = gx = hx if gx is None else gx  # if None, set gx to hx
+        hxx = [gx]
 
 
 def buffered(step, process, length, *, device=None):
@@ -137,14 +142,16 @@ def buffered(step, process, length, *, device=None):
         and `fin`, which represents the recent observations), the keyword `hx`
         (arbitrarily nested tensors), which stores the recurrent runtime state,
         that may be auto-initialised if `hx` is None, and the most recent info
-        dict `nfo`. `step` returns the action `act`, auxiliary data `output`,
+        data `nfo`. `step` returns the action `act`, auxiliary data `output`,
         and the new state `hx`.
 
     process: callable
         A function that updates whatever internal parameters `step` depends on,
         and takes in `input` (always non-diffable `obs`, `act`, `rew`, `fin`),
-        `output`, `hx` and `gx` (possibly diff-able). It returns an auxiliary
-        information dict and an update for `hx` (may be diff-able).
+        `output`, `hxx` the recent history of `hx` states, possibly diff-able,
+        and `nfo` history of info data. It returns an information dict, and an
+        update for `hx` (may be diff-able) to be used at the start of the next
+        fragment, or `None` in which case the current inner value is kept.
 
     length: int
         The length of trajectory fragments used for each truncated BPTT grad
@@ -190,9 +197,13 @@ def buffered(step, process, length, *, device=None):
         [suply(lambda x: x[t : t + 1], buffer) for t in range(length + 1)]
     )
 
-    # perpetual rollout
+    # `step(...)` should properly init `hx`-s batch dims
+    # XXX runtime state meanings: 'gx` before fragment, `hx` current
     gx = hx = None  # XXX `hx` is either None, or an object
-    outs, nfos, nfo_ = [], [], None  # XXX the initial info dict is unavailable
+
+    # perpetual rollout
+    nfo_, hxx = None, [gx]  # XXX the initial info dict is unavailable
+    nfos, outs = [], []
     while True:  # .learn()
         # write the current `pyt` into the current slice of the buffer
         # XXX `input` is structurally IDENTICAL to `vw_buffer` and refers to
@@ -205,7 +216,10 @@ def buffered(step, process, length, *, device=None):
         with torch.no_grad():  # XXX `yield` NEVER causes `__exit__`!
             act_, out_, hx = step(input, hx=hx, nfo=nfo)
             suply(torch.Tensor.copy_, pyt.act, act_)
+
         outs.append(out_)
+        if hx is not None:
+            hxx.append(hx)
 
         # STEP and advance local time
         #   \omega_t, a_t -->> \omega_{t+1}, x_{t+1}, r_{t+1}, d_{t+1}, I_{t+1}
@@ -238,7 +252,8 @@ def buffered(step, process, length, *, device=None):
         output = apply(torch.cat, *outs, out_, _star=False)  # implied dim = 0
         outs.clear()
 
-        # (sys) process the collected fragment and revise the recurrent runtime
-        #  state for the next fragment (runtimes: `gx` before, `hx` after)
-        _, gx = process(buffer, output, gx=gx, hx=hx, nfo=nfo)
+        # process the collected fragment and revise the recurrent runtime state
+        #  for the next fragment (runtimes: `gx, hx = hxx[0], hxx[-1]`)
+        _, gx = process(buffer, output, hxx=hxx, nfo=nfo)
         hx = gx = hx if gx is None else gx  # if None, set gx to hx
+        hxx = [gx]

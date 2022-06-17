@@ -494,7 +494,7 @@ def masked_rnn(core, input, hx=None, *, reset=None, h0=None):
         raise ValueError(f"Dim mismatch {reset.shape} != {input.shape[:2]}")
 
     # make sure the reset mask is numeric 0-1 for lerp-ing
-    reset = reset.to(input)
+    reset = reset.ne(0).to(input)
     if hx is not None:
         # create `h0` as broadcastible scalar zeros from the given `hx`
         if h0 is None:
@@ -572,7 +572,7 @@ def latched_masked_rnn(
         raise ValueError("Dim mismatch in `reset`, `latch` and `input`.")
 
     # make sure the masks are numeric 0-1 for lerp-ing
-    reset = reset.to(input)
+    reset = reset.ne(0).to(input)
 
     # prepare `hx`: if `hx` isn't None, then ensure correct `h0`, otherwise
     # broadcast `h0` along its unit batch dim, PROVIDED it is not omitted.

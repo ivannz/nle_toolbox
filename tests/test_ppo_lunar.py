@@ -14,6 +14,7 @@ from torch.nn.utils import clip_grad_norm_
 
 from nle_toolbox.utils.nn import multinomial
 from nle_toolbox.utils.nn import ModuleDict, ModuleDictSplitter
+from nle_toolbox.utils.nn import masked_rnn, InputGradScaler
 
 import gym
 import nle_toolbox.utils.rl.engine as rl
@@ -44,24 +45,26 @@ def const(t, v=1.0):
 @dataclass
 class Config:
     # should we make a Config -->> Schedule transform?
-    n_total_steps: int = 1_000_000
+    n_total_steps: int = 3_000_000
     n_fragment_length: int = 1024
     n_envs: int = 16
+    b_ternary: bool = False
+
+    f_model_lerp: float = 1.0
 
     n_act_embedding_dim: int = 0
+    b_recurrent: bool = False
 
     f_gam: float = 0.999
     n_ppo_batch_size: int = 64
-    n_ppo_epochs: int = 4
+    n_seq: int = 1  # 10
+    n_ppo_epochs: int = 4  # 2
 
     f_ppo_eps: float = 0.2
     b_adv_normalization: bool = True
     f_clip_grad: float = 0.5
     f_entropy: float = 0.01
     f_critic: float = 0.5
-
-    f_model_lerp: float = 0.9
-    b_ternary: bool = False
 
     @property
     def f_loss_coef(self) -> dict[str, float]:
@@ -125,14 +128,16 @@ def chained_capture(*funcs, commit):
     return _wrapper
 
 
-def forward(model, input, *, hx=None, nfo=None):
-    out = model(input)
-    return ValPolPair(out["val"].squeeze(-1), out["pol"].log_softmax(-1))
+def forward(model, input, *, hx=None):
+    x = model.features(input)
+    x, hx = masked_rnn(model.core, x, hx, reset=input.fin)
+    out = model.head(x)
+    return ValPolPair(out["val"].squeeze(-1), out["pol"].log_softmax(-1)), hx
 
 
 def step(model, input, *, hx=None, nfo=None, deterministic=False):
     # breakpoint()
-    vp = forward(model, input, hx=hx, nfo=nfo)
+    vp, hx = forward(model, input, hx=hx)
 
     if deterministic:
         act_ = vp.pol.argmax(-1)
@@ -140,10 +145,10 @@ def step(model, input, *, hx=None, nfo=None, deterministic=False):
     else:
         act_ = multinomial(vp.pol.exp())
 
-    return act_, vp, None
+    return act_, vp, hx
 
 
-def evaluate(input, output, gx=None, hx=None, nfo=None, *, epx, fill=True):
+def evaluate(input, output, hxx=None, nfo=None, *, epx, fill=True):
     # (sys) ignore the overlapping records between the fragment
     fragment = plyr.apply(lambda x: x[:-1], input)
 
@@ -167,50 +172,79 @@ def evaluate(input, output, gx=None, hx=None, nfo=None, *, epx, fill=True):
     return {"metrics": metrics}, None
 
 
-def prepare(input, output, nfo=None):
+def sample(input, output, hxx=None, nfo=None, *, n_epochs, n_batch_size, n_seq):
     # XXX what if `act`, `rew` and `val` are structured?
     # breakpoint()
+    curi, curo = plyr.apply(lambda x: x[:-1], (input, output))
+    nxti = plyr.apply(lambda x: x[1:], input)
 
-    _, gae = pyt_ret_gae(
-        input.rew[1:],
-        output.val,
-        config.f_gam,
-        f_lam,
-        input.fin[1:],
+    # use inverted (transposed) apply to fetch the returns and GAE
+    ret, gae = plyr.iapply(
+        pyt_ret_gae, nxti.rew, output.val, config.f_gam, f_lam, fin=nxti.fin
     )
 
-    return Buffer(
-        plyr.apply(lambda x: x[:-1], input),
-        input.act[1:],
-        rl.bselect(output.pol[:-1], input.act[1:], -1),
+    # (ppo) time-t synchronize the experience data (t=0..T-1)
+    # XXX for H = 1 get (z_{t+j}, z_{t+j+1}, y_{t+j}, \xi_{t+j+1})_{j < H}
+    # detail #5: use TD(\lambda) returns with gae
+    buffer = Buffer(
+        # z_t
+        curi,
+        # z_{t+1}
+        nxti.act,
+        # y_t
+        rl.bselect(curo.pol, nxti.act, -1),
+        # \xi_{t+1}
         gae,
-        # detail #5: TD(\lambda) returns with gae
-        gae + output.val[:-1],
+        plyr.apply(op.add, gae, curo.val),
     )
 
-
-def sample(buffer, n_epochs, n_batch_size):
     # (ppo) flatten the time-env dimensions
     flat = plyr.apply(torch.flatten, buffer, start_dim=0, end_dim=1)
 
     # (ppo) do several complete passes over the rollout buffer in batches
+    n_size, n_envs = input.fin.shape
+    offset = torch.arange(n_seq).mul_(n_envs).reshape(-1, 1)  # c-order seq x env
+
+    # (sys) if the model is recurrent, then cat the runtimes along dim=1 to flatten
+    hxx_ = None
+    if hxx[-1] is not None:
+        # (sys) deal with the only-once None in hxx[0] by ignoring the first
+        #  input-hx pair if it is `None`
+        if hxx[0] is None:
+            hxx, n_size = hxx[1:], n_size - 1
+            offset += n_envs
+
+        hxx_ = plyr.apply(torch.cat, *hxx, _star=False, dim=1)
+
     for ep in range(n_epochs):
-        indices = torch.randperm(flat.input.fin.numel())
+        # sample start time-env indices from t=0..T-L for all sub-sequences
+        indices = torch.randperm((n_size - n_seq) * n_envs)
 
-        # (ppo) get a random batch from the experience fragment
+        # (ppo) get a random batch of experience sub-sequences from the fragment
+        hx = None
         for bi, batch in enumerate(indices.split(n_batch_size)):
-            yield ep, bi, plyr.apply(lambda x: x[batch], flat)
+            if hxx_ is not None:
+                hx = plyr.apply(lambda x: x[:, batch], hxx_)
+
+            batch = offset + batch  # add next sub-sequence indices
+            yield ep, bi, plyr.apply(lambda x: x[batch], flat), hx
 
 
-def update_ppo(model, input, output, gx=None, hx=None, nfo=None):
+def update_ppo(model, input, output, hxx=None, nfo=None):
     """PPO"""
-    buffer = prepare(input, output, nfo=nfo)
-
     log = []
     # (ppo) train on random batches from experience
-    for _, _, batch in sample(buffer, config.n_ppo_epochs, config.n_ppo_batch_size):
+    for _, _, batch, hx in sample(
+        input,
+        output,
+        hxx=hxx,
+        nfo=nfo,
+        n_epochs=config.n_ppo_epochs,
+        n_batch_size=config.n_ppo_batch_size,
+        n_seq=config.n_seq,
+    ):
         # (ppo) diffable forward pass thru the random batch
-        mu = forward(model, batch.input)  # , hx=hx, nfo=nfo)
+        mu, _ = forward(model, batch.input, hx=hx)
 
         # (ppo) compute the importance weights (diffable)
         lik = torch.exp(rl.bselect(mu.pol, batch.act, -1) - batch.log_p)
@@ -245,44 +279,80 @@ def update_ppo(model, input, output, gx=None, hx=None, nfo=None):
 
         log.append(plyr.apply(float, {**terms, "f_clip": f_clip}))
 
-    return {"update": log}, None
+    # (sys) recompute the recurrent state `hx` AFTER the update
+    # XXX `hx` is $h_T$ from $h_{t+1}, y_t = F(z_t, h_t; w)$, t=0..T-1.
+    # XXX A side effect of training is that the recurrent runtime state in `hxx[-1]`
+    # has become stale, i.e. it no longer corresponds to the final `hx` had it been
+    # computed by the updated policy on the same fragment. Idealy, we would like to
+    # recompute `hx` over the entire historical trajectory, had we stored it whole.
+    # The next best option is to make a second pass over the fragment $
+    #      (z_t)_{t=0}^{T-1}
+    # $ and use $h'_T$ as the new `hx`, where $
+    #      h'_{t+1}, y_t = F(z_t, h'_t; w')
+    # $, t=0..T-1, and $h'_0 = h_0$ is given by `gx` in `hxx[0]`.
+    hx = hxx[-1]
+    if hx is not None:
+        fragment = plyr.apply(lambda x: x[:-1], input)
+        with torch.no_grad():
+            _, hx = forward(model, fragment, hx=hxx[0])
+
+    return {"update": log}, hx
+
+
+class NonRNN(nn.Module):
+    def __init__(self, body: nn.Module) -> None:
+        super().__init__()
+        self.body = body
+
+    def forward(self, input, hx=None):
+        assert hx is None
+        return self.body(input), hx
 
 
 def build_model(*, linear=nn.Linear, tanh=nn.Tanh, **ignored):
     # architectures that seem to have worked well
     # - emb(obs)_{64} || emb(act)_{64} -> Rearrange (2x64) -> LayerNorm(64)
     # - linear(obs; param=emb(act)) <<-- hypernetwork
-    # - double-sized single shared network with split heads doesn't work
-    # - shared previous action embedding generally does not work
-    return nn.Sequential(
-        # shared feature embedding
-        ModuleDict(
-            dict(
-                obs=nn.Identity(),
-                # XXX cuda, apparently, does not enjoy zero-sized embeddings
-                act=nn.Embedding(4, config.n_act_embedding_dim),
-            ),
-            dim=-1,
-        ),
-        # split networks
-        ModuleDictSplitter(
-            dict(
-                pol=nn.Sequential(
-                    linear(8 + config.n_act_embedding_dim, 64),
-                    tanh(),
-                    linear(64, 64),
-                    tanh(),
-                    linear(64, 4),
-                ),
-                val=nn.Sequential(
-                    linear(8 + config.n_act_embedding_dim, 64),
-                    tanh(),
-                    linear(64, 64),
-                    tanh(),
-                    linear(64, 1),
-                ),
-            )
-        ),
+    # generally have not worked
+    # - double-sized single shared network with split heads
+    # - shared previous action embedding
+
+    # XXX cuda, apparently, is not very keen on zero-sized embeddings
+    act = nn.Embedding(4, config.n_act_embedding_dim)
+    obs = linear(8, 64)
+    n_features = 64 + config.n_act_embedding_dim
+    core = NonRNN(nn.Identity())
+
+    if config.b_recurrent:
+        obs = nn.Sequential(obs, tanh())
+        core = nn.GRU(n_features, 64)
+        n_features = 64
+
+    # split policy-value networks
+    pol = nn.Sequential(
+        InputGradScaler(scale=0.1),
+        tanh(),
+        linear(n_features, 64),
+        tanh(),
+        linear(64, 4),
+    )
+
+    val = nn.Sequential(
+        tanh(),
+        linear(n_features, 64),
+        tanh(),
+        linear(64, 1),
+    )
+
+    return nn.ModuleDict(
+        dict(
+            # shared feature embedding
+            features=ModuleDict(dict(obs=obs, act=act), dim=-1),
+            # shared neural recurrent core
+            core=core,
+            # split networks
+            head=ModuleDictSplitter(dict(pol=pol, val=val)),
+        )
     )
 
 
@@ -296,7 +366,7 @@ def parameters_lerp(frac, *, src, dst):
 if __name__ == "__main__":
     device_ = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-    b_visualize: bool = False
+    b_visualize: bool = True
     n_eval_episodes: int = 99
 
     # ad-hoc logging

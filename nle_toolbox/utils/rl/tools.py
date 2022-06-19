@@ -52,9 +52,10 @@ def extract(
     strands : container of lists
         The incomplete fragmented trajectory traced in each environment.
 
-    reset : boolean array-like, shape=(T, B)
-        A boolean mask, indicating if the associated record in `fragment` is
-        marked as the end-of-episode. Either a numpy array or a torch tensor.
+    reset : boolean or int array-like, shape=(T, B)
+        A boolean or int mask, with NON-ZEROs indicating if the associated
+        record in `fragment` is marked as the end-of-episode. Either a numpy
+        array or a torch tensor.
 
     fragment : Nested Container of array-like, shape=(T, B, ...)
         The new fragment of trajectories with in each environment. Can be
@@ -95,7 +96,7 @@ def extract(
         # find all reset brackets [t0, t1)
         t1 = None
         for t in range(n_seq):
-            if not reset[t, j]:
+            if not reset[t, j]:  # XXX ok with ternary, as ZERO is False
                 continue
 
             # finish with the [t0, t1+1) slice, including the `t1`-th element,

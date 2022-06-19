@@ -154,8 +154,9 @@ def evaluate(input, output, hxx=None, nfo=None, *, epx, fill=True):
 
     metrics = []
     # (log) collect the length and the accumulated rewards for each episode
+    # XXX non-zero test via `fin != 0` is compatible with bool
     for ep in epx.extract(fragment.fin, fragment):
-        ep_len = len(ep.fin) - int(ep.fin[-1])
+        ep_len = len(ep.fin) - int(ep.fin[-1] != 0)
         if ep_len < 1:
             continue
 
@@ -174,28 +175,33 @@ def evaluate(input, output, hxx=None, nfo=None, *, epx, fill=True):
 
 def sample(input, output, hxx=None, nfo=None, *, n_epochs, n_batch_size, n_seq):
     # XXX what if `act`, `rew` and `val` are structured?
-    # breakpoint()
-    curi, curo = plyr.apply(lambda x: x[:-1], (input, output))
-    nxti = plyr.apply(lambda x: x[1:], input)
 
     # use inverted (transposed) apply to fetch the returns and GAE
     ret, gae = plyr.iapply(
-        pyt_ret_gae, nxti.rew, output.val, config.f_gam, f_lam, fin=nxti.fin
+        pyt_ret_gae,
+        input.rew,
+        output.val,
+        config.f_gam,  # output.gam
+        f_lam,
+        fin=input.fin.ne(0),
     )
+
+    curr_inp, curr_out = plyr.apply(lambda x: x[:-1], (input, output))
+    next_inp = plyr.apply(lambda x: x[1:], input)
 
     # (ppo) time-t synchronize the experience data (t=0..T-1)
     # XXX for H = 1 get (z_{t+j}, z_{t+j+1}, y_{t+j}, \xi_{t+j+1})_{j < H}
     # detail #5: use TD(\lambda) returns with gae
     buffer = Buffer(
         # z_t
-        curi,
+        curr_inp,
         # z_{t+1}
-        nxti.act,
+        next_inp.act,
         # y_t
-        rl.bselect(curo.pol, nxti.act, -1),
+        rl.bselect(curr_out.pol, next_inp.act, -1),
         # \xi_{t+1}
         gae,
-        plyr.apply(op.add, gae, curo.val),
+        plyr.apply(op.add, gae, curr_out.val),
     )
 
     # (ppo) flatten the time-env dimensions
@@ -214,7 +220,14 @@ def sample(input, output, hxx=None, nfo=None, *, n_epochs, n_batch_size, n_seq):
             hxx, n_size = hxx[1:], n_size - 1
             offset += n_envs
 
-        hxx_ = plyr.apply(torch.cat, *hxx, _star=False, dim=1)
+        # (sys) unbind ALL runtimes along their batch dim=1 and create a numpy
+        #  array of tensor (as python objects) for copy-less flattenning
+        # XXX we deliberately avoid triggerring dunder-array protocol here, and
+        # use transposed application of `.unbind` to get the tuple[tuple[...]]
+        # `B x T x {...}` rather than tuple[...[tuple]] `T x {... x B}` nesting
+        hxx_ = np.empty((n_envs, n_size), dtype=object)  # .empty is IMPORTANT!
+        hxx_[:] = plyr.iapply(torch.unbind, hxx, dim=1)  # setitem, not copyto
+        hxx_ = hxx_.T.ravel()
 
     for ep in range(n_epochs):
         # sample start time-env indices from t=0..T-L for all sub-sequences
@@ -222,11 +235,11 @@ def sample(input, output, hxx=None, nfo=None, *, n_epochs, n_batch_size, n_seq):
 
         # (ppo) get a random batch of experience sub-sequences from the fragment
         hx = None
-        for bi, batch in enumerate(indices.split(n_batch_size)):
+        for bi, start in enumerate(indices.split(n_batch_size)):
             if hxx_ is not None:
-                hx = plyr.apply(lambda x: x[:, batch], hxx_)
+                hx = plyr.apply(torch.stack, *hxx_[start], _star=False, dim=1)
 
-            batch = offset + batch  # add next sub-sequence indices
+            batch = offset + start  # add next sub-sequence indices
             yield ep, bi, plyr.apply(lambda x: x[batch], flat), hx
 
 

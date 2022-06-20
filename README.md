@@ -10,7 +10,7 @@ The following command sets up an env with the essential dependencies required by
 ```bash
 # conda deactivate && conda env remove -n nle_toolbox
 
-conda create -n nle_toolbox "python>=3.9" pip setuptools numpy scipy \
+conda create -n nle_toolbox "python>=3.9" pip setuptools numpy scipy cmake \
   "pytorch::pytorch>=1.8" matplotlib \
   && conda activate nle_toolbox \
   && pip install einops

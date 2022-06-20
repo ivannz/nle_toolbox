@@ -220,21 +220,27 @@ def adjust(input, hxx=None, nfo=None):
     if not mask.any():
         return None, None, None
 
-    # (sys) extract post truncation inputs and mark them as non-terminal
+    # (sys) copy the post truncation inputs and mark them as non-terminal
+    # XXX z_t = (x'_0, a_{t-1}, r_t, f_t) with f_t = -1, reward r_t for action
+    #  a_{t-1} (t-1 -->> t), and x'_0 the observation  emitted by the inital
+    #  state of a reset env. `mask` sselects such t, that have `f_t = -1`.
     trunc = plyr.apply(lambda x: x[mask].unsqueeze(0), input)
     trunc.fin.zero_()
 
-    # (sys) recover the original observations, overwritten by auto-resets
-    nfo_ = np.array(nfo, object)[mask.cpu().numpy()].tolist()
+    # (sys) recover the original observations x_t, overwritten by auto-resets
+    # XXX the numpy arrays are stacked and converted to torch tensors
+    nfo_ = np.array(nfo, object)[mask.cpu().numpy()]
     obs_ = plyr.apply(np.stack, *[n["obs"] for n in nfo_], _star=False)
+    obs_ = plyr.suply(torch.as_tensor, obs_)
 
     # (sys) graft the original observations into the extracted inputs
-    plyr.suply(torch.Tensor.copy_, trunc.obs, plyr.suply(torch.as_tensor, obs_))
+    plyr.suply(torch.Tensor.copy_, trunc.obs, obs_)
 
+    # (sys) return if the rollout data is has no recurrentruntime state
     if hxx[-1] is None:
         return mask, trunc, None
 
-    # (sys) fetch the recurrent states from hxx
+    # (sys) fetch the recurrent states from `hxx`
     # XXX since hxx[0] is never picked, we may use arbitrary value for it
     hx0, *hxx_ = hxx
     if hx0 is None:
@@ -242,9 +248,9 @@ def adjust(input, hxx=None, nfo=None):
 
     # (sys) get a numpy array of runtimes unbound along their batch dim,
     # then select according to mask and stack along the same dim.
-    hx_ = np.empty(mask.shape, dtype=object).T
-    hx_[:] = plyr.iapply(torch.unbind, (hx0, *hxx_), dim=1)
-    hx = plyr.apply(torch.stack, *hx_.T[mask].tolist(), _star=False, dim=1)
+    hx_ = np.empty(mask.shape, dtype=object)
+    hx_.T[:] = plyr.iapply(torch.unbind, (hx0, *hxx_), dim=1)
+    hx = plyr.apply(torch.stack, *hx_[mask], _star=False, dim=1)
 
     # (sys) return the mask and the patched inputs needed for recomputing
     return mask, trunc, hx
@@ -262,13 +268,13 @@ def sample(model, input, output, hxx=None, nfo=None, *, n_epochs, n_batch_size, 
 
         # (sys) scatter the re-computed value estimates
         # XXX same goes for `mu.gam` when applicable
-        val_ = plyr.apply(torch.zeros_like, input.rew)
+        val_ = plyr.apply(torch.zeros_like, rew_)
         val_ = plyr.apply(lambda x, s: x.masked_scatter_(mask, s), val_, mu.val)
 
         # (sys) compute $r^\circ_t$ using the correct $v_t$ and $\gamma_t$
         _, _, rew_ = plyr.iapply(gamma, rew_, config.f_gam, val_, fin=fin_)
 
-        # (sys) convert ternary signal to boolean, to avoid reward adjustment
+        # (sys) convert ternary signal to boolean, to disable reward adjustment
         #  logic in `.utils.rl.returns`
         fin_ = fin_.ne(0)
 
@@ -314,9 +320,9 @@ def sample(model, input, output, hxx=None, nfo=None, *, n_epochs, n_batch_size, 
         # XXX we deliberately avoid triggerring dunder-array protocol here, and
         # use transposed application of `.unbind` to get the tuple[tuple[...]]
         # `B x T x {...}` rather than tuple[...[tuple]] `T x {... x B}` nesting
-        hxx_ = np.empty((n_envs, n_size), dtype=object)  # .empty is IMPORTANT!
-        hxx_[:] = plyr.iapply(torch.unbind, hxx, dim=1)  # setitem, not copyto
-        hxx_ = hxx_.T.ravel()
+        hxx_ = np.empty((n_size, n_envs), dtype=object)  # .empty is IMPORTANT!
+        hxx_.T[:] = plyr.iapply(torch.unbind, hxx, dim=1)  # setitem, not copyto
+        hxx_ = hxx_.ravel()
 
     for ep in range(n_epochs):
         # sample start time-env indices from t=0..T-L for all sub-sequences

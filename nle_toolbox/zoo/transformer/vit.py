@@ -9,6 +9,7 @@ import torch
 from torch import nn
 from collections import OrderedDict
 
+from torch import Tensor
 from einops import repeat, rearrange
 
 
@@ -23,7 +24,10 @@ class MultiHeadAttention(nn.Module):
         num_attention_heads: int,
         head_size: int = None,
         dropout: float = 0.0,
-    ):
+        bias: bool = True,
+        *,
+        return_attention: bool = False,
+    ) -> None:
         if head_size is None:
             head_size, rem = divmod(embedding_dim, num_attention_heads)
             if rem > 0:
@@ -35,6 +39,7 @@ class MultiHeadAttention(nn.Module):
         self.embedding_dim = embedding_dim
         self.head_size = head_size
         self.num_attention_heads = num_attention_heads
+        self.return_attention = return_attention
 
         # (Q)uery (K)ey (V)alue projections
         self.qkv = nn.Linear(
@@ -52,7 +57,7 @@ class MultiHeadAttention(nn.Module):
                         nn.Linear(
                             num_attention_heads * head_size,
                             embedding_dim,
-                            bias=True,
+                            bias=bias,
                         ),
                     ),
                     ("drop", nn.Dropout(dropout)),
@@ -60,8 +65,28 @@ class MultiHeadAttention(nn.Module):
             )
         )
 
-    def forward(self, x):
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        # (qkv) Kaiming-like uniform init based on head fan-out
+        stdv = 1.0 / math.sqrt(self.head_size)
+        self.qkv.weight.data.uniform_(-stdv, stdv)
+
+        # (qkv) Kaiming-like uniform init based on head fan-out
+        stdv = 1.0 / math.sqrt(self.embedding_dim)
+        self.prj.proj.weight.data.uniform_(-stdv, stdv)
+        if self.prj.proj.bias is not None:
+            self.prj.proj.bias.data.zero_()
+
+    def forward(
+        self,
+        x: Tensor,
+        mask: Tensor = None,
+    ) -> tuple[Tensor, Tensor]:
         # qkv is x is `B N C`, below S is `stack x 3`, and H -- # of heads
+        # XXX in non-self attention the query sequence might have different
+        #  size, in which case we would have to make a separate layer for Q,
+        #  e.g. x is `B N C` and q is `B M C`
         que, key, val = rearrange(
             self.qkv(x),
             "B N (S H D) -> S B H N D",
@@ -71,15 +96,23 @@ class MultiHeadAttention(nn.Module):
 
         # scaled attention
         #  $a_{j t s} = \frac{q_{j t}^\top k_{j s}}{\sqrt{d}}$
-        #  $\alpha_{j t s} = \softmax(a_{j t s})_{s=1}^n$
+        #  $\alpha_{j t s} = \softmax(a_{j t s} + (- \infty) m_{j t s})_{s=1}^n$
         #  $y_{j t} = \sum_s \alpha_{j t s} v_{j s}$
-        # XXX `attn @ val -> out` gives [B H N N] @ [B H N D] -> [B H N D]
+        # XXX `attn @ val -> out` gives [B H M N] @ [B H N D] -> [B H M D]
         dots = torch.matmul(que, key.transpose(-1, -2))
+        if mask is not None:
+            # in-place masking is diffable
+            dots = dots.masked_fill(
+                repeat(mask.to(bool), "B M N -> B H M N", H=1),
+                -math.inf,
+            )
+
         attn = torch.softmax(dots.div(math.sqrt(self.head_size)), dim=-1)
-        out = rearrange(attn.matmul(val), "B H N D -> B N (H D)")
+        out = rearrange(attn.matmul(val), "B H M D -> B M (H D)")
 
         # reproject and dimshuffle
-        return self.prj(out), attn
+        out = self.prj(out)
+        return (out, attn) if self.return_attention else out
 
 
 class TransformerLayer(nn.Module):
@@ -90,13 +123,16 @@ class TransformerLayer(nn.Module):
         intermediate_size: int,
         head_size: int = None,
         dropout: float = 0.0,
-    ):
+        *,
+        layernorm: nn.Module = nn.LayerNorm,
+        gelu: nn.Module = nn.GELU,
+    ) -> None:
         super().__init__()
 
         self.attn = nn.Sequential(
             OrderedDict(
                 [
-                    ("norm", nn.LayerNorm(embedding_dim)),
+                    ("norm", layernorm(embedding_dim)),
                     (
                         "attn",
                         MultiHeadAttention(
@@ -104,6 +140,7 @@ class TransformerLayer(nn.Module):
                             num_attention_heads,
                             head_size,
                             dropout,
+                            return_attention=True,
                         ),
                     ),
                 ]
@@ -113,16 +150,16 @@ class TransformerLayer(nn.Module):
         self.pwff = nn.Sequential(
             OrderedDict(
                 [
-                    ("norm", nn.LayerNorm(embedding_dim)),
+                    ("norm", layernorm(embedding_dim)),
                     ("ff_1", nn.Linear(embedding_dim, intermediate_size)),
-                    ("gelu", nn.GELU()),
+                    ("gelu", gelu()),
                     ("ff_2", nn.Linear(intermediate_size, embedding_dim)),
                     ("drop", nn.Dropout(dropout)),
                 ]
             )
         )
 
-    def forward(self, x):
+    def forward(self, x: Tensor) -> tuple[Tensor, Tensor]:
         y, attn = self.attn(x)
         x = y + x
         x = self.pwff(x) + x
@@ -142,7 +179,7 @@ class ViTEncoder(nn.Module):
         *,
         n_layers: int = 1,
         b_mean: bool = False,
-    ):
+    ) -> None:
         super().__init__()
 
         n_rows, n_cols = pair(size)
@@ -172,7 +209,7 @@ class ViTEncoder(nn.Module):
 
         self.b_mean = b_mean
 
-    def forward(self, x):
+    def forward(self, x: Tensor) -> tuple[Tensor, Tensor]:
         # cls-token and positional embedding
         x = (
             torch.cat(

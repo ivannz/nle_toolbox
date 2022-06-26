@@ -5,6 +5,7 @@ import numpy as np
 import operator as op
 from functools import wraps, partial
 from collections import namedtuple
+from itertools import chain
 
 from time import monotonic_ns
 
@@ -223,13 +224,15 @@ def adjust(input, hxx=None, nfo=None):
     # (sys) copy the post truncation inputs and mark them as non-terminal
     # XXX z_t = (x'_0, a_{t-1}, r_t, f_t) with f_t = -1, reward r_t for action
     #  a_{t-1} (t-1 -->> t), and x'_0 the observation  emitted by the inital
-    #  state of a reset env. `mask` sselects such t, that have `f_t = -1`.
+    #  state of a reset env. `mask` selects such t, that have `f_t = -1`.
     trunc = plyr.apply(lambda x: x[mask].unsqueeze(0), input)
     trunc.fin.zero_()
 
     # (sys) recover the original observations x_t, overwritten by auto-resets
     # XXX the numpy arrays are stacked and converted to torch tensors
-    nfo_ = np.array(nfo, object)[mask.cpu().numpy()]
+    # XXX flattened mask and `tuple-chain` is faster than an array of object
+    flatmask = mask.flatten().nonzero()[:, 0].tolist()
+    nfo_ = tuple(map(tuple(chain(*nfo)).__getitem__, flatmask))
     obs_ = plyr.apply(np.stack, *[n["obs"] for n in nfo_], _star=False)
     obs_ = plyr.suply(torch.as_tensor, obs_)
 
@@ -246,11 +249,10 @@ def adjust(input, hxx=None, nfo=None):
     if hx0 is None:
         hx0 = plyr.apply(torch.zeros_like, hxx_[-1])
 
-    # (sys) get a numpy array of runtimes unbound along their batch dim,
-    # then select according to mask and stack along the same dim.
-    hx_ = np.empty(mask.shape, dtype=object)
-    hx_.T[:] = plyr.iapply(torch.unbind, (hx0, *hxx_), dim=1)
-    hx = plyr.apply(torch.stack, *hx_[mask], _star=False, dim=1)
+    # (sys) get a C-order flattened tuple of runtimes unbound along the batch dim,
+    # then select according to mask's nonzeros and stack along the same dim.
+    hx_ = tuple(chain(*zip(*plyr.iapply(torch.unbind, (hx0, *hxx_), dim=1))))
+    hx = plyr.apply(torch.stack, *map(hx_.__getitem__, flatmask), _star=False, dim=1)
 
     # (sys) return the mask and the patched inputs needed for recomputing
     return mask, trunc, hx
@@ -307,7 +309,7 @@ def sample(model, input, output, hxx=None, nfo=None, *, n_epochs, n_batch_size, 
     offset = torch.arange(n_seq).mul_(n_envs).reshape(-1, 1)  # c-order seq x env
 
     # (sys) if the model is recurrent, then cat the runtimes along dim=1 to flatten
-    hxx_ = None
+    hxx_getitem = None
     if hxx[-1] is not None:
         # (sys) deal with the only-once None in hxx[0] by ignoring the first
         #  input-hx pair if it is `None`
@@ -315,14 +317,17 @@ def sample(model, input, output, hxx=None, nfo=None, *, n_epochs, n_batch_size, 
             hxx, n_size = hxx[1:], n_size - 1
             offset += n_envs
 
-        # (sys) unbind ALL runtimes along their batch dim=1 and create a numpy
-        #  array of tensor (as python objects) for copy-less flattenning
-        # XXX we deliberately avoid triggerring dunder-array protocol here, and
-        # use transposed application of `.unbind` to get the tuple[tuple[...]]
-        # `B x T x {...}` rather than tuple[...[tuple]] `T x {... x B}` nesting
-        hxx_ = np.empty((n_size, n_envs), dtype=object)  # .empty is IMPORTANT!
-        hxx_.T[:] = plyr.iapply(torch.unbind, hxx, dim=1)  # setitem, not copyto
-        hxx_ = hxx_.ravel()
+        # (sys) get a T * B tuple of runtimes, unbound along their batch `dim=1`
+        # XXX by transposed application of `.unbind` we end up with the structure
+        #  of the return value OUTSIDE of the nesting structure of the arguments.
+        #  This way we get a `B x T x {...}` nesting instead of `T x {... x B}`.
+        # XXX measurements have shown that using a numpy array of `object` (for
+        #  advanced indexing and to avoid triggerring dunder-array protocol) is
+        #  MUCH slower than the basic list comprehensions with `.tolist()` and
+        #  chain-zip generator
+        hxx_getitem = tuple(
+            chain(*zip(*plyr.iapply(torch.unbind, hxx, dim=1)))
+        ).__getitem__
 
     for ep in range(n_epochs):
         # sample start time-env indices from t=0..T-L for all sub-sequences
@@ -331,8 +336,9 @@ def sample(model, input, output, hxx=None, nfo=None, *, n_epochs, n_batch_size, 
         # (ppo) get a random batch of experience sub-sequences from the fragment
         hx = None
         for bi, start in enumerate(indices.split(n_batch_size)):
-            if hxx_ is not None:
-                hx = plyr.apply(torch.stack, *hxx_[start], _star=False, dim=1)
+            if hxx_getitem is not None:
+                hx_ = map(hxx_getitem, start.tolist())
+                hx = plyr.apply(torch.stack, *hx_, _star=False, dim=1)
 
             batch = offset + start  # add next sub-sequence indices
             yield ep, bi, plyr.apply(lambda x: x[batch], flat), hx

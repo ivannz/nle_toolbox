@@ -88,11 +88,13 @@ def extract_truncated(input, hxx=None, nfo=None):
     plyr.suply(torch.Tensor.copy_, trunc.obs, obs_)
 
     # (sys) return if the rollout data is has no recurrent runtime state
-    if hxx[-1] is None:
+    if not isinstance(hxx, (list, tuple)) or hxx[-1] is None:
         return mask, trunc, None
 
     # (sys) fetch the recurrent states from `hxx`
-    # XXX since hxx[0] is never picked, we may use arbitrary value for it
+    # XXX although we assume the recurrent states are torch tensors, it is
+    #  debatable whether initting to zeros is a good idea. However hxx[0]
+    #  is never picked by design, hence may be arbitrary.
     hx0, *hxx_ = hxx
     if hx0 is None:
         hx0 = plyr.apply(torch.zeros_like, hxx_[-1])

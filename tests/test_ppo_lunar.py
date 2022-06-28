@@ -50,7 +50,7 @@ class Config:
     n_total_steps: int = 3_000_000
     n_fragment_length: int = 1024
     n_envs: int = 16
-    b_ternary: bool = False
+    b_ternary: bool = True
 
     f_model_lerp: float = 1.0
 
@@ -84,7 +84,7 @@ class Config:
 config = Config()
 
 ValPolPair = namedtuple("ValPolPair", "val,pol")
-Buffer = namedtuple("Buffer", "input,act,log_p,adv,ret")
+Buffer = namedtuple("Buffer", "input,out,nex,adv,ret")
 
 
 def reduce(values, weight=None):
@@ -175,10 +175,11 @@ def evaluate(input, output, hxx=None, nfo=None, *, epx, fill=True):
     return {"metrics": metrics}, None
 
 
-def sample(model, input, output, hxx=None, nfo=None, *, n_epochs, n_batch_size, n_seq):
-    # XXX what if `act`, `rew` and `val` are structured?
-
-    # (sys) recompute the value-to-go estimates for truncated episodes
+def prepare(model, input, output, hxx=None, nfo=None):
+    # (sys) recompute the value-to-go estimates for truncated episodes, and
+    #  adjust the rewards accordingly
+    # XXX the truncated observations could be useful for all sort learnable
+    #  objects, such as the env model in mu_\zero's MCTS, the IDM or curiosity
     rew_, fin_ = input.rew, input.fin
     mask, buf_, hx_ = extract_truncated(input, hxx=hxx, nfo=nfo)
     if mask is not None:
@@ -191,43 +192,52 @@ def sample(model, input, output, hxx=None, nfo=None, *, n_epochs, n_batch_size, 
         val_ = plyr.apply(lambda x, s: x.masked_scatter_(mask, s), val_, mu.val)
 
         # (sys) compute $r^\circ_t$ using the correct $v_t$ and $\gamma_t$
+        # XXX we cannot change the reward data in the `rew` field inplace,
+        #  since it might have been used as input to the agent
         _, _, rew_ = plyr.iapply(gamma, rew_, config.f_gam, val_, fin=fin_)
 
-        # (sys) convert ternary signal to boolean, to disable reward adjustment
-        #  logic in `.utils.rl.returns`
+        # (sys) disable reward adjustment logic in `.utils.rl.returns.gamma()`
+        #  by regressing from the ternary signal to boolean
         fin_ = fin_.ne(0)
 
     # use inverted (transposed) apply to fetch the returns and GAE
     ret, gae = plyr.iapply(pyt_ret_gae, rew_, output.val, config.f_gam, f_lam, fin=fin_)
-
-    curr_inp, curr_out = plyr.apply(lambda x: x[:-1], (input, output))
-    next_inp = plyr.apply(lambda x: x[1:], input)
+    # XXX what if `rew` and `val` are structured? or the model outputs `gamma`
+    #  (the price of rewards at `t` in terms of rewards at `t-1`:
+    #  v_{t-1} <<-- r_t + \gamma_t v_t, \gamma_t ~ z_t, i.e. if the cumulative
+    #  return is to be transferred back in time... term structure?)
 
     # (ppo) time-t synchronize the experience data (t=0..T-1)
-    # XXX for H = 1 get (z_{t+j}, z_{t+j+1}, y_{t+j}, \xi_{t+j+1})_{j < H}
-    # detail #5: use TD(\lambda) returns with gae
-    buffer = Buffer(
+    # XXX for H = 1 get (z_{t+j}, y_{t+j}, z_{t+j+1}, A_{t+j}, R_{t+j})_{j < H}
+    curr_inp, curr_out = plyr.apply(lambda x: x[:-1], (input, output))
+    next_inp = plyr.apply(lambda x: x[1:], input)
+    return Buffer(  # .input, .out, .nex, .adv, .ret
         # z_t
         curr_inp,
+        # y_t,
+        curr_out,
         # z_{t+1}
-        next_inp.act,
-        # y_t
-        rl.bselect(curr_out.pol, next_inp.act, -1),
-        # \xi_{t+1}
+        next_inp,
+        # A_t depends on (r_s, \gamma_s)_{s > t} and all (v_s)_{s \geq t}
         gae,
-        plyr.apply(op.add, gae, curr_out.val),
+        # R_t depends on (r_s, \gamma_s)_{s > t} and a bootstrap v_s, s > t
+        ret,
     )
+
+
+def sample(buffer, hxx=None, *, n_epochs, n_batch_size, n_seq=1):
+    assert isinstance(buffer, Buffer)
 
     # (ppo) flatten the time-env dimensions
     flat = plyr.apply(torch.flatten, buffer, start_dim=0, end_dim=1)
 
     # (ppo) do several complete passes over the rollout buffer in batches
-    n_size, n_envs = input.fin.shape
+    n_size, n_envs = buffer.input.fin.shape
     offset = torch.arange(n_seq).mul_(n_envs).reshape(-1, 1)  # c-order seq x env
 
     # (sys) if the model is recurrent, then cat the runtimes along dim=1 to flatten
     hxx_getitem = None
-    if hxx[-1] is not None:
+    if isinstance(hxx, (list, tuple)) and hxx[-1] is not None:
         # (sys) deal with the only-once None in hxx[0] by ignoring the first
         #  input-hx pair if it is `None`
         if hxx[0] is None:
@@ -239,7 +249,7 @@ def sample(model, input, output, hxx=None, nfo=None, *, n_epochs, n_batch_size, 
         #  of the return value OUTSIDE of the nesting structure of the arguments.
         #  This way we get a `B x T x {...}` nesting instead of `T x {... x B}`.
         # XXX measurements have shown that using a numpy array of `object` (for
-        #  advanced indexing and to avoid triggerring dunder-array protocol) is
+        #  advanced indexing and to avoid triggering dunder-array protocol) is
         #  MUCH slower than the basic list comprehensions with `.tolist()` and
         #  chain-zip generator
         hxx_getitem = tuple(
@@ -248,7 +258,7 @@ def sample(model, input, output, hxx=None, nfo=None, *, n_epochs, n_batch_size, 
 
     for ep in range(n_epochs):
         # sample start time-env indices from t=0..T-L for all sub-sequences
-        indices = torch.randperm((n_size - n_seq) * n_envs)
+        indices = torch.randperm((n_size - n_seq + 1) * n_envs)
 
         # (ppo) get a random batch of experience sub-sequences from the fragment
         hx = None
@@ -263,14 +273,14 @@ def sample(model, input, output, hxx=None, nfo=None, *, n_epochs, n_batch_size, 
 
 def update_ppo(model, input, output, hxx=None, nfo=None):
     """PPO"""
+
     log = []
+    buffer = prepare(model, input, output, hxx=hxx, nfo=nfo)
+
     # (ppo) train on random batches from experience
     for _, _, batch, hx in sample(
-        model,
-        input,
-        output,
-        hxx=hxx,
-        nfo=nfo,
+        buffer,
+        hxx,
         n_epochs=config.n_ppo_epochs,
         n_batch_size=config.n_ppo_batch_size,
         n_seq=config.n_seq,
@@ -279,14 +289,21 @@ def update_ppo(model, input, output, hxx=None, nfo=None):
         mu, _ = forward(model, batch.input, hx=hx)
 
         # (ppo) compute the importance weights (diffable)
-        lik = torch.exp(rl.bselect(mu.pol, batch.act, -1) - batch.log_p)
+        # XXX what if `act`, `pol`, `adv`, `ret` and `val` are structured?
+        lik = torch.exp(
+            rl.bselect(mu.pol, batch.nex.act, -1)
+            - rl.bselect(batch.out.pol, batch.nex.act, -1)
+        )
         f_clip = torch.abs(lik - 1).ge(config.f_ppo_eps).float().mean()
+
+        # detail #5: for value targets use TD(\lambda) returns from GAE
+        ret = batch.adv + batch.out.val  # plyr.apply(op.add, .adv, .out.val)
 
         # detail #7: advantage normalization
         adv = batch.adv
         if config.b_adv_normalization:
-            # Although we can safely subtract baseline consts in expectated
-            #  policy gradients, it might not be safe in sampled approximation.
+            # Although we can safely subtract baseline const in expected policy
+            # gradients, it might not be safe in sampled approximation.
             # XXX conceptually, normalization should keep the signs, e.g.
             #  div-by-norm, to  however early on the baseline could be bad
             adv = (adv - adv.mean()) / (adv.std() + 1e-8)
@@ -301,7 +318,7 @@ def update_ppo(model, input, output, hxx=None, nfo=None):
                 adv * lik, adv + abs(adv) * config.f_ppo_eps
             ).mean(),
             "entropy": rl.entropy(mu.pol, -1).mean(),
-            "critic": F.mse_loss(mu.val, batch.ret, reduction="mean"),
+            "critic": F.mse_loss(mu.val, ret, reduction="mean"),
         }
 
         optim.zero_grad()
@@ -313,15 +330,16 @@ def update_ppo(model, input, output, hxx=None, nfo=None):
 
     # (sys) recompute the recurrent state `hx` AFTER the update
     # XXX `hx` is $h_T$ from $h_{t+1}, y_t = F(z_t, h_t; w)$, t=0..T-1.
-    # XXX A side effect of training is that the recurrent runtime state in `hxx[-1]`
-    # has become stale, i.e. it no longer corresponds to the final `hx` had it been
-    # computed by the updated policy on the same fragment. Idealy, we would like to
-    # recompute `hx` over the entire historical trajectory, had we stored it whole.
-    # The next best option is to make a second pass over the fragment $
+    # XXX A side effect of training is that the recurrent runtime state in
+    #  `hxx[-1]` has become stale, i.e. it no longer corresponds to the final
+    #  `hx` had it been computed by the updated policy on the same fragment.
+    #  Idealy, we would like to recompute `hx` over the entire historical
+    #  trajectory, had we stored it whole. The next best option is to make
+    #  a second pass over the fragment $
     #      (z_t)_{t=0}^{T-1}
-    # $ and use $h'_T$ as the new `hx`, where $
+    #  $ and use $h'_T$ as the new `hx`, where $
     #      h'_{t+1}, y_t = F(z_t, h'_t; w')
-    # $, t=0..T-1, and $h'_0 = h_0$ is given by `gx` in `hxx[0]`.
+    #  $, t=0..T-1, and $h'_0 = h_0$ is given by `gx` in `hxx[0]`.
     hx = hxx[-1]
     if hx is not None:
         fragment = plyr.apply(lambda x: x[:-1], input)

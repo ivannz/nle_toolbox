@@ -56,6 +56,8 @@ class Config:
 
     n_act_embedding_dim: int = 0
     b_recurrent: bool = False
+    f_lr: float = 3e-4
+    f_optim_eps: float = 1e-5  # detail #?: it turns out, this is very important!
 
     f_gam: float = 0.999
     n_ppo_batch_size: int = 64
@@ -457,8 +459,8 @@ if __name__ == "__main__":
 
     optim = torch.optim.Adam(
         model_learner.parameters(),
-        lr=3e-4,
-        eps=1e-5,  # detail #?: it turns out, this is very important!
+        lr=config.f_lr,
+        eps=config.f_optim_eps,
     )
 
     epx = EpisodeExtractor()

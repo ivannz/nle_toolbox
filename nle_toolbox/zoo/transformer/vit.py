@@ -126,13 +126,26 @@ class TransformerLayer(nn.Module):
         *,
         layernorm: nn.Module = nn.LayerNorm,
         gelu: nn.Module = nn.GELU,
+        elementwise_affine: bool = True,
     ) -> None:
         super().__init__()
 
+        # we use pre-norm MH self-A, but optionally disable the learnable affine
+        # transformation in the normalizer before the MHA, since it makes sense
+        # to think about the compatibilities in the attention matrix (pre-softmax)
+        # as _semantic_ covariances. Hence we would want the normalizer NOT to
+        # translate the input hiddens to an arbitrary location (scaling if ok,
+        # since it actually means a learnable temperature).
         self.attn = nn.Sequential(
             OrderedDict(
                 [
-                    ("norm", layernorm(embedding_dim)),
+                    (
+                        "norm",
+                        layernorm(
+                            embedding_dim,
+                            elementwise_affine=elementwise_affine,
+                        ),
+                    ),
                     (
                         "attn",
                         MultiHeadAttention(
@@ -179,6 +192,7 @@ class ViTEncoder(nn.Module):
         *,
         n_layers: int = 1,
         b_mean: bool = False,
+        elementwise_affine: bool = True,
     ) -> None:
         super().__init__()
 
@@ -201,6 +215,7 @@ class ViTEncoder(nn.Module):
                     intermediate_size,
                     head_size,
                     dropout,
+                    elementwise_affine=elementwise_affine,
                 )
                 for _ in range(n_layers)
             ]

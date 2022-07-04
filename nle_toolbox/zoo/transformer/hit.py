@@ -3,7 +3,7 @@ from torch import nn
 
 from einops import repeat
 
-from .vit import TransformerLayer
+from .vit import TransformerStack
 
 
 class HiT(nn.Module):
@@ -26,6 +26,7 @@ class HiT(nn.Module):
         dropout: float = 0.0,
         *,
         n_layers: int = 1,
+        elementwise_affine: bool = True,
     ):
         super().__init__()
 
@@ -50,17 +51,14 @@ class HiT(nn.Module):
             )
         )
 
-        self.layers = nn.ModuleList(
-            [
-                TransformerLayer(
-                    embedding_dim,
-                    num_attention_heads,
-                    intermediate_size,
-                    head_size,
-                    dropout,
-                )
-                for _ in range(n_layers)
-            ]
+        self.stack = TransformerStack(
+            embedding_dim,
+            num_attention_heads,
+            intermediate_size,
+            n_layers,
+            elementwise_affine=elementwise_affine,
+            head_size=head_size,
+            dropout=dropout,
         )
 
         self.norm = nn.LayerNorm(embedding_dim)
@@ -90,9 +88,7 @@ class HiT(nn.Module):
                 dim=1,
             ).add(self.posemb)
 
-            for layer in self.layers:
-                x, _ = layer(x)
-
+            x, attn = self.stack(x)
             x = self.norm(x)
 
             # extract the cls, i/o and updated hx embeddings

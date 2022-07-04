@@ -7,9 +7,8 @@ import math
 import torch
 
 from torch import nn
-from collections import OrderedDict
-
 from torch import Tensor
+
 from einops import repeat, rearrange
 
 
@@ -17,16 +16,39 @@ def pair(x, n=2):
     return x if isinstance(x, tuple) else (x,) * n
 
 
-class MultiHeadAttention(nn.Module):
+def expand_mask(mask, n_outputs, *, tok_to_out=False, out_to_all=True):
+    shape = dict(zip("BNM", mask.shape))
+
+    # XXX we need to expand the mask if has been provided
+    B, N = shape["B"], shape["N"]
+
+    # mask is B N M boolean tensor. we forbid outout-output attn, allow
+    #  outputs to attendt to tokens, and optionally permit tokens to attend
+    #  to outputs
+    blk1 = mask.new_ones((n_outputs, n_outputs + N))
+    if out_to_all:
+        torch.eye(n_outputs, out=blk1[:, :n_outputs])
+    blk1.logical_not_()
+
+    blk2 = mask.new_full((N, n_outputs), not tok_to_out)
+    return torch.cat(
+        [
+            repeat(blk1, "N M -> B N M", B=B),
+            torch.cat([repeat(blk2, "N M -> B N M", B=B), mask], dim=-1),
+        ],
+        dim=-2,
+    )
+
+
+class MultiHeadSelfAttention(nn.Module):
     def __init__(
         self,
         embedding_dim: int,
         num_attention_heads: int,
-        head_size: int = None,
-        dropout: float = 0.0,
-        bias: bool = True,
         *,
-        return_attention: bool = False,
+        head_size: int = None,
+        bias: bool = True,
+        dropout: float = 0.0,
     ) -> None:
         if head_size is None:
             head_size, rem = divmod(embedding_dim, num_attention_heads)
@@ -39,7 +61,6 @@ class MultiHeadAttention(nn.Module):
         self.embedding_dim = embedding_dim
         self.head_size = head_size
         self.num_attention_heads = num_attention_heads
-        self.return_attention = return_attention
 
         # (Q)uery (K)ey (V)alue projections
         self.qkv = nn.Linear(
@@ -49,21 +70,12 @@ class MultiHeadAttention(nn.Module):
         )
 
         # re-projection with noise
-        self.prj = nn.Sequential(
-            OrderedDict(
-                [
-                    (
-                        "proj",
-                        nn.Linear(
-                            num_attention_heads * head_size,
-                            embedding_dim,
-                            bias=bias,
-                        ),
-                    ),
-                    ("drop", nn.Dropout(dropout)),
-                ]
-            )
+        self.prj = nn.Linear(
+            num_attention_heads * head_size,
+            embedding_dim,
+            bias=bias,
         )
+        self.drp = nn.Dropout(dropout)
 
         self.reset_parameters()
 
@@ -74,19 +86,15 @@ class MultiHeadAttention(nn.Module):
 
         # (qkv) Kaiming-like uniform init based on head fan-out
         stdv = 1.0 / math.sqrt(self.embedding_dim)
-        self.prj.proj.weight.data.uniform_(-stdv, stdv)
-        if self.prj.proj.bias is not None:
-            self.prj.proj.bias.data.zero_()
+        self.prj.weight.data.uniform_(-stdv, stdv)
+        if self.prj.bias is not None:
+            self.prj.bias.data.zero_()
 
-    def forward(
-        self,
-        x: Tensor,
-        mask: Tensor = None,
-    ) -> tuple[Tensor, Tensor]:
-        # qkv is x is `B N C`, below S is `stack x 3`, and H -- # of heads
+    def forward(self, x: Tensor, mask: Tensor = None) -> tuple[Tensor, Tensor]:
+        # `x` is `B N C`, `S` is `stack x 3`, and H -- # of heads
         # XXX in non-self attention the query sequence might have different
         #  size, in which case we would have to make a separate layer for Q,
-        #  e.g. x is `B N C` and q is `B M C`
+        #  e.g. x is `B N C`, q is `B M C`
         que, key, val = rearrange(
             self.qkv(x),
             "B N (S H D) -> S B H N D",
@@ -95,24 +103,23 @@ class MultiHeadAttention(nn.Module):
         )
 
         # scaled attention
-        #  $a_{j t s} = \frac{q_{j t}^\top k_{j s}}{\sqrt{d}}$
+        #  $a_{j t s} = \frac{q_{j t}^\top k_{j t s}}{\sqrt{d}}$
         #  $\alpha_{j t s} = \softmax(a_{j t s} + (- \infty) m_{j t s})_{s=1}^n$
-        #  $y_{j t} = \sum_s \alpha_{j t s} v_{j s}$
+        #  $y_{j t} = \sum_s \alpha_{j t s} v_{j t s}$
         # XXX `attn @ val -> out` gives [B H M N] @ [B H N D] -> [B H M D]
         dots = torch.matmul(que, key.transpose(-1, -2))
         if mask is not None:
-            # in-place masking is diffable
             dots = dots.masked_fill(
                 repeat(mask.to(bool), "B M N -> B H M N", H=1),
                 -math.inf,
             )
 
+        # attend, average and dimshuffle
         attn = torch.softmax(dots.div(math.sqrt(self.head_size)), dim=-1)
-        out = rearrange(attn.matmul(val), "B H M D -> B M (H D)")
+        mhsa = rearrange(attn.matmul(val), "B H M D -> B M (H D)")
 
-        # reproject and dimshuffle
-        out = self.prj(out)
-        return (out, attn) if self.return_attention else out
+        # reproject and dropout
+        return self.drp(self.prj(mhsa)), attn
 
 
 class TransformerLayer(nn.Module):
@@ -121,12 +128,12 @@ class TransformerLayer(nn.Module):
         embedding_dim: int,
         num_attention_heads: int,
         intermediate_size: int,
-        head_size: int = None,
-        dropout: float = 0.0,
         *,
         layernorm: nn.Module = nn.LayerNorm,
         gelu: nn.Module = nn.GELU,
         elementwise_affine: bool = True,
+        head_size: int = None,
+        dropout: float = 0.0,
     ) -> None:
         super().__init__()
 
@@ -136,46 +143,74 @@ class TransformerLayer(nn.Module):
         # as _semantic_ covariances. Hence we would want the normalizer NOT to
         # translate the input hiddens to an arbitrary location (scaling if ok,
         # since it actually means a learnable temperature).
-        self.attn = nn.Sequential(
-            OrderedDict(
-                [
-                    (
-                        "norm",
-                        layernorm(
-                            embedding_dim,
-                            elementwise_affine=elementwise_affine,
-                        ),
-                    ),
-                    (
-                        "attn",
-                        MultiHeadAttention(
-                            embedding_dim,
-                            num_attention_heads,
-                            head_size,
-                            dropout,
-                            return_attention=True,
-                        ),
-                    ),
-                ]
-            )
+        self.pn1 = layernorm(
+            embedding_dim,
+            elementwise_affine=elementwise_affine,
+        )
+        self.mha = MultiHeadSelfAttention(
+            embedding_dim,
+            num_attention_heads,
+            head_size=head_size,
+            bias=True,
+            dropout=dropout,
         )
 
-        self.pwff = nn.Sequential(
-            OrderedDict(
-                [
-                    ("norm", layernorm(embedding_dim)),
-                    ("ff_1", nn.Linear(embedding_dim, intermediate_size)),
-                    ("gelu", gelu()),
-                    ("ff_2", nn.Linear(intermediate_size, embedding_dim)),
-                    ("drop", nn.Dropout(dropout)),
-                ]
-            )
+        self.pn2 = layernorm(embedding_dim)
+        self.mlp = nn.Sequential(
+            nn.Linear(embedding_dim, intermediate_size),
+            gelu(),
+            nn.Linear(intermediate_size, embedding_dim),
+            nn.Dropout(dropout),
         )
 
-    def forward(self, x: Tensor) -> tuple[Tensor, Tensor]:
-        y, attn = self.attn(x)
-        x = y + x
-        x = self.pwff(x) + x
+    def forward(self, x: Tensor, mask: Tensor = None) -> tuple[Tensor, Tensor]:
+        y, attn = self.mha(self.pn1(x), mask)
+        x = x + y
+        output = x + self.mlp(self.pn2(x))
+
+        return output, attn
+
+
+class TransformerStack(nn.Module):
+    def __init__(
+        self,
+        embedding_dim: int,
+        num_attention_heads: int,
+        intermediate_size: int,
+        n_layers: int = 1,
+        *,
+        elementwise_affine: bool = False,
+        head_size: int = None,
+        dropout: float = 0.0,
+    ) -> None:
+        super().__init__()
+
+        self.layers = nn.ModuleList(
+            [
+                TransformerLayer(
+                    embedding_dim,
+                    num_attention_heads,
+                    intermediate_size,
+                    elementwise_affine=elementwise_affine,
+                    head_size=head_size,
+                    dropout=dropout,
+                )
+                for _ in range(n_layers)
+            ]
+        )
+
+    def forward(
+        self,
+        x: Tensor,
+        mask: Tensor = None,
+    ) -> tuple[Tensor, list[Tensor]]:
+
+        # `x` is B N C and transformer layers keep it that way, `a` is `B H N N`
+        attn = []
+        for layer in self.layers:
+            x, a = layer(x)
+            attn.append(a)
+
         return x, attn
 
 
@@ -187,66 +222,48 @@ class ViTEncoder(nn.Module):
         embedding_dim: int,
         num_attention_heads: int,
         intermediate_size: int,
-        head_size: int = None,
-        dropout: float = 0.0,
-        *,
         n_layers: int = 1,
+        *,
         b_mean: bool = False,
         elementwise_affine: bool = True,
+        head_size: int = None,
+        dropout: float = 0.0,
     ) -> None:
         super().__init__()
 
         n_rows, n_cols = pair(size)
-
         self.posemb = nn.Parameter(
             torch.randn(
                 1,
-                n_rows * n_cols + 1,
+                n_rows * n_cols,
                 embedding_dim,
             )
         )
         self.cls = nn.Parameter(torch.randn(1, 1, embedding_dim))
 
-        self.layers = nn.ModuleList(
-            [
-                TransformerLayer(
-                    embedding_dim,
-                    num_attention_heads,
-                    intermediate_size,
-                    head_size,
-                    dropout,
-                    elementwise_affine=elementwise_affine,
-                )
-                for _ in range(n_layers)
-            ]
+        self.stack = TransformerStack(
+            embedding_dim,
+            num_attention_heads,
+            intermediate_size,
+            n_layers,
+            elementwise_affine=elementwise_affine,
+            head_size=head_size,
+            dropout=dropout,
         )
         self.norm = nn.LayerNorm(embedding_dim)
 
         self.b_mean = b_mean
 
-    def forward(self, x: Tensor) -> tuple[Tensor, Tensor]:
-        # cls-token and positional embedding
-        x = (
-            torch.cat(
-                (
-                    repeat(self.cls, "() N C -> B N C", B=len(x)),
-                    rearrange(x, "B C H W -> B (H W) C"),
-                ),
-                dim=1,
-            )
-            + self.posemb
-        )
+    def forward(self, x: Tensor) -> tuple[Tensor, list[Tensor]]:
+        # flatten  spatial dims, dimshuffle, and add learnt positional embeddings
+        x = rearrange(x, "B C H W -> B (H W) C").add(self.posemb)
 
-        # transformer keeps `x` as '(T B) (H W) C'
-        attentions = []
-        for layer in self.layers:
-            x, attn = layer(x)
-            attentions.append(attn)
+        # prepend the CLS-token
+        x = torch.cat((repeat(self.cls, "() N C -> B N C", B=len(x)), x), dim=1)
 
-        # each attn in `b h n n`
-        attentions = torch.stack(attentions, dim=1)
-
+        # transformer returns a 'B (H W) C' tensor in `x`, attn is a list
+        x, attn = self.stack(x, mask=None)  # XXX mask dose not know about CLS
         x = self.norm(x)
 
         # the hidden state corresponding to the first CLS token
-        return x.mean(dim=1) if self.b_mean else x[:, 0], attentions
+        return x.mean(dim=1) if self.b_mean else x[:, 0], attn

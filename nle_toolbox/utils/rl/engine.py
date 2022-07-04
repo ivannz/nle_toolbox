@@ -257,7 +257,7 @@ def dropout_mask(input, *, k=None):
 
 
 def bselect(tensor, index, dim=-1):
-    """Pick values at indices along the speicifed dimension.
+    """Pick values at indices along the specified dimension.
 
     See Also
     -------
@@ -349,3 +349,47 @@ def pyt_critic(val, ret, *, mask=None):
         mse = mse.mul(mask).div(scale)
 
     return mse.sum() / 2
+
+
+# A pair representing a distribution from a location-scale family. In particular
+#  it is used in `gaussian_*` procedures below, wherein it defines a factorized
+#  Gaussian distribution, i.e. a Gaussian vector with independent components.
+LocScale = namedtuple("LocScale", "loc,scale")
+
+# HALFLOG2PI = \frac{\log(2 \pi)}{2}
+HALFLOG2PI = 0.9189385332046727417803297364056176398613974736377834128171515404
+
+
+def gaussian_entropy(q, dim=-1):
+    """Gaussian entropy along the specified dim."""
+    # scale is the root of Sigma (variance)
+    # \frac12 \log \det 2 \pi e \Sigma
+    #    = \frac12 + \frac12 \log \det 2 \pi + \log \prod_j \sqrt{\sigma^2_j}
+    return q.scale.log().add(0.5 + HALFLOG2PI).sum(dim)
+
+
+def gaussian_logprob(q, x, dim=-1):
+    """log-density of the factorized Gaussian along the specified dim."""
+    # `.scale` is the root of the covariance `\Sigma`, which is also diagonal
+    # - \frac12 (x-\mu)^\top \Sigma^{-1} (x-\mu) - \frac12 \log \det 2 \pi \Sigma
+    z = x.sub(q.loc).div(q.scale)
+    return z.mul(z).div(2).add(q.scale.log()).add(HALFLOG2PI).sum(dim).neg()
+
+
+def gaussian_kl_div(p, q, dim=-1):
+    """the kl-divergence between factorized Gaussians along the specified dim."""
+    # $$
+    #   KL(N(\mu_1, \Sigma_1) \| N(\mu_2, \Sigma_2))
+    #     = % half-trace
+    #       \frac12 \tr \Sigma_2^{-1} \Sigma_1
+    #     % neg-entropy N_1
+    #       - \frac12 \log \det 2 \pi e \Sigma_1
+    #     % neg-log-lik N_2
+    #       + \frac12 \log \det 2 \pi \Sigma_2
+    #       + \frac12 (\mu_1 - \mu_2)^\top \Sigma_2^{-1} (\mu_1 - \mu_2)
+    #   \,. $$
+
+    # half-trace minus entropy, plus negative log-likelihood
+    r = p.scale.div(q.scale)
+    half_trace = r.mul(r).sum(dim).div(2)
+    return half_trace - gaussian_entropy(p, dim) - gaussian_logprob(q, p.loc, dim)

@@ -40,6 +40,88 @@ def expand_mask(mask, n_outputs, *, tok_to_out=False, out_to_all=True):
     )
 
 
+class MultiHeadAttention(nn.Module):
+    def __init__(
+        self,
+        embedding_dim: int,
+        num_attention_heads: int,
+        *,
+        head_size: int = None,
+        bias: bool = True,
+        dropout: float = 0.0,
+    ) -> None:
+        if head_size is None:
+            head_size, rem = divmod(embedding_dim, num_attention_heads)
+            if rem > 0:
+                raise ValueError(
+                    f"{embedding_dim} is not a multiple" f" of {num_attention_heads}."
+                )
+
+        super().__init__()
+        self.embedding_dim = embedding_dim
+        self.head_size = head_size
+        self.num_attention_heads = num_attention_heads
+
+        # (K)ey (V)alue projections
+        self.kv = nn.Linear(
+            embedding_dim,
+            2 * num_attention_heads * head_size,
+            bias=False,
+        )
+
+        # re-projection with noise
+        self.prj = nn.Linear(
+            num_attention_heads * head_size,
+            embedding_dim,
+            bias=bias,
+        )
+        self.drp = nn.Dropout(dropout)
+
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        # (qkv) Kaiming-like uniform init based on head fan-out
+        stdv = 1.0 / math.sqrt(self.head_size)
+        self.kv.weight.data.uniform_(-stdv, stdv)
+
+        # (qkv) Kaiming-like uniform init based on head fan-out
+        stdv = 1.0 / math.sqrt(self.embedding_dim)
+        self.prj.weight.data.uniform_(-stdv, stdv)
+        if self.prj.bias is not None:
+            self.prj.bias.data.zero_()
+
+    def forward(
+        self, que: Tensor, x: Tensor, mask: Tensor = None
+    ) -> tuple[Tensor, Tensor]:
+        # `que` is `B N (H D)`, `x` is `B M C`, and the mask is `B N M`
+        que = rearrange(que, "B N (H D) -> B H N D", H=self.num_attention_heads)
+        key, val = rearrange(
+            self.kv(x),
+            "B N (S H D) -> S B H N D",
+            S=2,
+            H=self.num_attention_heads,
+        )
+
+        # scaled attention
+        #  $a_{j t s} = \frac{q_{j t}^\top k_{j t s}}{\sqrt{d}}$
+        #  $\alpha_{j t s} = \softmax(a_{j t s} + (- \infty) m_{j t s})_{s=1}^n$
+        #  $y_{j t} = \sum_s \alpha_{j t s} v_{j t s}$
+        # XXX `attn @ val -> out` gives [B H N M] @ [B H M D] -> [B H N D]
+        dots = torch.matmul(que, key.transpose(-1, -2))
+        if mask is not None:
+            dots = dots.masked_fill(
+                repeat(mask.to(bool), "B N M -> B H N M", H=1),
+                -math.inf,
+            )
+
+        # attend, average and dimshuffle
+        attn = torch.softmax(dots.div(math.sqrt(self.head_size)), dim=-1)
+        mha = rearrange(attn.matmul(val), "B H N D -> B N (H D)")
+
+        # reproject and dropout
+        return self.drp(self.prj(mha)), attn
+
+
 class MultiHeadSelfAttention(nn.Module):
     def __init__(
         self,

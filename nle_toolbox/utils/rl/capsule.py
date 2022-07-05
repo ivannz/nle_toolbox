@@ -81,8 +81,6 @@ def capsule(step, update, length, *, device=None):
         #  XXX if the runtime state is irrelevant to `step`, then it returns
         #  `hx` intact
         act_, output, hx = step(input, hx=hx, nfo=nfo)
-        if hx is not None:
-            hxx.append(hx)
 
         # (sys) update the action in `npy` through `pyt`
         suply(torch.Tensor.copy_, pyt.act, act_)
@@ -107,6 +105,9 @@ def capsule(step, update, length, *, device=None):
         # (sys) collect a fragment of time `t` afterstates t=0..N-1
         # XXX `input` and `nfo` are SIMULTANEOUS, unlike `engine.step`!
         append(((input, output), nfo_ if nfo is None else nfo))
+        if hx is not None:
+            hxx.append(hx)
+
         if len(fragment) < length:
             continue
 
@@ -217,10 +218,6 @@ def buffered(step, process, length, *, device=None):
             act_, out_, hx = step(input, hx=hx, nfo=nfo)
             suply(torch.Tensor.copy_, pyt.act, act_)
 
-        outs.append(out_)
-        if hx is not None:
-            hxx.append(hx)
-
         # STEP and advance local time
         #   \omega_t, a_t -->> \omega_{t+1}, x_{t+1}, r_{t+1}, d_{t+1}, I_{t+1}
         #   with \omega_t being the unobservable complete state of the ENV
@@ -231,9 +228,16 @@ def buffered(step, process, length, *, device=None):
         suply(np.copyto, npy.rew, rew_)
         np.copyto(npy.fin, fin_)
 
-        # we make a deep copy of `nfo_`, but report it on the NEXT step
+        # we save the output y_t and the new runtime state h_{t+1}. As for the
+        #  new `nfo_`, we make its deep copy to keep it for the next step, but
+        #  save the previous `nfo`, which is in sync with $z_t$ in `input` (NOT
+        # `pyt` which has been updated to $z_{t+1}).
         nfo_ = deepcopy(nfo_)
         nfos.append(nfo_ if nfo is None else nfo)
+        outs.append(out_)
+        if hx is not None:
+            hxx.append(hx)
+
         if len(nfos) < length:
             continue  # XXX loop-and-a-half?
 

@@ -13,7 +13,7 @@ The following command sets up an env with the essential dependencies required by
 conda create -n nle_toolbox "python>=3.9" pip setuptools numpy scipy cmake \
   "pytorch::pytorch>=1.8" matplotlib \
   && conda activate nle_toolbox \
-  && pip install einops
+  && pip install einops python-plyr
 
 # install bleeding-edge versions from the git
 # NLE <= 0.8.1 does not expose certain bottom line attribs
@@ -21,10 +21,6 @@ pip install -vv "nle @ git+https://github.com/facebookresearch/nle.git"
 
 # this fork of minihack patched missing parameters in some tasks
 pip install -vv "minihack @ git+https://github.com/ivannz/minihack.git"
-
-# this branch features optimization that have not been merged yet
-pip install -vv "python-plyr @ git+https://github.com/ivannz/plyr.git@populate"
-# TODO replace with `pip install python-plyr` when available on pypi
 ```
 
 The latest version of the toolbox itself can be installed from github

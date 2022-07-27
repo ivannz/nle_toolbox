@@ -104,30 +104,35 @@ AliasedNPYT = namedtuple("AliasedNPYT", "npy,pyt")
 #  meaning that updates of one are immediately reflected in the other.
 
 
+def context(obs, act, rew=np.nan, fin=True, *, ternary=True):
+    """Prepare the coupled numpy-torch runtime context from the specifications."""
+    rew = plyr.apply(np.asarray, rew, dtype=np.float32)
+    fin = np.asarray(fin, dtype=np.int8 if ternary else bool)
+
+    # prepare the runtime context staring with numpy array for env interface
+    npy = plyr.apply(np.copy, Input(obs, act, rew, fin))
+
+    # couple torch tensors with numpy arrays by storage aliasing, and produce
+    #  a writable view with IN-PLACE `.unsqueeze_(0)`
+    pyt = plyr.apply(torch.as_tensor, npy)
+    plyr.apply(torch.Tensor.unsqueeze_, pyt, dim=0)
+    return AliasedNPYT(npy, pyt)
+
+
 def prepare(env, rew=np.nan):
     # we rely on an underlying Vectorized Env to supply us with correct
     #  product action space, observations, and a number of environments.
     assert isinstance(env, SerialVecEnv)
 
-    # prepare the runtime context (coupled numpy-torch tensors)
-    dtype = np.int8 if env.ternary else bool
-    npy = plyr.apply(
-        np.copy,
-        Input(
-            env.reset(),
-            env.action_space.sample(),
-            # pre-filled arrays for potentially structured rewards
-            plyr.ragged(np.full, len(env), rew, dtype=np.float32),
-            # `fin` is an array and NEVER structured
-            np.full(len(env), True, dtype=dtype),
-        ),
+    return context(
+        env.reset(),
+        env.action_space.sample(),
+        # pre-filled arrays for potentially structured rewards
+        plyr.ragged(np.full, len(env), rew, dtype=np.float32),
+        # `fin` is an array and NEVER structured
+        [True] * len(env),
+        ternary=env.ternary,
     )
-
-    # in-place unsequeeze produces a writable view, which preserves aliasing
-    pyt = plyr.apply(torch.as_tensor, npy)
-    plyr.apply(torch.Tensor.unsqueeze_, pyt, dim=0)
-
-    return AliasedNPYT(npy, pyt)
 
 
 def step(env, agent, npyt, hx, *, device=None):
@@ -219,7 +224,7 @@ def step(env, agent, npyt, hx, *, device=None):
     plyr.apply(np.copyto, npy.rew, rew_)  # XXX allow structured rewards
     np.copyto(npy.fin, fin_)  # XXX must be a boolean scalar/vector
 
-    # Make adeep copy of the info dict `nfo_` before returning it
+    # Make a deep copy of the info dict `nfo_` before returning it
     return (input, out), hx, deepcopy(nfo_)  # ATTN `nfo` is AFTER `input`
 
 

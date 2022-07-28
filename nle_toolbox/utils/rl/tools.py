@@ -116,6 +116,13 @@ def extract(
         strands[j].append(Chunk(n_seq - (t1 or 0), chunk))
 
 
+def check_reset_mask(reset: Union[Tensor, ndarray], row: int = 0) -> None:
+    if not bool(reset[row].all()):
+        raise RuntimeError(
+            f"Row {row} in the first reset mask must be NON-ZERO. Got `{reset[row]}`."
+        )
+
+
 def add_leading(x: Any, *, n_leading: int = 0) -> Union[Tensor, ndarray]:
     """View the input as an array with extra unitary leading dimensions.
 
@@ -178,6 +185,10 @@ class EpisodeExtractor:
         reset: Union[Tensor, ndarray],
         fragment: Any,
     ) -> list[Any]:
+        # check the first reset mask if the strand storage is empty
+        if not any(self.strands.values()):
+            check_reset_mask(reset, row=0)
+
         # make sure that we're feeding `T x B` data to the extractor
         reset, fragment = ensure2d(reset, fragment)
 
@@ -311,11 +322,13 @@ def fetch(x, t0, t1):
 class EpisodeBuffer:
     """Keeping at least the specified number of transitions."""
 
-    def __init__(self, *, seed: Any = None) -> None:
+    def __init__(self, *, seed: Any = None, min_episode_length: int = 2) -> None:
         self.n_transitions = 0
         self.storage = deque([])
         self.strands = defaultdict(list)
         self.random_ = np.random.default_rng(seed=seed)
+
+        self.min_episode_length = min_episode_length
 
     def __len__(self):
         return self.n_transitions
@@ -354,22 +367,24 @@ class EpisodeBuffer:
         *,
         weight: Union[Tensor, ndarray] = None,
     ) -> None:
+        # check the first reset mask if the strand storage is empty
+        if not any(self.strands.values()):
+            check_reset_mask(reset, row=0)
+
         # make sure that we're feeding `T x B` data to the extractor
         reset, fragment = ensure2d(reset, fragment)
         # XXX we could also associate a weight series with each fragment,
         #  every value of which weighs the observation, e.g. td-error.
 
-        # get the complete episodes (strands store slice view into fragements)
+        # get the complete episodes (strands store slice view into fragments)
         for out in extract(self.strands, reset, fragment):
             # combine the chunks into an episode
             sizes, chunks = zip(*out)
             episode = Chunk(sum(sizes), stitch(*chunks))
 
             # by design valid episodes contain at least two steps
-            if episode.size < 2:
+            if episode.size < max(2, self.min_episode_length):
                 continue
-
-            assert bool(episode.data.fin[0]), "This should never happen."
 
             # save the episode and update the transition population size
             self.storage.append(episode)
@@ -382,7 +397,7 @@ class EpisodeBuffer:
         *,
         # for the recurrent runtime state wram-up (>= 0)
         n_burnin: int = 0,
-        # the numbr of elements for frame stacking (>= 1)
+        # the number of elements for frame stacking (>= 1)
         n_window: int = 1,
     ) -> tuple[Any, Any]:
         """Randomly sample continuous trajectory fragments with burnin."""

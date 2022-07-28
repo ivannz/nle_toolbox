@@ -395,19 +395,20 @@ class EpisodeBuffer:
         n_transitions: int,
         n_batch: int,
         *,
-        # for the recurrent runtime state wram-up (>= 0)
+        # for the recurrent runtime state warm-up (>= 0)
         n_burnin: int = 0,
         # the number of elements for frame stacking (>= 1)
         n_window: int = 1,
     ) -> tuple[Any, Any]:
-        """Randomly sample continuous trajectory fragments with burnin."""
+        """Randomly sample continuous trajectory fragments with burn-in."""
         burnin = None
+        n_window = max(n_window - 1, 0)
 
         # the number of elements in the batch proper (not transitions!!!) (>= 1)
         n_length = n_transitions + 1
 
         # the total number of elements to request from each trajectory
-        n_total = n_length + n_burnin + max(n_window - 1, 0)
+        n_total = n_length + n_burnin + n_window
 
         # make an O(n) shallow copy for faster random access
         episodes = tuple(self.storage)
@@ -417,7 +418,7 @@ class EpisodeBuffer:
         sizes, batch = zip(*[episodes[j] for j in epix])
         sizes = np.array(sizes)
 
-        # for each picked trajectory draw an index of the right endpoint
+        # for each picked trajectory, draw an index of the right endpoint
         # for the slice [t0, t1) with $t1 \sim \{\min\{L, T_j\} .. T_j\}$
         left = np.minimum(sizes, n_length)
         stix = self.random_.integers(left, sizes, endpoint=True)
@@ -431,8 +432,8 @@ class EpisodeBuffer:
         # collate into a batch
         padded = plyr.apply(cat, *padded, _star=False, dim=1)
 
-        # split the batch into the proper and brunin segments
-        batch = plyr.apply(lambda x: x[1 - n_window - n_length :], padded)
+        # split the batch into the proper and the burn-in segments
+        batch = plyr.apply(lambda x: x[-n_window - n_length :], padded)
         if n_burnin > 0:
             burnin = plyr.apply(lambda x: x[:-n_length], padded)
 

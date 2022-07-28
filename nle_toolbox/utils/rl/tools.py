@@ -44,7 +44,7 @@ def extract(
     *,
     copy: bool = True,
 ) -> tuple[Chunk, ...]:
-    """Generate completed episodes from the given trajectory fragments,
+    """Generate completed episodes from the given batched trajectory fragments,
     the corresponding reset mask and incomplete strands.
 
     Parameters
@@ -63,24 +63,24 @@ def extract(
         data in the container is dimension-synced to `reset`.
 
     copy : bool, default = False
-        Whether to force a copy of the trajectory data when extracing strands.
+        Whether to force a copy of the trajectory data when extracting strands.
 
     Yields
     ------
     chunks : tuple of Chunk
-        The tuple of consecutive fragments without the batch dimension that
-        constitute a complete contiguous trajectory. Note, that the fragment
-        in each chunk DOES NOT have the batch dimension. Each chunk reports its
-        size in `.size` and contents in `.data`, which is a nested Container of
-        array-like of shape=(L, ...).
+        A tuple of chunks, each containing consecutive fragment elements, which
+        together constitute a complete trajectory between AND INCLUDING successive
+        non- zeros in `reset`. Chunk report their length in `.size` and content
+        in `.data` -- a nested container of array-like of shape `L x B x ...`
+        with unitary batch dimension (B=1).
 
-    Detals
-    ------
+    Details
+    -------
     Incomplete trajectories may live in an fragmented state for a long time,
     since the distribution of the spans of full trajectories is likely long
-    tailed. At the same time, by default, both numpy and torch produce views
-    and not copies when slicing and/or doing a single-index access. This may
-    lead to a sutiation, when the memory is congested by a large number of past
+    tailed. At the same time, by default, both numpy and torch produce VIEWS
+    and NOT COPIES when slicing and/or doing a single-index access. This may
+    lead to a situation, when the memory is congested by a large number of past
     fragments, each referenced ONLY by array views that live in the strands
     of the trajectories of a very few on-going unfinished data sources. See
 
@@ -89,8 +89,10 @@ def extract(
     # for each independent environment in the batch
     n_seq, n_env = reset.shape
     for j in range(n_env):
-        # slicing with a single-element list copies both in numpy and torch
-        jj = [j] if copy else slice(j, j + 1)  # XXX a list copies, a slice views
+        # get the fiber of an env in the batch, keeping the dimension. Indexing
+        #  with a single-element list always copies both in numpy and torch,
+        #  and slicing from j to j+1 -- always makes a view.
+        jj = [j] if copy else slice(j, j + 1)
         # XXX it is better to be explicit, rather than implicit...
 
         # find all reset brackets [t0, t1)
@@ -140,7 +142,7 @@ def ensure2d(
     reset: Union[Tensor, ndarray],
     fragment: Any,
 ) -> tuple[Union[Tensor, ndarray], Any]:
-    """Add as many leading dims to the fragment as were missing in `reset`.
+    """Add as many LEADING dims to the fragment as were missing in `reset`.
 
     Details
     -------

@@ -399,6 +399,8 @@ class EpisodeBuffer:
         n_burnin: int = 0,
         # the number of elements for frame stacking (>= 1)
         n_window: int = 1,
+        # include the terminal observation in each trajectory when sampling
+        terminals: bool = True,
     ) -> tuple[Any, Any]:
         """Randomly sample continuous trajectory fragments with burn-in."""
         burnin = None
@@ -417,6 +419,10 @@ class EpisodeBuffer:
         epix = self.random_.integers(len(episodes), size=n_batch)
         sizes, batch = zip(*[episodes[j] for j in epix])
         sizes = np.array(sizes)
+
+        # reduce the allowed index set if the terminals are to be excluded
+        if not terminals:
+            sizes -= 1
 
         # for each picked trajectory, draw an index of the right endpoint
         # for the slice [t0, t1) with $t1 \sim \{\min\{L, T_j\} .. T_j\}$

@@ -2,7 +2,7 @@ import torch
 import numpy as np
 
 from copy import deepcopy
-from plyr import apply, suply
+from plyr import apply, suply, iapply
 
 from .engine import Input
 
@@ -193,10 +193,11 @@ def buffered(step, process, length, *, device=None):
 
     # allocate buffers on the correct device and get its single-step
     # editable slices. `+ 1` is the one-step ahead overlap
+    # XXX Since the number of chunks equals the size along dim 0, `torch.chunk`
+    #  returns a tuple of views into the input with unit size dim 0, unlike
+    #  `.unbind`, which drops the sliced dim.
     buffer = apply(torch.cat, *(input,) * (length + 1), _star=False, dim=0)
-    vw_buffer = tuple(
-        [suply(lambda x: x[t : t + 1], buffer) for t in range(length + 1)]
-    )
+    vw_buffer = iapply(torch.chunk, buffer, chunks=length + 1, dim=0)
 
     # `step(...)` should properly init `hx`-s batch dims
     # XXX runtime state meanings: 'gx` before fragment, `hx` current

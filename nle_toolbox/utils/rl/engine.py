@@ -104,13 +104,19 @@ AliasedNPYT = namedtuple("AliasedNPYT", "npy,pyt")
 #  meaning that updates of one are immediately reflected in the other.
 
 
-def context(obs, act, rew=np.nan, fin=True, *, ternary=True):
-    """Prepare the coupled numpy-torch runtime context from the specifications."""
+def as_numpy(obs, act, rew=np.nan, fin=True, *, ternary=True):
+    """Prepare a numpy runtime context from the specifications."""
     rew = plyr.apply(np.asarray, rew, dtype=np.float32)
     fin = np.asarray(fin, dtype=np.int8 if ternary else bool)
 
     # prepare the runtime context staring with numpy array for env interface
-    npy = plyr.apply(np.copy, Input(obs, act, rew, fin))
+    return plyr.apply(np.copy, Input(obs, act, rew, fin))
+
+
+def context(obs, act, rew=np.nan, fin=True, *, ternary=True):
+    """Prepare the coupled numpy-torch runtime context."""
+    # prepare the numpy runtime context
+    npy = as_numpy(obs, act, rew, fin, ternary=ternary)
 
     # couple torch tensors with numpy arrays by storage aliasing, and produce
     #  a writable view with IN-PLACE `.unsqueeze_(0)`

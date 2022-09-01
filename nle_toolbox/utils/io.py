@@ -167,7 +167,7 @@ def from_file(
     # reassign the underlying storage to a mem-mapped file-based storage
     # XXX `._set_from_file` is more hassle since we'll need to call
     #  `torch._utils._element_size(dtype)`. `TypedStorage` knows its `dtype`.
-    sto: Storage = tensor.storage()  # XXX actually a `_TypedStorage`
+    sto: type = tensor.storage_type()  # XXX actually a `_TypedStorage`
     tensor.set_(sto.from_file(filename, shared=writeable, size=size))
 
     # reshape unless flat

@@ -173,6 +173,9 @@ class VQEMAUpdater(BaseVQHelper):
                     self.eps,
                 )
 
+            # XXX we could implement centroid repulsion on \hat{\mu} stored in `acc`
+            pass
+
             # Commit the accumulated cluster sizes and unnormalized centroids
             #  into the EMA buffers
             # XXX `torch.lerp(a, b, w) = a.lerp(b, w) = (1 - w) * a + w * b`

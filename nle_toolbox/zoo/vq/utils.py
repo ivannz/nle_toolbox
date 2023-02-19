@@ -135,8 +135,10 @@ class VQEMAUpdater(BaseVQHelper):
         #     `size[j]` is $n_j = \lvert i: k_i = j \rvert$
         #     `vecs[j]` is $S_j = \sum_i 1_{k_i = j} x_i$
         affinity = F.one_hot(output.indices, module.num_embeddings).to(input)
-        vecs = torch.einsum("...f, ...k -> kf", input.detach(), affinity)
+        data = input.detach().movedim(module.dim, -1)
+        vecs = torch.einsum("...f, ...k -> kf", data, affinity)
         size = torch.einsum("...k -> k", affinity)
+        # XXX `x.movedim(j, -1)` does `x.permute(*dims[:j], dims[j+1:], j)`
 
         # update the accumulators, but first lazily init them
         if self._acc.get(module) is None:

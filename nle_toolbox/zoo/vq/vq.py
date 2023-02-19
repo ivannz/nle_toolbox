@@ -30,7 +30,7 @@ See Also
 --------
 The docs in `VectorQuantizedVAE` provide more details, discussion and intuition
 regarding the vector-quantized encoding as a process.
-"""
+"""  # noqa: E501
 
 
 class VectorQuantizedVAE(nn.Module):
@@ -129,15 +129,18 @@ class VectorQuantizedVAE(nn.Module):
     denoiser through online K-means clustering with clever tricks to properly
     pass gradients via the straight through estimator and to ensure inputs
     that cluster more tightly via the commitment loss.
-    """
+    """  # noqa: E501
+
     num_embeddings: int
     embedding_dim: int
+    dim: int
     weight: Tensor
 
-    def __init__(self, num_embeddings: int, embedding_dim: int) -> None:
+    def __init__(self, num_embeddings: int, embedding_dim: int, dim: int = -1) -> None:
         super().__init__()
         self.num_embeddings = num_embeddings
         self.embedding_dim = embedding_dim
+        self.dim = dim
         self.weight = Parameter(torch.empty(num_embeddings, embedding_dim))
         self.reset_parameters()
 
@@ -145,7 +148,7 @@ class VectorQuantizedVAE(nn.Module):
         init.normal_(self.weight)
 
     @torch.no_grad()
-    def lookup(self, input: Tensor) -> LongTensor:
+    def lookup(self, input: Tensor, at: int = -1) -> LongTensor:
         """Lookup the index of the nearest embedding."""
 
         # k(z) = \arg \min_k \|E_k - z\|^2
@@ -155,7 +158,10 @@ class VectorQuantizedVAE(nn.Module):
 
         emb = self.weight
         sqr = (emb * emb).sum(dim=1)
-        cov = torch.einsum("...j, kj -> ...k", input, emb)
+
+        # compute the covariance of the input vecrtors with the embeddings
+        # cov = torch.tensordot(input, emb, dims=([at], [-1]))
+        cov = torch.einsum("...j, kj -> ...k", input.movedim(self.dim, -1), emb)
         return torch.argmin(sqr.sub(cov, alpha=2), dim=-1)
 
     def fetch(self, indices: LongTensor, at: int = -1) -> Tensor:
@@ -182,8 +188,8 @@ class VectorQuantizedVAE(nn.Module):
 
         # Now, if `input` is a numeric tensor, this means that we can actually
         #  vector-quantize it. Thus we get its integer codes and embeddings
-        indices = self.lookup(input)
-        vectors = self.fetch(indices)
+        indices = self.lookup(input, at=self.dim)
+        vectors = self.fetch(indices, at=self.dim)
 
         # if the `input` is a non-diffable numeric tensor, then there is no use
         # in the commitment loss. However the embedding dictionary can still be
@@ -234,3 +240,11 @@ class VQVAEIntegerCodes(nn.Identity):
     def forward(self, input: Tensor) -> Tensor:
         # `out.indices` are the cluster ids
         return self.wrapped(input).indices
+
+
+class ExtractEmbeddings(nn.Identity):
+    """Extract real-valued vector-quantized embeddings from VQ outputs."""
+
+    def forward(self, input: VQEOutput) -> Tensor:
+        assert isinstance(input, VQEOutput)
+        return input.values
